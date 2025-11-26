@@ -1210,6 +1210,38 @@ void Link::receive(const Packet& packet) {
 					break;
 				}
 */
+				case Type::Packet::RESOURCE_ADV:
+				{
+					const Bytes plaintext = decrypt(packet.data());
+					if (plaintext) {
+						// Store plaintext in packet for Resource::accept to use
+						const_cast<Packet&>(packet).plaintext(plaintext);
+
+						// Accept all incoming resources for now
+						// TODO: Add resource strategy callbacks
+						DEBUG("Link::receive: Received RESOURCE_ADV, accepting resource");
+						Resource resource = Resource::accept(packet);
+						if (resource) {
+							register_incoming_resource(resource);
+							DEBUGF("Link::receive: Registered incoming resource hash=%s",
+								resource.hash().toHex().c_str());
+						}
+					}
+					break;
+				}
+				case Type::Packet::RESOURCE_HMU:
+				{
+					const Bytes plaintext = decrypt(packet.data());
+					if (plaintext) {
+						DEBUG("Link::receive: Received RESOURCE_HMU");
+						// Find matching resource and update its hashmap
+						for (auto& resource : _object->_incoming_resources) {
+							// HMU packet contains resource hash for matching
+							const_cast<Resource&>(resource).hashmap_update_packet(plaintext);
+						}
+					}
+					break;
+				}
 				case Type::Packet::KEEPALIVE:
 				{
 					if (!_object->_initiator && packet.data() == "\xFF") {
@@ -1226,8 +1258,14 @@ void Link::receive(const Packet& packet) {
 				// of hash -> sequence map
 				case Type::Packet::RESOURCE:
 				{
+					// RESOURCE packets are NOT encrypted by Packet.pack() - the Resource
+					// class handles its own encryption. The packet.data() contains
+					// Token-encrypted resource data directly (no outer packet encryption).
+					// We pass the raw data to receive_part for hash matching.
+					const_cast<Packet&>(packet).plaintext(packet.data());
+					DEBUG("Link::receive: Received RESOURCE data");
 					for (auto& resource : _object->_incoming_resources) {
-						//z resource.receive_part(packet);
+						const_cast<Resource&>(resource).receive_part(packet);
 					}
 					break;
 				}
