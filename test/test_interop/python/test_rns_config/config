@@ -1,0 +1,23 @@
+# Minimal RNS configuration for microReticulum interop testing
+# Uses UDP broadcast interface on port 4242 to communicate with C++ client
+
+[reticulum]
+  enable_transport = False
+  share_instance = No
+  shared_instance_port = 37429
+  instance_control_port = 37430
+
+# Disable identity file persistence for clean test runs
+  panic_on_interface_error = No
+
+[interfaces]
+  # UDP interface for testing - uses different ports to avoid bind conflict
+  # Python listens on 4243, C++ listens on 4242
+  # Both forward to each other's listen port
+  [[UDP Test Interface]]
+    type = UDPInterface
+    interface_enabled = True
+    listen_ip = 0.0.0.0
+    listen_port = 4243
+    forward_ip = 255.255.255.255
+    forward_port = 4242
