@@ -63,7 +63,10 @@ UDPInterface::UDPInterface(const char* name /*= "UDPInterface"*/) : RNS::Interfa
 		_local_host = local_host;
 	}
 	_local_port = port;
-	_remote_port = port;
+	// Only set remote port if not already configured
+	if (_remote_port == DEFAULT_UDP_PORT) {
+		_remote_port = port;
+	}
 	TRACE("UDPInterface: local host: " + _local_host);
 	TRACE("UDPInterface: local port: " + std::to_string(_local_port));
 	TRACE("UDPInterface: remote host: " + _remote_host);
