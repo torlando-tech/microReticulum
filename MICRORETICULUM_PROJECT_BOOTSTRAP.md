@@ -88,36 +88,45 @@ Implement in this order due to dependencies:
 
 ---
 
-## Feature 1: Ratchets
+## Feature 1: Link Key Derivation (Previously "Ratchets")
 
-### What It Does
-Ratchets provide forward secrecy for Link communications. Each message uses a derived key, so compromising one key doesn't compromise past or future messages.
+### Clarification: Python RNS Link Encryption
 
-### Python Reference Files
-- `RNS/Link.py` - Look for `ratchet`, `_rotate_keys`, `derive_key` methods
-- `RNS/Cryptography/Token.py` - Token generation using ratchet state
+**IMPORTANT**: The original document incorrectly described per-message key rotation ("ratchets") for Links. After reviewing Python RNS source code (`RNS/Link.py`), here's what Python actually implements:
 
-### Key Classes/Methods to Implement
-```cpp
-// In Link class (src/Link.h, src/Link.cpp)
-class Link {
-    // Ratchet state
-    Bytes _ratchet_key;
-    uint32_t _ratchet_counter;
-    
-    // Methods to implement
-    void rotate_keys();
-    Bytes derive_key(const Bytes& context);
-    void initialize_ratchet(const Bytes& shared_secret);
-};
+**Python RNS Link Encryption (Actual Behavior):**
+1. **ECDH Key Exchange**: During link establishment, peers exchange X25519 public keys
+2. **Single Derived Key**: HKDF derives a single key from the ECDH shared secret
+3. **Token-based Encryption**: The derived key creates a Token used for ALL packets on the link
+4. **No Per-Message Ratcheting**: Python RNS does NOT rotate keys after each message
+
+The `handshake()` method in `Link.py` shows:
+```python
+self.shared_key = self.prv.exchange(self.peer_pub)
+self.derived_key = RNS.Cryptography.hkdf(
+    length=derived_key_length,
+    derive_from=self.shared_key,
+    salt=self.get_salt(),
+    context=self.get_context())
+# ...
+self.token = Token(self.derived_key)  # Used for ALL packets
 ```
 
+### What C++ Must Implement
+The C++ implementation already correctly matches Python's behavior:
+- `Link::handshake()` performs ECDH exchange and HKDF derivation
+- `_derived_key` is used to create a Token for all link packets
+- No key rotation between messages
+
+### Python Reference Files
+- `RNS/Link.py` - See `handshake()` method (lines 353-366), Token creation (lines 1193, 1207)
+- `RNS/Cryptography/Token.py` - Token encryption using derived key
+
 ### Success Criteria
-- [ ] Link can initialize ratchet from shared secret after ECDH
-- [ ] Keys rotate after each message exchange
-- [ ] Derived keys match Python RNS output for same inputs
-- [ ] Link remains functional after multiple key rotations
-- [ ] Test: Establish link between C++ and Python nodes, exchange 100+ messages
+- [x] Link can initialize derived key from ECDH shared secret via HKDF
+- [x] Derived key creates Token for link encryption
+- [x] Keys match Python RNS output for same inputs (Link establishment works)
+- [x] Test: Establish link between C++ and Python nodes, exchange 100+ messages (PASSED 2025-11-26)
 
 ### Test Procedure
 ```bash
@@ -597,16 +606,29 @@ valgrind --leak-check=full .pio/build/native/program
 
 ## Success Milestones
 
-### Milestone 1: Ratchets Working
-- [ ] Link establishment with ratchet initialization
-- [ ] 100 messages exchanged with key rotation
-- [ ] No crashes, no memory leaks
+### Milestone 1: Link Key Derivation Working (Corrected) - COMPLETE
+- [x] Link establishment with HKDF key derivation (matches Python)
+- [x] 100+ messages exchanged successfully (validates Token encryption)
+- [x] No crashes, no memory leaks
 
 ### Milestone 2: Resource Transfer
-- [ ] 1KB resource C++ → Python ✓
-- [ ] 1MB resource both directions ✓
-- [ ] 50MB resource (matches Python test) ✓
-- [ ] Progress callbacks working ✓
+- [ ] 1KB resource C++ → Python (sending not yet implemented)
+- [x] 1KB resource Python → C++ (receiving complete - 2025-11-26)
+- [ ] 1MB resource both directions
+- [ ] 50MB resource (matches Python test)
+- [ ] Progress callbacks working
+
+#### Implementation Notes (2025-11-26):
+Resource **receiving** from Python to C++ is fully functional:
+- ResourceAdvertisement parsing (msgpack) ✓
+- Resource::accept() for incoming resources ✓
+- Hashmap management and part requests ✓
+- Token decryption of resource data ✓
+- BZ2 decompression ✓
+- Proof computation and validation ✓
+- Key fix: Proof packet must use `Type::Packet::PROOF` (0x03) not DATA
+
+Resource **sending** from C++ to Python is not yet implemented.
 
 ### Milestone 3: Channel Messaging
 - [ ] Custom message types ✓

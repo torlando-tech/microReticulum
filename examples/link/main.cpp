@@ -14,6 +14,7 @@
 #include <Identity.h>
 #include <Destination.h>
 #include <Packet.h>
+#include <Resource.h>
 #include <Transport.h>
 #include <Log.h>
 #include <Bytes.h>
@@ -145,6 +146,10 @@ void server() {
 ##########################################################
 */
 
+// Forward declarations for resource callbacks
+void resource_started(const RNS::Resource& resource);
+void resource_concluded(const RNS::Resource& resource);
+
 // A reference to the server link
 RNS::Link server_link({RNS::Type::NONE});
 
@@ -155,9 +160,14 @@ void link_established(RNS::Link& link) {
     // instance for later use
     server_link = link;
 
+    // Set up resource callbacks to receive resources from server
+    link.set_resource_started_callback(resource_started);
+    link.set_resource_concluded_callback(resource_concluded);
+
     // Inform the user that the server is
     // connected
     RNS::log("Link established with server, enter some text to send, or \"quit\" to quit");
+    RNS::log("Resource transfers will be automatically received.");
 }
 
 // When a link is closed, we'll inform the
@@ -185,6 +195,24 @@ void client_packet_received(const RNS::Bytes& message, const RNS::Packet& packet
     RNS::log("Received data on the link: "+text);
     printf("> ");
 	fflush(stdout);
+}
+
+// Resource callbacks
+void resource_started(const RNS::Resource& resource) {
+	RNS::log("Resource transfer started from server");
+	RNS::log("  Resource size: " + std::to_string(resource.size()) + " bytes");
+}
+
+void resource_concluded(const RNS::Resource& resource) {
+	if (resource.status() == RNS::Type::Resource::COMPLETE) {
+		RNS::log("Resource transfer completed successfully!");
+		RNS::log("  Received " + std::to_string(resource.size()) + " bytes");
+		RNS::log("  Data (first 50 bytes): " + resource.data().left(50).toString());
+	} else if (resource.status() == RNS::Type::Resource::FAILED) {
+		RNS::log("Resource transfer FAILED", RNS::LOG_ERROR);
+	} else {
+		RNS::log("Resource transfer concluded with status: " + std::to_string(resource.status()));
+	}
 }
 
 void client_loop() {
@@ -333,7 +361,9 @@ int main(int argc, char *argv[]) {
 #if defined(MEM_LOG)
 	RNS::loglevel(RNS::LOG_MEM);
 #else
-	RNS::loglevel(RNS::LOG_NOTICE);
+	// Use DEBUG to see resource handling
+	RNS::loglevel(RNS::LOG_DEBUG);
+	//RNS::loglevel(RNS::LOG_NOTICE);
 	//RNS::loglevel(RNS::LOG_TRACE);
 #endif
 
