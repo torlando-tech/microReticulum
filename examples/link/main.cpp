@@ -27,6 +27,7 @@
 #include <termios.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <signal.h>
 #endif
 
 #include <stdlib.h>
@@ -40,7 +41,7 @@
 // destinations we create. Since this echo example
 // is part of a range of example utilities, we'll put
 // them all within the app namespace "example_utilities"
-#define APP_NAME "example_utilities"
+#define APP_NAME "microreticulum_interop"
 
 RNS::Reticulum reticulum;
 
@@ -125,7 +126,7 @@ void server() {
 		RNS::Type::Destination::IN,
 		RNS::Type::Destination::SINGLE,
 		APP_NAME,
-		"linkexample"
+		"link_server"
 	);
 
 	// We configure a function that will get called every time
@@ -286,7 +287,7 @@ void client(const char* destination_hexhash) {
 		RNS::Type::Destination::OUT,
 		RNS::Type::Destination::SINGLE,
         APP_NAME,
-        "linkexample"
+        "link_server"
     );
 
     // And create a link
@@ -349,7 +350,11 @@ int main(int argc, char *argv[]) {
 	RNS::Utilities::OS::register_filesystem(universal_filesystem);
 
 	// Initialize and register interface
-	RNS::Interface udp_interface = new UDPInterface();
+	UDPInterface* udp_iface = new UDPInterface();
+	// For interop testing with Python: C++ listens on 4242, sends to 4243
+	// Python listens on 4243, sends to 4242
+	udp_iface->set_remote_port(4243);
+	RNS::Interface udp_interface = udp_iface;
 	udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
 	RNS::Transport::register_interface(udp_interface);
 	udp_interface.start();
