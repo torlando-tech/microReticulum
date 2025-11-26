@@ -166,7 +166,12 @@ void link_established(RNS::Link& link) {
 
     // Inform the user that the server is
     // connected
-    RNS::log("Link established with server, enter some text to send, or \"quit\" to quit");
+    RNS::log("Link established with server");
+    RNS::log("Commands:");
+    RNS::log("  send        - Send a 1KB test resource");
+    RNS::log("  send N      - Send an N-byte test resource");
+    RNS::log("  quit        - Exit the program");
+    RNS::log("  <text>      - Send text as a packet");
     RNS::log("Resource transfers will be automatically received.");
 }
 
@@ -215,6 +220,41 @@ void resource_concluded(const RNS::Resource& resource) {
 	}
 }
 
+// Callback for when our outgoing resource completes
+void send_resource_concluded(const RNS::Resource& resource) {
+	if (resource.status() == RNS::Type::Resource::COMPLETE) {
+		RNS::log("OUTGOING resource transfer completed successfully!");
+		RNS::log("  Sent " + std::to_string(resource.size()) + " bytes");
+	} else if (resource.status() == RNS::Type::Resource::FAILED) {
+		RNS::log("OUTGOING resource transfer FAILED", RNS::LOG_ERROR);
+	} else {
+		RNS::log("OUTGOING resource transfer concluded with status: " + std::to_string(resource.status()));
+	}
+}
+
+// Send a test resource over the link
+void send_test_resource(size_t size = 1024) {
+	if (!server_link) {
+		RNS::log("Cannot send resource - no active link", RNS::LOG_ERROR);
+		return;
+	}
+
+	// Generate test data
+	RNS::Bytes test_data;
+	std::string pattern = "HELLO_RETICULUM_RESOURCE_TEST_DATA_";
+	for (size_t i = 0; i < size; i++) {
+		test_data.append((uint8_t)pattern[i % pattern.length()]);
+	}
+
+	RNS::log("Creating and sending resource with " + std::to_string(size) + " bytes...");
+	RNS::log("  Data (first 50 bytes): " + test_data.left(50).toString());
+
+	// Create and advertise resource - it will be sent automatically
+	RNS::Resource resource(test_data, server_link, true, true, send_resource_concluded);
+	RNS::log("  Resource hash: " + resource.hash().toHex());
+	RNS::log("  Resource advertised, waiting for receiver request...");
+}
+
 void client_loop() {
 	// Wait for the link to become active
     RNS::log("Waiting for link to become active...");
@@ -240,9 +280,17 @@ void client_loop() {
 					should_quit = true;
 					server_link.teardown();
 				}
-
+				// Send a test resource
+				else if (text == "send" || text == "resource") {
+					send_test_resource(1024);
+				}
+				// Send a larger resource
+				else if (text.substr(0, 5) == "send ") {
+					size_t size = std::stoul(text.substr(5));
+					send_test_resource(size);
+				}
 				// If not, send the entered text over the link
-				if (text != "") {
+				else if (text != "") {
 					RNS::Bytes data(text);
 					if (data.size() <= RNS::Type::Link::MDU) {
 printf("(sending data: %s)\n", text.c_str());

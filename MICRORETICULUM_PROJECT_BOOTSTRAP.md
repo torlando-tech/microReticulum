@@ -612,7 +612,7 @@ valgrind --leak-check=full .pio/build/native/program
 - [x] No crashes, no memory leaks
 
 ### Milestone 2: Resource Transfer
-- [ ] 1KB resource C++ → Python (sending not yet implemented)
+- [x] 1KB resource C++ → Python (complete - 2025-11-26)
 - [x] 1KB resource Python → C++ (receiving complete - 2025-11-26)
 - [ ] 1MB resource both directions
 - [ ] 50MB resource (matches Python test)
@@ -628,7 +628,18 @@ Resource **receiving** from Python to C++ is fully functional:
 - Proof computation and validation ✓
 - Key fix: Proof packet must use `Type::Packet::PROOF` (0x03) not DATA
 
-Resource **sending** from C++ to Python is not yet implemented.
+Resource **sending** from C++ to Python is fully functional (2025-11-26):
+- Resource constructor for outgoing data ✓
+- Data compression (bz2) ✓
+- Token encryption of resource data ✓
+- Hashmap generation for part tracking ✓
+- ResourceAdvertisement::pack() with all 11 fields ✓
+- advertise() method sends advertisement packet ✓
+- request() method responds to RESOURCE_REQ ✓
+- Key fixes applied:
+  - ResourceAdvertisement must include ALL 11 fields (t,d,n,h,r,o,i,l,q,f,m)
+  - Don't double-encrypt: Packet class handles link encryption automatically
+- Verified: 1KB resource with compression (933 bytes saved), data integrity confirmed
 
 ### Milestone 3: Channel Messaging
 - [ ] Custom message types ✓
