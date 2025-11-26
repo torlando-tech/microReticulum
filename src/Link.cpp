@@ -1269,6 +1269,32 @@ void Link::receive(const Packet& packet) {
 					}
 					break;
 				}
+				case Type::Packet::RESOURCE_REQ:
+				{
+					// Handle resource request from receiver (for outgoing resources)
+					const Bytes plaintext = decrypt(packet.data());
+					if (plaintext) {
+						DEBUG("Link::receive: Received RESOURCE_REQ");
+						// Parse request to find resource hash
+						// Format: [hmu_flag:1][last_map_hash:4?][resource_hash:32][requested_hashes:4*N]
+						uint8_t hmu_flag = plaintext[0];
+						size_t offset = 1;
+						if (hmu_flag == Type::Resource::HASHMAP_IS_EXHAUSTED) {
+							offset += Type::Resource::MAPHASH_LEN;
+						}
+						Bytes resource_hash = plaintext.mid(offset, Type::Identity::HASHLENGTH / 8);
+
+						// Find matching outgoing resource
+						for (auto& resource : _object->_outgoing_resources) {
+							if (resource.hash() == resource_hash) {
+								DEBUG("Link::receive: Found matching outgoing resource, routing request");
+								const_cast<Resource&>(resource).request(plaintext);
+								break;
+							}
+						}
+					}
+					break;
+				}
 /*z
 				case Type::Packet::CHANNEL:
 				{
@@ -1290,10 +1316,13 @@ void Link::receive(const Packet& packet) {
 			}
 			else if (packet.packet_type() == Type::Packet::PROOF) {
 				if (packet.context() == Type::Packet::RESOURCE_PRF) {
+					DEBUG("Link::receive: Received RESOURCE_PRF");
 					Bytes resource_hash = packet.data().left(Type::Identity::HASHLENGTH/8);
-					for (const auto& resource : _object->_outgoing_resources) {
+					for (auto& resource : _object->_outgoing_resources) {
 						if (resource_hash == resource.hash()) {
-							//z resource.validate_proof(packet.data());
+							DEBUG("Link::receive: Found matching outgoing resource for proof");
+							const_cast<Resource&>(resource).validate_proof(packet.data());
+							break;
 						}
 					}
 				}

@@ -70,6 +70,10 @@ namespace RNS {
 		void hashmap_update(int segment, const Bytes& hashmap_data);
 		static Bytes get_map_hash(const Bytes& data, const Bytes& random_hash);
 
+		// Sending (initiator) methods
+		void advertise();
+		void request(const Bytes& request_data);
+
 		// Transfer control
 		void request_next();
 		void receive_part(const Packet& packet);
