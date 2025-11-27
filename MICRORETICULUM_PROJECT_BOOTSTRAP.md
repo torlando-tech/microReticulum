@@ -618,7 +618,10 @@ valgrind --leak-check=full .pio/build/native/program
 - [x] 1KB resource Python → C++ (receiving complete - 2025-11-26)
 - [x] 1MB resource C++ → Python (complete - 2025-11-26)
 - [x] 1MB resource Python → C++ (complete - 2025-11-26, see double-decryption fix below)
-- [ ] 50MB resource (matches Python test)
+- [x] 5MB resource C++ → Python (complete - 2025-11-26, multi-part transfer)
+- [x] 15MB resource C++ → Python (complete - 2025-11-26, 6 parts, data verified)
+- [x] 15MB resource Python → C++ segments (2025-11-26, see segment note below)
+- [ ] 50MB resource (requires C++ segment sending implementation)
 - [ ] Progress callbacks working
 
 #### Implementation Notes (2025-11-26):
@@ -693,6 +696,77 @@ not decrypt again.
 - Minor: Decompressed size is 1,048,575 bytes (1 byte short of 1,048,576)
   - This 1-byte difference traced to Python RNS compression behavior, not a C++ bug
   - C++ BZ2 decompression produces identical output to Python for same input
+
+#### RESOLVED: SDU Mismatch Bug for Multi-Part Resources (2025-11-26)
+
+**Status**: FIXED - Multi-part resource transfers now work C++ ↔ Python
+
+**Symptom**:
+When C++ sent multi-part resources (>~460 bytes encrypted), Python logged:
+"Could not decode resource advertisement, dropping resource"
+
+C++ said "3 parts" for 5MB test, Python expected "2 parts" - MISMATCH!
+
+**Root Cause**:
+C++ and Python calculated SDU (Service Data Unit) differently:
+- **Python**: `sdu = link.mtu - HEADER_MAXSIZE - IFAC_MIN_SIZE` = 500 - 23 - 1 = **476 bytes**
+- **C++ (old)**: `sdu = link.get_mdu()` = **431 bytes**
+
+For 928 bytes of encrypted data:
+- Python: ceil(928/476) = 2 parts
+- C++ (old): ceil(928/431) = 3 parts → Python allocates 2-element array, receives 3 → crash
+
+**The Fix** (in `src/Resource.cpp`, TWO locations):
+
+**Location 1 - Sender constructor (~line 115)**:
+```cpp
+// OLD (WRONG):
+_object->_sdu = const_cast<Link&>(link).get_mdu();
+
+// NEW (FIXED - matches Python RNS formula):
+uint16_t link_mtu = const_cast<Link&>(link).get_mtu();
+_object->_sdu = link_mtu - Type::Reticulum::HEADER_MAXSIZE - Type::Reticulum::IFAC_MIN_SIZE;
+```
+
+**Location 2 - Resource::accept() receiver (~line 740)**:
+```cpp
+// OLD (WRONG):
+size_t sdu = link.get_mdu();
+
+// NEW (FIXED - matches Python RNS formula):
+uint16_t link_mtu = link.get_mtu();
+size_t sdu = link_mtu - Type::Reticulum::HEADER_MAXSIZE - Type::Reticulum::IFAC_MIN_SIZE;
+```
+
+**Test Results After Fix**:
+| Direction | Size | Parts | Result |
+|-----------|------|-------|--------|
+| C++ → Python | 5MB | 2 | ✅ SUCCESS, data verified |
+| C++ → Python | 15MB | 6 | ✅ SUCCESS, data verified |
+
+#### Python → C++ Segment Handling (2025-11-26)
+
+**Background**:
+Python RNS splits large resources into "segments" at `MAX_EFFICIENT_SIZE = 1MB`.
+C++ uses `MAX_EFFICIENT_SIZE = 16MB` (upstream default).
+
+For 15MB: Python sends **16 segments** (~1MB each), each as a separate Resource transfer.
+
+**Test Results**:
+- C++ received all 16 segments correctly ✅
+- Each segment decrypted and decompressed to ~1MB ✅
+- Data pattern verified: `ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789...` ✅
+- Total data: 15 × 1,048,575 + 15 = 15,728,640 bytes ✅
+
+**Current Limitation**:
+C++ treats each segment as a **separate standalone Resource**. It does NOT:
+- Track segment_index across multiple transfers
+- Accumulate segment data into final resource
+- This is expected behavior - segment reassembly is not implemented
+
+**Next Steps for Full Python → C++ Support**:
+1. Implement segment reassembly (track segment_index, accumulate data)
+2. OR: Change C++ MAX_EFFICIENT_SIZE to 1MB to match Python
 
 ### Milestone 3: Channel Messaging
 - [ ] Custom message types ✓
