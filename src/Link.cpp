@@ -104,7 +104,9 @@ Link::Link(const Destination& destination /*= {Type::NONE}*/, Callbacks::establi
 		start_watchdog();
 		_object->_packet.send();
 		had_outbound();
-		DEBUGF("Link request %s sent to %s", _object->_link_id.toHex().c_str(), _object->_destination.toString().c_str());
+		std::string link_id_hex = _object->_link_id.toHex();
+		std::string dest_str = _object->_destination.toString();
+		DEBUGF("Link request %s sent to %s", link_id_hex.c_str(), dest_str.c_str());
 		TRACEF("Establishment timeout is %f for link request %s", _object->_establishment_timeout, _object->_link_id.toHex().c_str());
 	}
 
@@ -335,7 +337,9 @@ void Link::validate_proof(const Packet& packet) {
 					_object->_activated_at = OS::time();
 					_object->_last_proof = _object->_activated_at;
 					Transport::activate_link(*this);
-					VERBOSEF("Link %s established with %s, RTT is %f s", toString().c_str(), _object->_destination.toString().c_str(), OS::round(_object->_rtt, 3));
+					std::string link_str = toString();
+					std::string dest_str = _object->_destination.toString();
+					VERBOSEF("Link %s established with %s, RTT is %f s", link_str.c_str(), dest_str.c_str(), OS::round(_object->_rtt, 3));
 					
 					//p if _object->_rtt != None and _object->_establishment_cost != None and _object->_rtt > 0 and _object->_establishment_cost > 0:
 					if (_object->_rtt != 0.0 && _object->_establishment_cost != 0 && _object->_rtt > 0 and _object->_establishment_cost > 0) {
@@ -831,7 +835,9 @@ void Link::handle_request(const Bytes& request_id, const ResourceRequest& resour
 			}
 
 			if (allowed) {
-				DEBUGF("Handling request %s for: %s", request_id.toHex().c_str(), request_handler._path.toString().c_str());
+				std::string req_id_hex = request_id.toHex();
+			std::string path_str = request_handler._path.toString();
+			DEBUGF("Handling request %s for: %s", req_id_hex.c_str(), path_str.c_str());
 				//p if len(inspect.signature(response_generator).parameters) == 5:
 				//p 	response = response_generator(path, request_data, request_id, _object->__remote_identity, requested_at)
 				//p elif len(inspect.signature(response_generator).parameters) == 6:
@@ -865,7 +871,9 @@ void Link::handle_request(const Bytes& request_id, const ResourceRequest& resour
 				else {
 					identity_string = "<Unknown>";
 				}
-				DEBUGF("Request %s from %s not allowed for: %s", request_id.toHex().c_str(), identity_string.c_str(), request_handler._path.toString().c_str());
+				std::string req_id_hex = request_id.toHex();
+				std::string path_str = request_handler._path.toString();
+				DEBUGF("Request %s from %s not allowed for: %s", req_id_hex.c_str(), identity_string.c_str(), path_str.c_str());
 			}
 		}
 	}

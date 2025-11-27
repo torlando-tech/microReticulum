@@ -221,16 +221,18 @@ UDPInterface::UDPInterface(const char* name /*= "UDPInterface"*/) : RNS::Interfa
 			on_incoming(_buffer);
 		}
 #else
+		// Drain all available UDP packets to handle burst traffic
 		size_t available = 0;
 		ioctl(_socket, FIONREAD, &available);
-		if (available > 0) {
-			size_t len = read(_socket, _buffer.writable(available), available);
+		while (available > 0) {
+			// Read one datagram at a time (UDP read returns one datagram)
+			size_t len = read(_socket, _buffer.writable(Type::Reticulum::MTU), Type::Reticulum::MTU);
 			if (len > 0) {
-				if (len < available) {
-					_buffer.resize(len);
-				}
+				_buffer.resize(len);
 				on_incoming(_buffer);
 			}
+			// Check if more datagrams are waiting
+			ioctl(_socket, FIONREAD, &available);
 		}
 #endif
 	}

@@ -67,6 +67,7 @@ namespace RNS {
 		Bytes _hashmap_raw;           // Raw hashmap from advertisement
 		std::vector<Bytes> _hashmap;  // Per-part map hashes (4 bytes each)
 		size_t _hashmap_height = 0;   // How many hashes we know
+		size_t _initial_hashmap_count = 0; // Hashes in initial segment (segment 0)
 		bool _waiting_for_hmu = false;
 		bool _receiving_part = false;
 		int _consecutive_completed_height = -1;

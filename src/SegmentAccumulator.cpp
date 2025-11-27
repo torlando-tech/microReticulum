@@ -34,9 +34,10 @@ bool SegmentAccumulator::segment_completed(const Resource& resource) {
 		DEBUG("SegmentAccumulator: No original_hash, using resource hash as key");
 	}
 
+	std::string hash_short = original_hash.toHex().substr(0, 16);
 	DEBUGF("SegmentAccumulator: Received segment %d/%d for %s (%zu bytes)",
 		segment_index, total_segments,
-		original_hash.toHex().substr(0, 16).c_str(),
+		hash_short.c_str(),
 		resource.data().size());
 
 	double now = OS::time();
@@ -62,8 +63,9 @@ bool SegmentAccumulator::segment_completed(const Resource& resource) {
 		_pending[original_hash] = std::move(transfer);
 		it = _pending.find(original_hash);
 
+		std::string hash_short = original_hash.toHex().substr(0, 16);
 		INFOF("SegmentAccumulator: Started tracking %d-segment transfer for %s",
-			total_segments, original_hash.toHex().substr(0, 16).c_str());
+			total_segments, hash_short.c_str());
 	}
 
 	PendingTransfer& transfer = it->second;
@@ -97,8 +99,9 @@ bool SegmentAccumulator::segment_completed(const Resource& resource) {
 
 	// Check if all segments received
 	if (transfer.received_count == transfer.total_segments) {
+		std::string hash_short = original_hash.toHex().substr(0, 16);
 		INFOF("SegmentAccumulator: All %d segments received for %s, assembling...",
-			transfer.total_segments, original_hash.toHex().substr(0, 16).c_str());
+			transfer.total_segments, hash_short.c_str());
 
 		// Assemble complete data
 		Bytes complete_data = assemble_segments(transfer);
@@ -150,8 +153,9 @@ void SegmentAccumulator::check_timeouts(double timeout_seconds) {
 		double inactive_time = now - transfer.last_activity;
 
 		if (inactive_time > timeout_seconds) {
+			std::string hash_short = transfer.original_hash.toHex().substr(0, 16);
 			WARNINGF("SegmentAccumulator: Transfer %s timed out (%.1fs inactive, %d/%d segments)",
-				transfer.original_hash.toHex().substr(0, 16).c_str(),
+				hash_short.c_str(),
 				inactive_time, transfer.received_count, transfer.total_segments);
 			to_remove.push_back(pair.first);
 		}
@@ -165,8 +169,9 @@ void SegmentAccumulator::check_timeouts(double timeout_seconds) {
 void SegmentAccumulator::cleanup(const Bytes& original_hash) {
 	auto it = _pending.find(original_hash);
 	if (it != _pending.end()) {
+		std::string hash_short = original_hash.toHex().substr(0, 16);
 		DEBUGF("SegmentAccumulator: Cleaning up transfer %s (%d/%d segments received)",
-			original_hash.toHex().substr(0, 16).c_str(),
+			hash_short.c_str(),
 			it->second.received_count, it->second.total_segments);
 		_pending.erase(it);
 	}
