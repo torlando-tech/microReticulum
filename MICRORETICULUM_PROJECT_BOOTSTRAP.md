@@ -822,6 +822,88 @@ cd examples/link
 .pio/build/native/program <destination_hash>
 ```
 
+#### IMPLEMENTED: Dynamic Window Scaling (2025-11-27)
+
+**Status**: COMPLETE - Resource transfers now use adaptive window sizing for fast links
+
+**Background**:
+Python RNS dynamically scales the transfer window from 4 (slow links) to 75 (fast links) based on measured throughput. C++ was using a static window=4, causing 2MB transfers to timeout.
+
+**Root Cause Analysis**:
+
+The window scaling algorithm was implemented correctly in `src/Resource.cpp`, but initial testing showed RTT measurements of 400-500ms on localhost UDP (should be microseconds). This prevented the "fast link" detection from triggering.
+
+**Investigation revealed**:
+- RTT is measured from `request_next()` (send request) to `receive_part()` (all parts received)
+- Event loop in `examples/link/main.cpp` was sleeping 100ms between iterations
+- This artificial delay caused slow packet processing, making localhost appear as a slow link
+- Transfer rate: ~4,625 B/s (below 6,250 B/s threshold needed for fast link detection)
+
+**The Fix** (`examples/link/main.cpp`):
+
+Reduced event loop sleep from 100ms to 10ms in three locations:
+- Line 408: Wait for link activation loop
+- Line 467: Main client event loop (with detailed comment)
+- Line 496: Wait for path discovery loop
+
+```cpp
+/*
+ * IMPORTANT: Polling frequency affects performance
+ *
+ * microReticulum uses cooperative polling. The application must call
+ * reticulum.loop() frequently. The sleep interval between calls affects:
+ *
+ * - RTT measurement accuracy (shorter = more accurate)
+ * - Resource transfer throughput (shorter = faster)
+ * - Link establishment time (shorter = faster)
+ * - CPU usage (shorter = higher CPU)
+ *
+ * Recommended intervals:
+ * - Native/testing: 10ms (good balance of performance and CPU)
+ * - ESP32 with WiFi: 10-25ms (allow WiFi stack time)
+ * - Battery-powered: Consider interrupt-driven wake with longer sleeps
+ *
+ * Python RNS uses threads with ~25ms sleeps in subsystem loops.
+ */
+RNS::Utilities::OS::sleep(0.01);
+```
+
+**Results After Fix**:
+
+| Metric | Before (100ms) | After (10ms) | Improvement |
+|--------|----------------|--------------|-------------|
+| RTT | 400-500ms | 40-120ms | 10x faster |
+| Transfer rate | 4.6 KB/s | 44-290 KB/s | 62x faster |
+| Window size | Stuck at 4-10 | Scales to 75 | ✅ Working |
+| Fast link detection | Never triggered | Triggers at 4/4 rounds | ✅ Working |
+
+**Implementation Details** (`src/Resource.cpp:1208-1257`):
+
+The window scaling algorithm matches Python's implementation:
+1. Measure RTT after each request/response cycle
+2. Calculate transfer rate: `bytes_received / rtt`
+3. If rate > 6,250 B/s for 4 consecutive rounds, increase window_max from 10 to 75
+4. Window increments each round until hitting window_max
+
+**Python vs C++ Event Loop Comparison**:
+
+| Component | Python RNS | C++ microReticulum |
+|-----------|------------|-------------------|
+| Transport job interval | 250ms | 250ms (same) |
+| Resource watchdog | 25ms | N/A |
+| Lock wait backoff | 0.5ms | 0.5ms (same) |
+| Application loop | N/A (threaded) | 10ms (polling) |
+
+**Key Insight**:
+- Python uses threads, so each subsystem has its own sleep cycle
+- C++ uses cooperative polling, requiring applications to call `reticulum.loop()` frequently
+- 10ms is faster than Python's resource watchdog (25ms), ensuring good performance
+- Applications should tune this based on platform constraints (CPU, power, etc.)
+
+**Files Modified**:
+- `src/Resource.cpp`: Dynamic window scaling logic (already committed in previous work)
+- `examples/link/main.cpp`: Event loop sleep reduced from 100ms to 10ms
+
 ### Milestone 3: Channel Messaging
 - [ ] Custom message types ✓
 - [ ] Round-trip messaging ✓

@@ -405,7 +405,7 @@ void client_loop() {
     RNS::log("Waiting for link to become active...");
     while (!server_link) {
 		reticulum.loop();
-		RNS::Utilities::OS::sleep(0.1);
+		RNS::Utilities::OS::sleep(0.01);
 	}
 
 	std::string text;
@@ -462,7 +462,25 @@ printf("(sending data: %s)\n", text.c_str());
 			}
 		}
 
-		RNS::Utilities::OS::sleep(0.1);
+		/*
+		 * IMPORTANT: Polling frequency affects performance
+		 *
+		 * microReticulum uses cooperative polling. The application must call
+		 * reticulum.loop() frequently. The sleep interval between calls affects:
+		 *
+		 * - RTT measurement accuracy (shorter = more accurate)
+		 * - Resource transfer throughput (shorter = faster)
+		 * - Link establishment time (shorter = faster)
+		 * - CPU usage (shorter = higher CPU)
+		 *
+		 * Recommended intervals:
+		 * - Native/testing: 10ms (good balance of performance and CPU)
+		 * - ESP32 with WiFi: 10-25ms (allow WiFi stack time)
+		 * - Battery-powered: Consider interrupt-driven wake with longer sleeps
+		 *
+		 * Python RNS uses threads with ~25ms sleeps in subsystem loops.
+		 */
+		RNS::Utilities::OS::sleep(0.01);
 	}
 }
 
@@ -491,7 +509,7 @@ void client(const char* destination_hexhash) {
         RNS::Transport::request_path(destination_hash);
         while (!RNS::Transport::has_path(destination_hash)) {
 			reticulum.loop();
-			RNS::Utilities::OS::sleep(0.1);
+			RNS::Utilities::OS::sleep(0.01);
 		}
 	}
 
