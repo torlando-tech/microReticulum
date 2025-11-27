@@ -33,13 +33,32 @@ active_links = []
 resource_data = None
 
 
-def generate_test_data(size=1024):
-    """Generate predictable test data."""
-    # Create a repeating pattern for easy verification
-    pattern = b"HELLO_RETICULUM_RESOURCE_TEST_DATA_"
-    repeat_count = (size // len(pattern)) + 1
-    data = (pattern * repeat_count)[:size]
-    return data
+def generate_test_data(size=1024, random_data=False):
+    """Generate test data.
+
+    Args:
+        size: Size of data in bytes
+        random_data: If True, use random bytes (won't compress well, forces segmentation)
+                     If False, use repeating pattern (compresses well)
+    """
+    if random_data:
+        import secrets
+        # Generate pseudo-random but deterministic data using hash chain
+        # This won't compress well, forcing multi-segment transfers for large sizes
+        data = bytearray()
+        seed = b"MICRORETICULUM_SEGMENT_TEST_SEED_"
+        import hashlib
+        current = hashlib.sha256(seed).digest()
+        while len(data) < size:
+            data.extend(current)
+            current = hashlib.sha256(current).digest()
+        return bytes(data[:size])
+    else:
+        # Create a repeating pattern for easy verification
+        pattern = b"HELLO_RETICULUM_RESOURCE_TEST_DATA_"
+        repeat_count = (size // len(pattern)) + 1
+        data = (pattern * repeat_count)[:size]
+        return data
 
 
 def resource_started(resource):
@@ -130,13 +149,13 @@ def packet_received(data, packet):
     print(f"  Data (hex): {data.hex()}")
 
 
-def setup_server(config_path=None, data_size=1024):
+def setup_server(config_path=None, data_size=1024, random_data=False):
     """Set up the RNS server."""
     global server_destination, resource_data
 
     # Generate test data
-    resource_data = generate_test_data(data_size)
-    print(f"Generated {len(resource_data)} bytes of test data")
+    resource_data = generate_test_data(data_size, random_data=random_data)
+    print(f"Generated {len(resource_data)} bytes of {'random' if random_data else 'pattern'} test data")
 
     print("Initializing Reticulum...")
 
@@ -193,19 +212,28 @@ def main():
                         help="Path to Reticulum config directory",
                         default=None)
     parser.add_argument("-s", "--size",
-                        help="Size of test data in bytes (default: 1024)",
+                        help="Size of test data in bytes (default: 1024). Use e.g. 2097152 for 2MB",
                         type=int,
                         default=1024)
     parser.add_argument("-v", "--verbose",
                         help="Increase output verbosity",
                         action="store_true")
+    parser.add_argument("-r", "--random",
+                        help="Use random data (won't compress, forces segmentation for large sizes)",
+                        action="store_true")
     args = parser.parse_args()
+
+    # Show segment info for large resources
+    max_efficient = 1 * 1024 * 1024  # 1MB
+    if args.size > max_efficient:
+        segments = (args.size + max_efficient - 1) // max_efficient
+        print(f"Note: Resource of {args.size} bytes will be split into {segments} segments")
 
     if args.verbose:
         RNS.loglevel = RNS.LOG_DEBUG
 
     try:
-        reticulum = setup_server(args.config, args.size)
+        reticulum = setup_server(args.config, args.size, random_data=args.random)
 
         # Main loop - just keep running
         while True:

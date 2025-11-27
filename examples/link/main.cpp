@@ -15,6 +15,7 @@
 #include <Destination.h>
 #include <Packet.h>
 #include <Resource.h>
+#include <SegmentAccumulator.h>
 #include <Transport.h>
 #include <Log.h>
 #include <Bytes.h>
@@ -217,6 +218,7 @@ void server() {
 void resource_started(const RNS::Resource& resource);
 void resource_concluded(const RNS::Resource& resource);
 void send_test_resource(size_t size);  // Forward declaration
+void accumulated_resource_received(const RNS::Bytes& data, const RNS::Bytes& original_hash);
 
 // A reference to the server link
 RNS::Link server_link({RNS::Type::NONE});
@@ -231,6 +233,9 @@ void link_established(RNS::Link& link) {
     // instance for later use
     server_link = link;
 
+    // Set up segment accumulator for multi-segment resources
+    link.setup_segment_accumulator(accumulated_resource_received);
+
     // Set up resource callbacks to receive resources from server
     link.set_resource_started_callback(resource_started);
     link.set_resource_concluded_callback(resource_concluded);
@@ -238,6 +243,7 @@ void link_established(RNS::Link& link) {
     // Inform the user that the server is
     // connected
     RNS::log("Link established with server");
+    RNS::log("  Segment accumulator configured for multi-segment resources");
 
     // If auto_send_size is set, send resource automatically
     if (auto_send_size > 0) {
@@ -246,10 +252,11 @@ void link_established(RNS::Link& link) {
     } else {
         RNS::log("Commands:");
         RNS::log("  send        - Send a 1KB test resource");
-        RNS::log("  send N      - Send an N-byte test resource");
+        RNS::log("  send N      - Send an N-byte test resource (e.g., 'send 2097152' for 2MB)");
         RNS::log("  quit        - Exit the program");
         RNS::log("  <text>      - Send text as a packet");
         RNS::log("Resource transfers will be automatically received.");
+        RNS::log("Multi-segment resources (>1MB) will be accumulated and shown when complete.");
     }
 }
 
@@ -280,17 +287,55 @@ void client_packet_received(const RNS::Bytes& message, const RNS::Packet& packet
 	fflush(stdout);
 }
 
+// Segment accumulator callback for complete multi-segment resources
+void accumulated_resource_received(const RNS::Bytes& data, const RNS::Bytes& original_hash) {
+	RNS::log("=== ACCUMULATED RESOURCE RECEIVED ===");
+	RNS::log("  Total size: " + std::to_string(data.size()) + " bytes");
+	RNS::log("  Original hash: " + original_hash.toHex().substr(0, 16) + "...");
+	RNS::log("  Data (first 100 bytes): " + data.left(100).toString());
+
+	// Verify data pattern
+	std::string pattern = "HELLO_RETICULUM_RESOURCE_TEST_DATA_";
+	bool valid = true;
+	for (size_t i = 0; i < std::min(data.size(), (size_t)1000); i++) {
+		if (data.data()[i] != (uint8_t)pattern[i % pattern.length()]) {
+			valid = false;
+			RNS::log("  Data mismatch at byte " + std::to_string(i), RNS::LOG_ERROR);
+			break;
+		}
+	}
+	if (valid) {
+		RNS::log("  Data pattern VERIFIED OK");
+	}
+	RNS::log("=====================================");
+}
+
 // Resource callbacks
 void resource_started(const RNS::Resource& resource) {
 	RNS::log("Resource transfer started from server");
 	RNS::log("  Resource size: " + std::to_string(resource.size()) + " bytes");
+	RNS::log("  Segment: " + std::to_string(resource.segment_index()) + "/" + std::to_string(resource.total_segments()));
 }
 
 void resource_concluded(const RNS::Resource& resource) {
 	if (resource.status() == RNS::Type::Resource::COMPLETE) {
-		RNS::log("Resource transfer completed successfully!");
+		RNS::log("Resource/segment transfer completed!");
 		RNS::log("  Received " + std::to_string(resource.size()) + " bytes");
-		RNS::log("  Data (first 50 bytes): " + resource.data().left(50).toString());
+		RNS::log("  Segment: " + std::to_string(resource.segment_index()) + "/" + std::to_string(resource.total_segments()));
+
+		// Check if this is a multi-segment resource
+		if (resource.is_segmented()) {
+			RNS::log("  Multi-segment resource - routing through accumulator...");
+			// Route through segment accumulator
+			bool handled = server_link.segment_accumulator().segment_completed(resource);
+			if (handled) {
+				RNS::log("  Segment accumulated, waiting for more...");
+			}
+		} else {
+			// Single-segment resource - show data directly
+			RNS::log("  Single-segment resource");
+			RNS::log("  Data (first 50 bytes): " + resource.data().left(50).toString());
+		}
 	} else if (resource.status() == RNS::Type::Resource::FAILED) {
 		RNS::log("Resource transfer FAILED", RNS::LOG_ERROR);
 	} else {
@@ -301,8 +346,12 @@ void resource_concluded(const RNS::Resource& resource) {
 // Callback for when our outgoing resource completes
 void send_resource_concluded(const RNS::Resource& resource) {
 	if (resource.status() == RNS::Type::Resource::COMPLETE) {
-		RNS::log("OUTGOING resource transfer completed successfully!");
+		RNS::log("=== OUTGOING RESOURCE TRANSFER COMPLETE ===");
 		RNS::log("  Sent " + std::to_string(resource.size()) + " bytes");
+		if (resource.is_segmented()) {
+			RNS::log("  All " + std::to_string(resource.total_segments()) + " segments sent successfully!");
+		}
+		RNS::log("==========================================");
 	} else if (resource.status() == RNS::Type::Resource::FAILED) {
 		RNS::log("OUTGOING resource transfer FAILED", RNS::LOG_ERROR);
 	} else {
@@ -330,13 +379,25 @@ void send_test_resource(size_t size = 1024) {
 	RNS::Bytes test_data(buffer.data(), size);
 	RNS::log("  Bytes created successfully");
 
+	// Check if this will be segmented
+	size_t max_efficient = RNS::Type::Resource::MAX_EFFICIENT_SIZE;
+	if (size > max_efficient) {
+		int segments = (size + max_efficient - 1) / max_efficient;
+		RNS::log("Resource will be split into " + std::to_string(segments) + " segments");
+	}
+
 	RNS::log("Creating and sending resource with " + std::to_string(size) + " bytes...");
 	RNS::log("  Data (first 50 bytes): " + test_data.left(50).toString());
 
 	// Create and advertise resource - it will be sent automatically
+	// For segmented resources, this creates and sends segment 1
 	RNS::Resource resource(test_data, server_link, true, true, send_resource_concluded);
 	RNS::log("  Resource hash: " + resource.hash().toHex());
-	RNS::log("  Resource advertised, waiting for receiver request...");
+	if (resource.is_segmented()) {
+		RNS::log("  Segment 1/" + std::to_string(resource.total_segments()) + " advertised");
+	} else {
+		RNS::log("  Resource advertised, waiting for receiver request...");
+	}
 }
 
 void client_loop() {

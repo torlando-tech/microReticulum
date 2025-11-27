@@ -499,7 +499,7 @@ namespace RNS { namespace Type {
 		#
 		// Capped at 16777215 (0xFFFFFF) per segment to
 		// fit in 3 bytes in resource advertisements.
-		static const uint32_t MAX_EFFICIENT_SIZE      = 16 * 1024 * 1024 - 1;
+		static const uint32_t MAX_EFFICIENT_SIZE      = 1 * 1024 * 1024;  // 1MB to match Python RNS
 		static const uint8_t RESPONSE_MAX_GRACE_TIME = 10;
 		
 		// The maximum size to auto-compress with

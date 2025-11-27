@@ -11,6 +11,7 @@
 #include "Bytes.h"
 #include "Type.h"
 #include "Cryptography/Token.h"
+#include "SegmentAccumulator.h"
 
 #include <set>
 
@@ -101,6 +102,9 @@ namespace RNS {
 		std::set<Resource> _incoming_resources;
 		std::set<Resource> _outgoing_resources;
 		std::set<RNS::RequestReceipt> _pending_requests;
+
+		// Multi-segment resource accumulator
+		SegmentAccumulator _segment_accumulator;
 
 	friend class Link;
 	};

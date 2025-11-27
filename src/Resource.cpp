@@ -53,10 +53,57 @@ Resource::Resource(const Bytes& data, const Link& link, bool advertise /*= true*
 	_object->_callbacks._concluded = callback;
 	_object->_callbacks._progress = progress_callback;
 
-	// Store original data for hash verification
-	Bytes input_data = data;
-	_object->_total_size = data.size();
-	_object->_uncompressed_size = data.size();
+	// Check if this needs to be segmented (data > MAX_EFFICIENT_SIZE)
+	// For segment_index > 1, the data is already a segment portion
+	size_t max_size = Type::Resource::MAX_EFFICIENT_SIZE;
+	bool needs_segmentation = (segment_index == 1 && data.size() > max_size);
+
+	if (needs_segmentation) {
+		// Calculate total segments needed
+		_object->_total_segments = (data.size() + max_size - 1) / max_size;
+		_object->_split = true;
+
+		// Store full original data for segment extraction
+		_object->_original_data = data;
+
+		// Compute original_hash from full data (shared across all segments)
+		_object->_random_hash = Identity::get_random_hash().left(Type::Resource::RANDOM_HASH_SIZE);
+		_object->_original_hash = Identity::full_hash(data + _object->_random_hash);
+
+		INFOF("Resource: Segmenting %zu bytes into %d segments (max %zu each)",
+			data.size(), _object->_total_segments, max_size);
+
+		// Extract first segment's data
+		size_t seg_start = 0;
+		size_t seg_end = std::min(max_size, data.size());
+		Bytes segment_data = data.mid(seg_start, seg_end - seg_start);
+
+		DEBUGF("Resource: Segment 1/%d: bytes %zu-%zu (%zu bytes)",
+			_object->_total_segments, seg_start, seg_end, segment_data.size());
+
+		// Now process this segment (fall through to normal processing)
+		// The rest of the constructor will handle this segment
+		// Store segment info for building the resource
+		_object->_segment_index = 1;
+		_object->_total_size = segment_data.size();  // This segment's size
+		_object->_uncompressed_size = segment_data.size();
+
+		// Use segment data for the rest of processing
+		// (input_data will be set to segment_data below)
+	}
+
+	// Determine the input data for this resource/segment
+	Bytes input_data;
+	if (needs_segmentation) {
+		// Use first segment data
+		size_t seg_end = std::min(max_size, data.size());
+		input_data = data.mid(0, seg_end);
+	} else {
+		// Single segment or subsequent segment - use data as-is
+		input_data = data;
+		_object->_total_size = data.size();
+		_object->_uncompressed_size = data.size();
+	}
 
 	DEBUG("Resource::ctor: About to compress");
 
@@ -74,9 +121,12 @@ Resource::Resource(const Bytes& data, const Link& link, bool advertise /*= true*
 		}
 	}
 
-	DEBUG("Resource::ctor: Generating random_hash");
-	// Generate random_hash (4 bytes) - used for hashmap collision prevention
-	_object->_random_hash = Identity::get_random_hash().left(Type::Resource::RANDOM_HASH_SIZE);
+	// Generate random_hash if not already set (segmented resources already have it)
+	if (!_object->_random_hash) {
+		DEBUG("Resource::ctor: Generating random_hash");
+		// Generate random_hash (4 bytes) - used for hashmap collision prevention
+		_object->_random_hash = Identity::get_random_hash().left(Type::Resource::RANDOM_HASH_SIZE);
+	}
 
 	DEBUG("Resource::ctor: Computing resource hash");
 	// Compute resource hash = SHA256(original_input_data + random_hash)
@@ -84,9 +134,10 @@ Resource::Resource(const Bytes& data, const Link& link, bool advertise /*= true*
 	_object->_hash = Identity::full_hash(input_data + _object->_random_hash);
 
 	// Set original_hash for multi-segment tracking
+	// For segmented resources, original_hash was already set above
 	if (original_hash) {
 		_object->_original_hash = original_hash;
-	} else {
+	} else if (!_object->_original_hash) {
 		_object->_original_hash = _object->_hash;
 	}
 
@@ -160,9 +211,13 @@ Resource::Resource(const Bytes& data, const Link& link, bool advertise /*= true*
 	_object->_hashmap_height = _object->_total_parts;
 
 	// Set segment info (for multi-segment resources)
-	_object->_segment_index = segment_index;
-	_object->_total_segments = 1;  // Single segment for now
-	_object->_split = false;
+	// Only set if not already configured by segmentation logic above
+	if (_object->_segment_index == 1 && _object->_total_segments == 1 && !_object->_split) {
+		// Not a segmented resource - use passed values
+		_object->_segment_index = segment_index;
+		// total_segments and _split remain at defaults (1, false)
+	}
+	// Else: keep the values set during segmentation
 
 	// Build flags
 	_object->_flags = 0;
@@ -401,15 +456,134 @@ void Resource::validate_proof(const Bytes& proof_data) {
 	// For now, just accept the proof if hash matches
 
 	_object->_status = Type::Resource::COMPLETE;
-	DEBUG("Resource::validate_proof: Proof accepted, transfer complete");
+	DEBUG("Resource::validate_proof: Proof accepted, segment transfer complete");
 
-	// Call concluded callback
-	if (_object->_callbacks._concluded != nullptr) {
-		_object->_callbacks._concluded(*this);
+	// Check if there are more segments to send
+	if (_object->_split && _object->_segment_index < _object->_total_segments) {
+		INFOF("Resource::validate_proof: Segment %d/%d complete, preparing next...",
+			_object->_segment_index, _object->_total_segments);
+		prepare_next_segment();
+	} else {
+		// All segments sent (or single-segment resource)
+		DEBUG("Resource::validate_proof: All segments complete");
+		// Call concluded callback
+		if (_object->_callbacks._concluded != nullptr) {
+			_object->_callbacks._concluded(*this);
+		}
 	}
 }
 
 void Resource::cancel() {
+}
+
+void Resource::prepare_next_segment() {
+	assert(_object);
+
+	if (!_object->_initiator) {
+		ERROR("Resource::prepare_next_segment: Only sender can prepare segments");
+		return;
+	}
+
+	if (!_object->_split) {
+		ERROR("Resource::prepare_next_segment: Not a segmented resource");
+		return;
+	}
+
+	if (_object->_segment_index >= _object->_total_segments) {
+		DEBUG("Resource::prepare_next_segment: No more segments");
+		return;
+	}
+
+	int next_segment = _object->_segment_index + 1;
+	size_t max_size = Type::Resource::MAX_EFFICIENT_SIZE;
+
+	// Calculate segment boundaries
+	size_t seg_start = (next_segment - 1) * max_size;
+	size_t seg_end = std::min(seg_start + max_size, _object->_original_data.size());
+	Bytes segment_data = _object->_original_data.mid(seg_start, seg_end - seg_start);
+
+	INFOF("Resource::prepare_next_segment: Preparing segment %d/%d (%zu bytes)",
+		next_segment, _object->_total_segments, segment_data.size());
+
+	// Update segment index
+	_object->_segment_index = next_segment;
+	_object->_total_size = segment_data.size();
+	_object->_uncompressed_size = segment_data.size();
+
+	// Compress if beneficial
+	Bytes payload_data = segment_data;
+	_object->_compressed = false;
+	if (segment_data.size() <= Type::Resource::AUTO_COMPRESS_MAX_SIZE) {
+		Bytes compressed = Cryptography::bz2_compress(segment_data);
+		if (compressed && compressed.size() < segment_data.size()) {
+			payload_data = compressed;
+			_object->_compressed = true;
+			DEBUGF("Resource: Segment compression saved %zu bytes", segment_data.size() - compressed.size());
+		}
+	}
+
+	// Compute segment hash = SHA256(segment_data + random_hash)
+	// random_hash is shared across all segments (set in constructor)
+	_object->_hash = Identity::full_hash(segment_data + _object->_random_hash);
+
+	// Prepare payload: random_hash + (compressed_or_uncompressed_data)
+	Bytes payload = _object->_random_hash + payload_data;
+
+	// Encrypt the payload
+	Bytes encrypted_data = const_cast<Link&>(_object->_link).encrypt(payload);
+	if (!encrypted_data) {
+		ERROR("Resource: Failed to encrypt segment payload");
+		_object->_status = Type::Resource::FAILED;
+		return;
+	}
+
+	_object->_encrypted = true;
+	_object->_size = encrypted_data.size();
+
+	// Calculate total parts for this segment
+	_object->_total_parts = (encrypted_data.size() + _object->_sdu - 1) / _object->_sdu;
+
+	// Build hashmap and parts
+	_object->_parts.clear();
+	_object->_parts.resize(_object->_total_parts);
+	_object->_hashmap.clear();
+	_object->_hashmap.resize(_object->_total_parts);
+	Bytes hashmap_raw;
+
+	for (size_t i = 0; i < _object->_total_parts; i++) {
+		size_t start = i * _object->_sdu;
+		size_t end = std::min(start + _object->_sdu, encrypted_data.size());
+		Bytes part_data = encrypted_data.mid(start, end - start);
+
+		_object->_parts[i] = part_data;
+		Bytes map_hash = get_map_hash(part_data, _object->_random_hash);
+		_object->_hashmap[i] = map_hash;
+		hashmap_raw += map_hash;
+	}
+
+	_object->_hashmap_raw = hashmap_raw;
+	_object->_hashmap_height = _object->_total_parts;
+
+	// Update flags
+	_object->_flags = 0;
+	if (_object->_encrypted) _object->_flags |= ResourceAdvertisement::FLAG_ENCRYPTED;
+	if (_object->_compressed) _object->_flags |= ResourceAdvertisement::FLAG_COMPRESSED;
+	if (_object->_split) _object->_flags |= ResourceAdvertisement::FLAG_SPLIT;
+	if (_object->_is_response) _object->_flags |= ResourceAdvertisement::FLAG_IS_RESPONSE;
+	if (_object->_has_metadata) _object->_flags |= ResourceAdvertisement::FLAG_HAS_METADATA;
+
+	// Reset tracking
+	_object->_sent_parts = 0;
+	_object->_status = Type::Resource::QUEUED;
+	_object->_last_activity = OS::time();
+	_object->_retries_left = Type::Resource::MAX_ADV_RETRIES;
+
+	DEBUGF("Resource: Segment %d ready, size=%zu, parts=%zu, hash=%s",
+		_object->_segment_index, _object->_size, _object->_total_parts,
+		_object->_hash.toHex().substr(0, 16).c_str());
+
+	// Advertise this segment
+	advertise();
 }
 
 /*
@@ -488,6 +662,31 @@ const size_t Resource::size() const {
 const size_t Resource::total_size() const {
 	assert(_object);
 	return _object->_total_size;
+}
+
+int Resource::segment_index() const {
+	assert(_object);
+	return _object->_segment_index;
+}
+
+int Resource::total_segments() const {
+	assert(_object);
+	return _object->_total_segments;
+}
+
+const Bytes& Resource::original_hash() const {
+	assert(_object);
+	return _object->_original_hash;
+}
+
+bool Resource::is_segmented() const {
+	assert(_object);
+	return _object->_total_segments > 1;
+}
+
+const Link& Resource::link() const {
+	assert(_object);
+	return _object->_link;
 }
 
 // setters

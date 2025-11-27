@@ -32,6 +32,7 @@ namespace RNS {
 
 		// Data storage
 		Bytes _data;              // The resource data (assembled)
+		Bytes _original_data;     // Full original data (for segmented sends)
 		Bytes _metadata;          // Optional metadata
 		size_t _metadata_size = 0;
 		bool _has_metadata = false;
