@@ -3,12 +3,31 @@
 #include <bzlib.h>
 #include <cstring>
 #include <vector>
+#include <fstream>
+#include "../Log.h"
 
 namespace RNS { namespace Cryptography {
 
 const Bytes bz2_decompress(const Bytes& data) {
 	if (data.empty()) {
 		return Bytes();
+	}
+
+	// Debug: dump input data info
+	DEBUGF("bz2_decompress: input size=%zu, first 50 bytes=%s",
+		data.size(), data.left(50).toHex().c_str());
+	DEBUGF("bz2_decompress: last 20 bytes=%s",
+		data.right(20).toHex().c_str());
+
+	// Save compressed data to file for comparison
+	static int decompress_call = 0;
+	decompress_call++;
+	std::string filename = "/tmp/cpp_compressed_" + std::to_string(decompress_call) + ".bin";
+	std::ofstream outfile(filename, std::ios::binary);
+	if (outfile) {
+		outfile.write(reinterpret_cast<const char*>(data.data()), data.size());
+		outfile.close();
+		DEBUGF("bz2_decompress: saved %zu bytes to %s", data.size(), filename.c_str());
 	}
 
 	// Start with output buffer 4x input size (typical compression ratio)
@@ -29,13 +48,18 @@ const Bytes bz2_decompress(const Bytes& data) {
 	stream.avail_out = output_size;
 
 	Bytes result;
+	int iteration = 0;
 	do {
 		ret = BZ2_bzDecompress(&stream);
+		iteration++;
 
 		if (ret == BZ_OK || ret == BZ_STREAM_END) {
 			// Append decompressed data
 			size_t decompressed = output_size - stream.avail_out;
 			result.append(reinterpret_cast<uint8_t*>(output.data()), decompressed);
+
+			DEBUGF("bz2_decompress: iter=%d, ret=%d, decompressed=%zu, total=%zu, avail_in=%u",
+				iteration, ret, decompressed, result.size(), stream.avail_in);
 
 			if (ret == BZ_STREAM_END) {
 				break;
@@ -45,12 +69,14 @@ const Bytes bz2_decompress(const Bytes& data) {
 			stream.next_out = output.data();
 			stream.avail_out = output_size;
 		} else {
+			DEBUGF("bz2_decompress: iter=%d, FAILED ret=%d", iteration, ret);
 			BZ2_bzDecompressEnd(&stream);
 			return Bytes();
 		}
 	} while (stream.avail_in > 0 || ret != BZ_STREAM_END);
 
 	BZ2_bzDecompressEnd(&stream);
+	DEBUGF("bz2_decompress: final output size=%zu", result.size());
 	return result;
 }
 

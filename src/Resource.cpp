@@ -111,8 +111,11 @@ Resource::Resource(const Bytes& data, const Link& link, bool advertise /*= true*
 	_object->_encrypted = true;
 	_object->_size = encrypted_data.size();
 
-	// Get SDU from link MDU (const_cast needed as get_mdu() is not const)
-	_object->_sdu = const_cast<Link&>(link).get_mdu();
+	// Get SDU from link MTU using same formula as Python RNS:
+	// sdu = link.mtu - HEADER_MAXSIZE - IFAC_MIN_SIZE
+	// This matches Python's Resource.__init__ SDU calculation
+	uint16_t link_mtu = const_cast<Link&>(link).get_mtu();
+	_object->_sdu = link_mtu - Type::Reticulum::HEADER_MAXSIZE - Type::Reticulum::IFAC_MIN_SIZE;
 	if (_object->_sdu == 0) {
 		ERROR("Resource: Invalid SDU from link");
 		_object->_status = Type::Resource::FAILED;
@@ -733,8 +736,10 @@ Resource Resource::accept(const Packet& advertisement_packet,
 	resource._object->_is_response = adv.is_response;
 	resource._object->_has_metadata = adv.has_metadata;
 
-	// Calculate number of parts based on SDU (link MDU)
-	size_t sdu = link.get_mdu();
+	// Calculate SDU from link MTU using same formula as Python RNS:
+	// sdu = link.mtu - HEADER_MAXSIZE - IFAC_MIN_SIZE
+	uint16_t link_mtu = link.get_mtu();
+	size_t sdu = link_mtu - Type::Reticulum::HEADER_MAXSIZE - Type::Reticulum::IFAC_MIN_SIZE;
 	resource._object->_sdu = sdu;
 
 	// Calculate total parts from transfer size and SDU

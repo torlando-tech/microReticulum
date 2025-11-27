@@ -2077,13 +2077,18 @@ using namespace RNS::Utilities;
 		// Handling for data packets to local destinations
 		else if (packet.packet_type() == Type::Packet::DATA) {
 			TRACE("Transport::inbound: Packet is DATA");
+			DEBUGF("Transport::inbound: DATA packet, dest_type=%d, context=%d, dest_hash=%s",
+				packet.destination_type(), packet.context(), packet.destination_hash().toHex().c_str());
 			if (packet.destination_type() == Type::Destination::LINK) {
 				// Data is destined for a link
 				TRACE("Transport::inbound: Packet is DATA for a LINK");
+				DEBUGF("Transport::inbound: Routing DATA to LINK, context=%d, active_links=%zu",
+					packet.context(), _active_links.size());
 				std::set<Link> active_links(_active_links);
 				for (auto& link : active_links) {
 					if (link.link_id() == packet.destination_hash()) {
 						TRACE("Transport::inbound: Packet is DATA for an active LINK");
+						DEBUG("Transport::inbound: Found matching active link, calling link.receive()");
 						packet.link(link);
 						const_cast<Link&>(link).receive(packet);
 					}
