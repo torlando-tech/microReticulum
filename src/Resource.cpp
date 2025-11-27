@@ -590,27 +590,42 @@ void Resource::prepare_next_segment() {
 :returns: The current progress of the resource transfer as a *float* between 0.0 and 1.0.
 */
 float Resource::get_progress() const {
-/*
 	assert(_object);
-	if (_object->_initiator) {
-		_object->_processed_parts = (_object->_segment_index-1)*math.ceil(Type::Resource::MAX_EFFICIENT_SIZE/Type::Resource::SDU);
-		_object->_processed_parts += _object->sent_parts;
-		_object->_progress_total_parts = float(_object->grand_total_parts);
+
+	if (_object->_total_parts == 0) {
+		return 0.0f;
 	}
-	else {
-		_object->_processed_parts = (_object->_segment_index-1)*math.ceil(Type::Resource::MAX_EFFICIENT_SIZE/Type::Resource::SDU);
-		_object->_processed_parts += _object->_received_count;
-		if (_object->split) {
-			_object->progress_total_parts = float(math.ceil(_object->total_size/Type::Resource::SDU));
-		}
-		else {
-			_object->progress_total_parts = float(_object->total_parts);
+
+	// Calculate parts per segment (for multi-segment resources)
+	size_t parts_per_segment = 0;
+	if (_object->_sdu > 0) {
+		parts_per_segment = (Type::Resource::MAX_EFFICIENT_SIZE + _object->_sdu - 1) / _object->_sdu;
+	}
+
+	size_t processed_parts = 0;
+	size_t total_parts = 0;
+
+	if (_object->_initiator) {
+		// Sender: track sent parts across all segments
+		processed_parts = (_object->_segment_index - 1) * parts_per_segment + _object->_sent_parts;
+		total_parts = _object->_total_segments * parts_per_segment;
+	} else {
+		// Receiver: track received parts
+		processed_parts = (_object->_segment_index - 1) * parts_per_segment + _object->_received_count;
+		if (_object->_split) {
+			// Multi-segment: estimate total parts from total_size
+			total_parts = _object->_total_segments * parts_per_segment;
+		} else {
+			// Single segment
+			total_parts = _object->_total_parts;
 		}
 	}
 
-	return (float)_object->processed_parts / (float)_object->progress_total_parts;
-*/
-	return 0.0;
+	if (total_parts == 0) {
+		return 0.0f;
+	}
+
+	return std::min(1.0f, (float)processed_parts / (float)total_parts);
 }
 
 void Resource::set_concluded_callback(Callbacks::concluded callback) {
@@ -1195,6 +1210,48 @@ void Resource::receive_part(const Packet& packet) {
 		DEBUG("Resource::receive_part: All parts received, assembling");
 		assemble();
 	} else if (_object->_outstanding_parts == 0) {
+		// Dynamic window scaling: measure RTT and adjust window for fast links
+		if (_object->_req_sent > 0) {
+			double rtt = OS::time() - _object->_req_sent;
+
+			// Update Resource-level RTT with smoothing
+			if (_object->_rtt == 0.0) {
+				_object->_rtt = _object->_link.rtt();
+				if (_object->_rtt == 0.0) _object->_rtt = rtt;
+			} else if (rtt < _object->_rtt) {
+				_object->_rtt = std::max(_object->_rtt - _object->_rtt * 0.05, rtt);
+			} else if (rtt > _object->_rtt) {
+				_object->_rtt = std::min(_object->_rtt + _object->_rtt * 0.05, rtt);
+			}
+
+			// Calculate transfer rate (bytes received in this round / time)
+			if (rtt > 0) {
+				size_t bytes_this_round = _object->_window * _object->_sdu;
+				double rate = bytes_this_round / rtt;
+				_object->_req_resp_rtt_rate = rate;
+
+				DEBUGF("Resource: RTT=%.4f, bytes=%zu, rate=%.0f B/s (threshold=%d), fast_rounds=%zu/%d, window=%zu/%zu",
+					rtt, bytes_this_round, rate, Type::Resource::RATE_FAST,
+					_object->_fast_rate_rounds, Type::Resource::FAST_RATE_THRESHOLD,
+					_object->_window, _object->_window_max);
+
+				// Check for fast link - scale up window
+				if (rate > Type::Resource::RATE_FAST &&
+					_object->_fast_rate_rounds < Type::Resource::FAST_RATE_THRESHOLD) {
+					_object->_fast_rate_rounds++;
+					if (_object->_fast_rate_rounds == Type::Resource::FAST_RATE_THRESHOLD) {
+						_object->_window_max = Type::Resource::WINDOW_MAX_FAST;
+						INFOF("Resource: Fast link detected! window_max increased to %zu", _object->_window_max);
+					}
+				}
+
+				// Increase window if below max
+				if (_object->_window < _object->_window_max) {
+					_object->_window++;
+				}
+			}
+		}
+
 		// Request more parts
 		request_next();
 	}
@@ -1418,13 +1475,17 @@ void Resource::prove() {
 	Bytes proof = Identity::full_hash(_object->_data + _object->_hash);
 	Bytes proof_data = _object->_hash + proof;
 
-	DEBUGF("Resource::prove: Sending proof, hash=%s, proof=%s",
-		_object->_hash.toHex().c_str(), proof.toHex().c_str());
+	INFOF("Resource::prove: data_size=%zu, hash_size=%zu, proof_size=%zu, proof_data_size=%zu",
+		_object->_data.size(), _object->_hash.size(), proof.size(), proof_data.size());
+	INFOF("Resource::prove: hash=%s", _object->_hash.toHex().c_str());
+	INFOF("Resource::prove: proof=%s", proof.toHex().c_str());
+	INFOF("Resource::prove: link_id=%s", _object->_link.hash().toHex().c_str());
 
 	// Send the proof packet - must use PROOF packet type for Python compatibility
 	Packet proof_packet(_object->_link, proof_data, Type::Packet::PROOF, Type::Packet::RESOURCE_PRF);
+	INFOF("Resource::prove: packet_type=%d, context=%d", proof_packet.packet_type(), proof_packet.context());
 	proof_packet.send();
 
-	DEBUG("Resource::prove: Proof sent");
+	INFO("Resource::prove: Proof packet sent");
 }
 
