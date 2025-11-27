@@ -1203,52 +1203,64 @@ while (available > 0) {
 |------|------|--------------|--------|
 | Pattern data | 10KB | Yes | ✅ BYTE-PERFECT |
 | Pattern data | 2MB | Yes | ✅ BYTE-PERFECT |
-| Random data | 2MB | No | ❌ FAILS at ~3% (78/2260 parts) |
+| Random data Python→C++ | 2MB | No | ✅ SUCCESS (HMU fix applied) |
+| Random data C++→Python | 2MB | No | ⏳ Not yet tested |
 
-### Remaining Challenge: HMU Segment Number Mismatch
+### RESOLVED: HMU Packet Parsing Bug (2025-11-27, Session 2)
 
-**Symptom**:
-- C++ receives initial advertisement with 74 part hashes (segment 0)
-- C++ requests parts, receives some, then requests HMU for more hashes
-- Python responds with `segment=98` containing 83 hashes
-- C++ calculation for where to store these hashes is wrong
+**Status**: FIXED - 2MB Python → C++ transfers now work!
 
-**Observed Behavior**:
+**Root Cause**:
+The C++ `hashmap_update_packet()` function was incorrectly parsing HMU packets:
+
+```cpp
+// OLD CODE (BROKEN):
+uint8_t segment = plaintext[0];           // Wrong! First byte is resource hash
+Bytes hashmap_data = plaintext.mid(1);    // Wrong! Not accounting for hash + msgpack
 ```
-hashmap_update: segment=0, Storing 74 hashes starting at index 0
-hashmap_update: segment=98, Storing 83 hashes starting at index 7252  // WRONG!
-// Index 7252 is way beyond actual 2260 total parts
+
+**Python HMU packet format** (from `RNS/Resource.py`):
+```python
+hmu = self.hash + umsgpack.packb([segment, hashmap])
+# Format: [resource_hash:32][msgpack([segment:uint, hashmap:bytes])]
 ```
 
-**Key Discrepancies**:
-1. **Segment numbers**: Python sends `segment=98`, not sequential 1,2,3...
-2. **Hashes per HMU**: Python sends 83 hashes, C++ expects 74 (HASHMAP_MAX_LEN)
-3. **Calculation formula**: C++ uses `initial_count + (segment - 1) * HASHMAP_MAX_LEN`
-   - For segment=98: 74 + 97*74 = 7252 (wrong!)
+C++ was reading the first byte of the resource hash as the segment number!
 
-**Hypotheses**:
+**The Fix** (`src/Resource.cpp:1020-1072`):
+```cpp
+// Skip the 32-byte resource hash
+const size_t hash_len = Type::Identity::HASHLENGTH / 8;  // 32 bytes
+Bytes msgpack_data = plaintext.mid(hash_len);
 
-1. **Segment number is NOT sequential**: The segment number may represent something else (maybe a sequence number or offset). Need to study Python's `hashmap_update_packet()` in `Resource.py`.
+// msgpack-unpack the array [segment, hashmap]
+MsgPack::Unpacker unpacker;
+unpacker.feed(msgpack_data.data(), msgpack_data.size());
 
-2. **HASHMAP_MAX_LEN mismatch**: Python may use different constants for hashes per HMU vs hashes in initial advertisement.
+size_t arr_size = unpacker.unpackArraySize();
+uint8_t segment = unpacker.unpackUInt<uint8_t>();
+MsgPack::bin_t<uint8_t> bin = unpacker.unpackBinary();
+Bytes hashmap_data(bin.data(), bin.size());
 
-3. **Calculation should use segment as direct index**: Maybe `start_index = segment * hashes_per_segment` (without `initial_count` offset).
+hashmap_update(segment, hashmap_data);
+```
 
-4. **The segment field may be `hashmap_height` from requester**: Looking at Python, the HMU request includes current hashmap height. The response segment number may echo this.
+**Additional Fix - Segment Index Calculation**:
+```cpp
+// OLD: start_index = _initial_hashmap_count + (segment - 1) * HASHMAP_MAX_LEN;
+// NEW (matches Python formula):
+start_index = segment * _initial_hashmap_count;
+```
 
-### Next Steps
+**Test Results**:
+| Test | Size | Result |
+|------|------|--------|
+| Python → C++ random data | 2MB | ✅ SUCCESS (21 seconds) |
 
-1. **Study Python RNS `hashmap_update_packet()`** in `RNS/Resource.py`:
-   - How is segment number determined?
-   - How many hashes per HMU?
-   - What's the relationship between segment number and start index?
-
-2. **Add detailed logging** to capture exact hashmap structure:
-   - Log all 4-byte map hashes received in segment 0
-   - Log all 4-byte map hashes received in HMU
-   - Compare which part indices they correspond to
-
-3. **Consider alternative interpretation**: The segment number in HMU response may indicate "hashes starting at index X" directly, not requiring multiplication.
+**Transfer Stats**:
+- 2260 parts transferred
+- Window scaled from 4 → 75 (fast link detected)
+- HMU correctly parsed: segment=30 → start_index=2220 ✓
 
 ### Files Modified This Session
 

@@ -1018,15 +1018,56 @@ Resource Resource::accept(const Packet& advertisement_packet,
 
 
 // Hashmap update from packet
+// Python format: hash (32 bytes) + msgpack([segment, hashmap_bytes])
 void Resource::hashmap_update_packet(const Bytes& plaintext) {
 	assert(_object);
-	// The plaintext format is: [segment:1][hashmap_data:N]
-	if (plaintext.size() < 1) {
+
+	// First 32 bytes are the resource hash (HASHLENGTH/8 = 256/8 = 32)
+	const size_t hash_len = Type::Identity::HASHLENGTH / 8;
+	if (plaintext.size() <= hash_len) {
 		ERROR("Resource::hashmap_update_packet: Invalid packet size");
 		return;
 	}
-	uint8_t segment = plaintext[0];
-	Bytes hashmap_data = plaintext.mid(1);
+
+	// Skip the hash and msgpack-unpack the rest: [segment, hashmap_bytes]
+	Bytes msgpack_data = plaintext.mid(hash_len);
+
+	MsgPack::Unpacker unpacker;
+	if (!unpacker.feed(msgpack_data.data(), msgpack_data.size())) {
+		ERROR("Resource::hashmap_update_packet: Failed to feed msgpack data");
+		return;
+	}
+
+	if (!unpacker.isArray()) {
+		ERROR("Resource::hashmap_update_packet: Invalid msgpack format (expected array)");
+		return;
+	}
+
+	size_t arr_size = unpacker.unpackArraySize();
+	if (arr_size != 2) {
+		ERRORF("Resource::hashmap_update_packet: Invalid array size %zu (expected 2)", arr_size);
+		return;
+	}
+
+	// First element: segment number (uint8)
+	uint8_t segment = unpacker.unpackUInt<uint8_t>();
+
+	// Second element: hashmap binary data
+	Bytes hashmap_data;
+	if (unpacker.isBin()) {
+		MsgPack::bin_t<uint8_t> bin = unpacker.unpackBinary();
+		hashmap_data = Bytes(bin.data(), bin.size());
+	} else if (unpacker.isStr()) {
+		std::string str = unpacker.unpackString();
+		hashmap_data = Bytes(reinterpret_cast<const uint8_t*>(str.data()), str.size());
+	} else {
+		ERROR("Resource::hashmap_update_packet: Invalid hashmap type in msgpack");
+		return;
+	}
+
+	DEBUGF("Resource::hashmap_update_packet: Parsed segment=%d, hashmap_size=%zu",
+		segment, hashmap_data.size());
+
 	hashmap_update(segment, hashmap_data);
 }
 
@@ -1037,20 +1078,22 @@ void Resource::hashmap_update(int segment, const Bytes& hashmap_data) {
 	// Parse hashmap data - each hash is MAPHASH_LEN (4) bytes
 	size_t hash_count = hashmap_data.size() / Type::Resource::MAPHASH_LEN;
 
-	// Calculate start index based on segment number, not _hashmap_height
-	// Segment 0 (initial advertisement) may have fewer hashes than subsequent segments
-	// Track the initial segment size to compute offsets for later segments
+	// Calculate start index using Python RNS formula: start_index = segment * HASHMAP_MAX_LEN
+	// The segment number directly multiplied by HASHMAP_MAX_LEN gives the starting hash index.
+	//
+	// IMPORTANT: Python and C++ may have different HASHMAP_MAX_LEN values due to MDU calculation
+	// differences. When we receive segment 0, we learn Python's actual HASHMAP_MAX_LEN from the
+	// hash count. Use that for all segment calculations.
 	size_t start_index;
 	if (segment == 0) {
 		start_index = 0;
-		_object->_initial_hashmap_count = hash_count;  // Remember how many hashes in segment 0
+		// Store the sender's HASHMAP_MAX_LEN (inferred from segment 0 hash count)
+		// This may differ from our local Type::Resource::ResourceAdvertisement::HASHMAP_MAX_LEN
+		_object->_initial_hashmap_count = hash_count;
 	} else {
-		// For segments > 0, compute position based on segment 0 size + subsequent segment offsets
-		// Each HMU segment after the first contains HASHMAP_MAX_LEN hashes
-		size_t hashes_per_hmu = Type::Resource::ResourceAdvertisement::HASHMAP_MAX_LEN;
-		start_index = _object->_initial_hashmap_count + (segment - 1) * hashes_per_hmu;
-		DEBUGF("Resource::hashmap_update: hashes_per_hmu=%zu, calc: %zu + (%d-1)*%zu",
-			hashes_per_hmu, _object->_initial_hashmap_count, segment, hashes_per_hmu);
+		// Use the sender's segment size (from segment 0) for the calculation
+		// Python formula: hashmap_start = segment * ResourceAdvertisement.HASHMAP_MAX_LEN
+		start_index = segment * _object->_initial_hashmap_count;
 	}
 
 	DEBUGF("Resource::hashmap_update: segment=%d, Storing %zu hashes starting at index %zu (initial_count=%zu)",
