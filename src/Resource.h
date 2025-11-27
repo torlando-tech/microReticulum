@@ -81,6 +81,9 @@ namespace RNS {
 		void prove();
 		void validate_proof(const Bytes& proof_data);
 		void cancel();
+
+		// Multi-segment sending
+		void prepare_next_segment();
 //p def set_callback(self, callback):
 //p def progress_callback(self, callback):
 		float get_progress() const;
@@ -102,6 +105,13 @@ namespace RNS {
 		const Type::Resource::status status() const;
 		const size_t size() const;
 		const size_t total_size() const;
+
+		// segment getters (for multi-segment resource support)
+		int segment_index() const;
+		int total_segments() const;
+		const Bytes& original_hash() const;
+		bool is_segmented() const;
+		const Link& link() const;
 
 		// setters
 

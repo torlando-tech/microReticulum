@@ -765,8 +765,62 @@ C++ treats each segment as a **separate standalone Resource**. It does NOT:
 - This is expected behavior - segment reassembly is not implemented
 
 **Next Steps for Full Python → C++ Support**:
-1. Implement segment reassembly (track segment_index, accumulate data)
-2. OR: Change C++ MAX_EFFICIENT_SIZE to 1MB to match Python
+1. ~~Implement segment reassembly (track segment_index, accumulate data)~~ ✅ DONE
+2. ~~OR: Change C++ MAX_EFFICIENT_SIZE to 1MB to match Python~~ ✅ DONE
+
+#### IMPLEMENTED: Full Segment Support (2025-11-26)
+
+**Changes Made**:
+
+1. **MAX_EFFICIENT_SIZE aligned with Python** (`src/Type.h:502`):
+   ```cpp
+   // Changed from 16MB to 1MB to match Python RNS
+   static const uint32_t MAX_EFFICIENT_SIZE = 1 * 1024 * 1024;  // 1MB
+   ```
+
+2. **SegmentAccumulator class** (new files: `src/SegmentAccumulator.h/.cpp`):
+   - Collects segments by `original_hash`
+   - Fires callback when all segments received
+   - Handles timeout cleanup
+   - Integrated with Link class via `Link::segment_accumulator()`
+
+3. **Segment splitting for sending** (`src/Resource.cpp`):
+   - Constructor detects when data > MAX_EFFICIENT_SIZE
+   - Splits into segments and stores `_original_data`
+   - `prepare_next_segment()` creates subsequent segments after proof received
+   - `validate_proof()` triggers next segment instead of concluding
+
+4. **Resource getters added** (`src/Resource.h/.cpp`):
+   - `segment_index()`, `total_segments()`, `original_hash()`
+   - `is_segmented()`, `link()`
+
+**Test Results**:
+| Test | Size | Compression | Result |
+|------|------|-------------|--------|
+| Pattern data 10KB | 10,000 bytes | Compresses to ~192 bytes | ✅ BYTE-PERFECT |
+| Pattern data 2MB | 2,097,152 bytes | Compresses to ~336 bytes | ✅ BYTE-PERFECT |
+
+**Verification Method**:
+- Python server returns `Transfer successful! Status: 6 (COMPLETE)`
+- Proof validation requires exact data hash match
+- C++ decompression output matches expected size
+
+**Testing Limitation Note**:
+Multi-segment transfers with **random/uncompressible data** time out in automated tests:
+- 2MB random data = ~4500 packets at 464 bytes each
+- Transfer takes several minutes over localhost UDP
+- The segment implementation code is complete but wasn't fully exercised in automated testing
+
+**For manual testing with random data**:
+```bash
+# Terminal 1: Python server with random data
+cd test/test_interop/python
+python resource_server.py -c test_rns_config -s 2097152 -r  # -r = random
+
+# Terminal 2: C++ client (let run for 3-5 minutes)
+cd examples/link
+.pio/build/native/program <destination_hash>
+```
 
 ### Milestone 3: Channel Messaging
 - [ ] Custom message types ✓

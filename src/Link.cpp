@@ -1492,6 +1492,16 @@ bool Link::ready_for_new_resource() {
 	return (_object->_outgoing_resources.size() > 0);
 }
 
+SegmentAccumulator& Link::segment_accumulator() {
+	assert(_object);
+	return _object->_segment_accumulator;
+}
+
+void Link::setup_segment_accumulator(SegmentAccumulator::AccumulatedCallback callback) {
+	assert(_object);
+	_object->_segment_accumulator.set_accumulated_callback(callback);
+}
+
 std::string Link::toString() const {
 	if (!_object) {
 		return "";

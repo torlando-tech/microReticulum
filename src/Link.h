@@ -2,6 +2,7 @@
 
 #include "Destination.h"
 #include "Type.h"
+#include "SegmentAccumulator.h"
 
 #include <memory>
 #include <cassert>
@@ -20,6 +21,7 @@ namespace RNS {
 	class Destination;
 	class ResourceAdvertisement;
 	class PacketReceipt;
+	class SegmentAccumulator;
 
 	class ResourceRequest {
 	public:
@@ -225,6 +227,10 @@ namespace RNS {
 		void cancel_outgoing_resource(const Resource& resource);
 		void cancel_incoming_resource(const Resource& resource);
 		bool ready_for_new_resource();
+
+		// Multi-segment resource support
+		SegmentAccumulator& segment_accumulator();
+		void setup_segment_accumulator(SegmentAccumulator::AccumulatedCallback callback);
 
 		//void __str__();
 		std::string toString() const;
