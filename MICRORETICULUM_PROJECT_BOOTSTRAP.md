@@ -1111,3 +1111,165 @@ rm -rf .pio/build && pio run
 - `/path/to/microReticulum/src/Resource.cpp:1208-1257` - Dynamic window scaling
 - `/path/to/microReticulum/src/Resource.cpp:592-632` - `get_progress()` method
 - `/path/to/microReticulum/src/Type.h:456-475` - Window scaling constants
+
+---
+
+## Current Status and Next Steps (2025-11-27, Session 2)
+
+### Session Progress Summary
+
+**Bugs Fixed This Session**:
+
+#### 1. C++ Temporary Object Lifetime Issues (23+ locations)
+**Files**: `Resource.cpp`, `SegmentAccumulator.cpp`, `Link.cpp`
+**Problem**: Code like `DEBUGF("msg: %s", something.toHex().c_str())` creates dangling pointers
+- `.toHex()` returns a temporary `std::string`
+- `.c_str()` returns pointer to that temporary
+- Temporary is destroyed before `DEBUGF` uses the pointer → crash/garbage
+
+**Fix Pattern**:
+```cpp
+// BEFORE (buggy):
+DEBUGF("message: %s", something.toHex().c_str());
+
+// AFTER (fixed):
+std::string hex = something.toHex();
+DEBUGF("message: %s", hex.c_str());
+```
+
+#### 2. Hashmap Lookup Bug (`Resource.cpp:1072`)
+**Problem**: Used `_hashmap.size()` instead of `_hashmap_height` to check hash availability
+- `_hashmap` is pre-allocated with empty slots
+- `.size()` returns total capacity, not how many hashes are actually populated
+- Result: Code thought all hashes were available when only some were
+
+**Fix**:
+```cpp
+// BEFORE:
+if (i < _object->_hashmap.size() && _object->_hashmap[i].size() > 0) {
+
+// AFTER:
+if (i < _object->_hashmap_height) {
+```
+
+#### 3. Duplicate Part Counter Corruption (`Resource.cpp:1185-1199`)
+**Problem**: When receiving duplicate parts, code still decremented `_outstanding_parts`
+- Same part received twice → counter goes negative or wraps
+- Transfer never completes because outstanding parts count is wrong
+
+**Fix**:
+```cpp
+bool is_duplicate = (_object->_parts[part_index].size() > 0);
+_object->_parts[part_index] = part_data;
+
+if (!is_duplicate) {
+    _object->_received_count++;
+    if (_object->_outstanding_parts > 0) {
+        _object->_outstanding_parts--;
+    }
+} else {
+    TRACEF("Duplicate part %d ignored for counting", part_index);
+}
+```
+
+#### 4. UDP Single-Packet Processing (`UDPInterface.cpp:223-237`)
+**Problem**: Only processed ONE packet per `loop()` call
+- When Python sends burst of parts, they queue in OS buffer
+- With 10ms event loop sleep, 14-packet burst takes 140ms to process
+- Python times out waiting for response
+
+**Fix**: Changed `if (available > 0)` to `while (available > 0)` to drain all queued packets:
+```cpp
+// Drain all available UDP packets to handle burst traffic
+size_t available = 0;
+ioctl(_socket, FIONREAD, &available);
+while (available > 0) {
+    size_t len = read(_socket, _buffer.writable(Type::Reticulum::MTU), Type::Reticulum::MTU);
+    if (len > 0) {
+        _buffer.resize(len);
+        on_incoming(_buffer);
+    }
+    ioctl(_socket, FIONREAD, &available);
+}
+```
+
+#### 5. Hashmap Segment Indexing (Partial Fix)
+**Problem**: HMU (Hashmap Update) segment numbers don't align with C++ expectations
+**Status**: STILL FAILING - see "Remaining Challenge" below
+
+### Test Results After Fixes
+
+| Test | Size | Compressible | Result |
+|------|------|--------------|--------|
+| Pattern data | 10KB | Yes | ✅ BYTE-PERFECT |
+| Pattern data | 2MB | Yes | ✅ BYTE-PERFECT |
+| Random data | 2MB | No | ❌ FAILS at ~3% (78/2260 parts) |
+
+### Remaining Challenge: HMU Segment Number Mismatch
+
+**Symptom**:
+- C++ receives initial advertisement with 74 part hashes (segment 0)
+- C++ requests parts, receives some, then requests HMU for more hashes
+- Python responds with `segment=98` containing 83 hashes
+- C++ calculation for where to store these hashes is wrong
+
+**Observed Behavior**:
+```
+hashmap_update: segment=0, Storing 74 hashes starting at index 0
+hashmap_update: segment=98, Storing 83 hashes starting at index 7252  // WRONG!
+// Index 7252 is way beyond actual 2260 total parts
+```
+
+**Key Discrepancies**:
+1. **Segment numbers**: Python sends `segment=98`, not sequential 1,2,3...
+2. **Hashes per HMU**: Python sends 83 hashes, C++ expects 74 (HASHMAP_MAX_LEN)
+3. **Calculation formula**: C++ uses `initial_count + (segment - 1) * HASHMAP_MAX_LEN`
+   - For segment=98: 74 + 97*74 = 7252 (wrong!)
+
+**Hypotheses**:
+
+1. **Segment number is NOT sequential**: The segment number may represent something else (maybe a sequence number or offset). Need to study Python's `hashmap_update_packet()` in `Resource.py`.
+
+2. **HASHMAP_MAX_LEN mismatch**: Python may use different constants for hashes per HMU vs hashes in initial advertisement.
+
+3. **Calculation should use segment as direct index**: Maybe `start_index = segment * hashes_per_segment` (without `initial_count` offset).
+
+4. **The segment field may be `hashmap_height` from requester**: Looking at Python, the HMU request includes current hashmap height. The response segment number may echo this.
+
+### Next Steps
+
+1. **Study Python RNS `hashmap_update_packet()`** in `RNS/Resource.py`:
+   - How is segment number determined?
+   - How many hashes per HMU?
+   - What's the relationship between segment number and start index?
+
+2. **Add detailed logging** to capture exact hashmap structure:
+   - Log all 4-byte map hashes received in segment 0
+   - Log all 4-byte map hashes received in HMU
+   - Compare which part indices they correspond to
+
+3. **Consider alternative interpretation**: The segment number in HMU response may indicate "hashes starting at index X" directly, not requiring multiplication.
+
+### Files Modified This Session
+
+- `src/Resource.cpp` - Multiple bug fixes (lifetime, hashmap, duplicate counting)
+- `src/ResourceData.h` - Added `_initial_hashmap_count` member
+- `src/SegmentAccumulator.cpp` - Lifetime bug fixes
+- `src/Link.cpp` - Lifetime bug fixes
+- `examples/common/udp_interface/UDPInterface.cpp` - UDP drain loop
+
+### Quick Start for Next Session
+
+```bash
+# 1. Kill any running test processes
+pkill -9 -f "resource_server|program"
+
+# 2. Review Python hashmap implementation
+cd ~/repos/Reticulum
+grep -n "hashmap_update" RNS/Resource.py
+
+# 3. Build and test with debug logging
+cd ~/repos/microReticulum/examples/link
+pio run -e native
+# Then run test with 2MB random data
+```

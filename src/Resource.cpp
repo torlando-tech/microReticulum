@@ -233,8 +233,9 @@ Resource::Resource(const Bytes& data, const Link& link, bool advertise /*= true*
 	_object->_last_activity = OS::time();
 	_object->_retries_left = Type::Resource::MAX_ADV_RETRIES;
 
+	std::string hash_hex = _object->_hash.toHex();
 	DEBUGF("Resource: Created for sending, size=%zu, parts=%zu, sdu=%zu, hash=%s",
-		_object->_size, _object->_total_parts, _object->_sdu, _object->_hash.toHex().c_str());
+		_object->_size, _object->_total_parts, _object->_sdu, hash_hex.c_str());
 
 	// Optionally advertise immediately
 	if (advertise) {
@@ -289,7 +290,8 @@ void Resource::advertise() {
 	// Register with link for incoming request routing
 	_object->_link.register_outgoing_resource(*this);
 
-	DEBUGF("Resource::advertise: Advertisement sent for hash=%s", _object->_hash.toHex().c_str());
+	std::string hash_hex = _object->_hash.toHex();
+	DEBUGF("Resource::advertise: Advertisement sent for hash=%s", hash_hex.c_str());
 
 	// TODO: Start watchdog timer
 }
@@ -371,7 +373,8 @@ void Resource::request(const Bytes& request_data) {
 
 			TRACEF("Resource::request: Sent part %d", part_index);
 		} else {
-			WARNINGF("Resource::request: Requested hash not found: %s", req_hash.toHex().c_str());
+			std::string req_hash_hex = req_hash.toHex();
+			WARNINGF("Resource::request: Requested hash not found: %s", req_hash_hex.c_str());
 		}
 	}
 
@@ -578,9 +581,10 @@ void Resource::prepare_next_segment() {
 	_object->_last_activity = OS::time();
 	_object->_retries_left = Type::Resource::MAX_ADV_RETRIES;
 
+	std::string hash_short = _object->_hash.toHex().substr(0, 16);
 	DEBUGF("Resource: Segment %d ready, size=%zu, parts=%zu, hash=%s",
 		_object->_segment_index, _object->_size, _object->_total_parts,
-		_object->_hash.toHex().substr(0, 16).c_str());
+		hash_short.c_str());
 
 	// Advertise this segment
 	advertise();
@@ -904,7 +908,8 @@ Resource Resource::accept(const Packet& advertisement_packet,
 
 	// DEBUG: Log decrypted plaintext before msgpack parsing
 	DEBUGF("Resource::accept: Decrypted plaintext size=%zu", plaintext.size());
-	DEBUGF("Resource::accept: Decrypted first 64 bytes=%s", plaintext.left(64).toHex().c_str());
+	std::string plaintext_hex = plaintext.left(64).toHex();
+	DEBUGF("Resource::accept: Decrypted first 64 bytes=%s", plaintext_hex.c_str());
 
 	// Parse the advertisement
 	RNS::ResourceAdvertisement adv;
@@ -913,10 +918,13 @@ Resource Resource::accept(const Packet& advertisement_packet,
 		return Resource(Type::NONE);
 	}
 
+	std::string resource_hash_hex = adv.resource_hash.toHex();
+	std::string random_hash_hex = adv.random_hash.toHex();
+	std::string hashmap_hex = adv.hashmap.toHex();
 	DEBUGF("Resource::accept: Received advertisement for resource hash=%s, transfer_size=%zu, total_size=%zu, parts=%zu",
-		adv.resource_hash.toHex().c_str(), adv.transfer_size, adv.total_size, adv.total_parts);
-	DEBUGF("Resource::accept: random_hash=%s (len=%zu)", adv.random_hash.toHex().c_str(), adv.random_hash.size());
-	DEBUGF("Resource::accept: hashmap=%s (len=%zu)", adv.hashmap.toHex().c_str(), adv.hashmap.size());
+		resource_hash_hex.c_str(), adv.transfer_size, adv.total_size, adv.total_parts);
+	DEBUGF("Resource::accept: random_hash=%s (len=%zu)", random_hash_hex.c_str(), adv.random_hash.size());
+	DEBUGF("Resource::accept: hashmap=%s (len=%zu)", hashmap_hex.c_str(), adv.hashmap.size());
 
 	// Create the receiving resource
 	// Use the request_id from either the parameter or the advertisement
@@ -1026,25 +1034,69 @@ void Resource::hashmap_update_packet(const Bytes& plaintext) {
 void Resource::hashmap_update(int segment, const Bytes& hashmap_data) {
 	assert(_object);
 
-	TRACEF("Resource::hashmap_update: segment=%d, hashmap_data_size=%zu", segment, hashmap_data.size());
-
 	// Parse hashmap data - each hash is MAPHASH_LEN (4) bytes
 	size_t hash_count = hashmap_data.size() / Type::Resource::MAPHASH_LEN;
-	size_t start_index = _object->_hashmap_height;
+
+	// Calculate start index based on segment number, not _hashmap_height
+	// Segment 0 (initial advertisement) may have fewer hashes than subsequent segments
+	// Track the initial segment size to compute offsets for later segments
+	size_t start_index;
+	if (segment == 0) {
+		start_index = 0;
+		_object->_initial_hashmap_count = hash_count;  // Remember how many hashes in segment 0
+	} else {
+		// For segments > 0, compute position based on segment 0 size + subsequent segment offsets
+		// Each HMU segment after the first contains HASHMAP_MAX_LEN hashes
+		size_t hashes_per_hmu = Type::Resource::ResourceAdvertisement::HASHMAP_MAX_LEN;
+		start_index = _object->_initial_hashmap_count + (segment - 1) * hashes_per_hmu;
+		DEBUGF("Resource::hashmap_update: hashes_per_hmu=%zu, calc: %zu + (%d-1)*%zu",
+			hashes_per_hmu, _object->_initial_hashmap_count, segment, hashes_per_hmu);
+	}
+
+	DEBUGF("Resource::hashmap_update: segment=%d, Storing %zu hashes starting at index %zu (initial_count=%zu)",
+		segment, hash_count, start_index, _object->_initial_hashmap_count);
+
+	// Check if we've already processed this segment (duplicate detection)
+	if (start_index < _object->_hashmap_height &&
+	    _object->_hashmap[start_index].size() > 0 &&
+	    hash_count > 0) {
+		// Check if first hash matches what we already have
+		Bytes first_hash = hashmap_data.left(Type::Resource::MAPHASH_LEN);
+		if (_object->_hashmap[start_index] == first_hash) {
+			DEBUGF("Resource::hashmap_update: Skipping duplicate segment %d", segment);
+			_object->_waiting_for_hmu = false;
+			return;
+		}
+	}
 
 	for (size_t i = 0; i < hash_count && (start_index + i) < _object->_total_parts; i++) {
 		size_t offset = i * Type::Resource::MAPHASH_LEN;
 		Bytes map_hash = hashmap_data.mid(offset, Type::Resource::MAPHASH_LEN);
 		_object->_hashmap[start_index + i] = map_hash;
-		_object->_hashmap_height++;
+		// Update height if we're extending the hashmap
+		if (start_index + i >= _object->_hashmap_height) {
+			_object->_hashmap_height = start_index + i + 1;
+		}
+		// Log first 10 hashes for debugging
+		if (i < 10) {
+			std::string hash_hex = map_hash.toHex();
+			DEBUGF("Resource::hashmap_update: hashmap[%zu] = %s", start_index + i, hash_hex.c_str());
+		}
 	}
 
 	_object->_waiting_for_hmu = false;
 
 	DEBUGF("Resource::hashmap_update: Updated hashmap, height=%zu", _object->_hashmap_height);
 
-	// Now request the next parts
-	request_next();
+	// Only request next parts if we don't have outstanding parts from the HMU request
+	// The HMU request already asked for parts, so wait for those to arrive first
+	if (_object->_outstanding_parts == 0) {
+		DEBUG("Resource::hashmap_update: No outstanding parts, requesting next batch");
+		request_next();
+	} else {
+		DEBUGF("Resource::hashmap_update: Still have %zu outstanding parts, skipping request_next",
+			_object->_outstanding_parts);
+	}
 }
 
 // Get map hash for a data chunk (first 4 bytes of SHA256(data + random_hash))
@@ -1068,11 +1120,16 @@ void Resource::request_next() {
 	size_t window = _object->_window;
 
 	for (size_t i = start; i < _object->_total_parts && requested_count < window; i++) {
-		// Only request parts where we know the hash
-		if (i < _object->_hashmap.size() && _object->_hashmap[i].size() > 0) {
+		// Only request parts where we know the hash (hashmap_height tracks valid entries)
+		if (i < _object->_hashmap_height) {
 			// Check if we haven't already received this part
 			if (_object->_parts[i].size() == 0) {
 				requested_hashes += _object->_hashmap[i];
+				// Log which parts/hashes we're requesting
+				if (requested_count < 5) {
+					std::string hash_hex = _object->_hashmap[i].toHex();
+					DEBUGF("Resource::request_next: Requesting part %zu, hash=%s", i, hash_hex.c_str());
+				}
 				requested_count++;
 			}
 		} else {
@@ -1085,14 +1142,23 @@ void Resource::request_next() {
 	uint8_t hmu_flag = 0x00;  // HASHMAP_IS_NOT_EXHAUSTED
 	Bytes hmu_part;
 
-	if (_object->_hashmap_height < _object->_total_parts && requested_count < window) {
-		// Need more hashmap entries
-		hmu_flag = 0xFF;  // HASHMAP_IS_EXHAUSTED
-		if (_object->_hashmap_height > 0) {
-			// Include the last known map hash
-			hmu_part = _object->_hashmap[_object->_hashmap_height - 1];
+	// Request more hashmap if we haven't received all entries yet AND
+	// we're getting close to exhausting what we have (within 2*window of the end)
+	if (_object->_hashmap_height < _object->_total_parts) {
+		size_t lookahead = start + 2 * window;
+		DEBUGF("Resource::request_next: hashmap check: start=%d, window=%zu, lookahead=%zu, hashmap_height=%zu, total_parts=%zu",
+			start, window, lookahead, _object->_hashmap_height, _object->_total_parts);
+		if (lookahead >= _object->_hashmap_height || requested_count < window) {
+			// Need more hashmap entries
+			hmu_flag = 0xFF;  // HASHMAP_IS_EXHAUSTED
+			if (_object->_hashmap_height > 0) {
+				// Include the last known map hash
+				hmu_part = _object->_hashmap[_object->_hashmap_height - 1];
+			}
+			_object->_waiting_for_hmu = true;
+			DEBUGF("Resource::request_next: Setting hmu_flag=0xFF (lookahead=%zu >= height=%zu, or count=%zu < window=%zu)",
+				lookahead, _object->_hashmap_height, requested_count, window);
 		}
-		_object->_waiting_for_hmu = true;
 	}
 
 	// Build request packet: [hmu_flag:1][last_map_hash:4?][resource_hash:32][requested_hashes:4*N]
@@ -1110,7 +1176,8 @@ void Resource::request_next() {
 	_object->_outstanding_parts = requested_count;
 	_object->_req_sent = OS::time();
 
-	DEBUGF("Resource::request_next: Requesting %zu parts, hmu_flag=0x%02x", requested_count, hmu_flag);
+	DEBUGF("Resource::request_next: Requesting %zu parts, hmu_flag=0x%02x, outstanding set to=%zu",
+		requested_count, hmu_flag, _object->_outstanding_parts);
 
 	// Send the request packet
 	Packet request_packet(_object->_link, request_data, Type::Packet::DATA, Type::Packet::RESOURCE_REQ);
@@ -1126,8 +1193,9 @@ void Resource::receive_part(const Packet& packet) {
 	// DEBUG: Log raw packet info
 	DEBUGF("Resource::receive_part: Received packet, context=%d, raw data size=%zu",
 		packet.context(), packet.data().size());
+	std::string packet_data_hex = packet.data().left(64).toHex();
 	DEBUGF("Resource::receive_part: Raw packet first 64 bytes=%s",
-		packet.data().left(64).toHex().c_str());
+		packet_data_hex.c_str());
 
 	if (_object->_receiving_part) {
 		WARNING("Resource::receive_part: Already receiving a part, ignoring");
@@ -1143,8 +1211,9 @@ void Resource::receive_part(const Packet& packet) {
 
 	// DEBUG: Log plaintext size
 	DEBUGF("Resource::receive_part: Decrypted plaintext size=%zu", part_data.size());
+	std::string part_data_hex = part_data.left(64).toHex();
 	DEBUGF("Resource::receive_part: Plaintext first 64 bytes=%s",
-		part_data.left(64).toHex().c_str());
+		part_data_hex.c_str());
 
 	if (part_data.size() == 0) {
 		ERROR("Resource::receive_part: Part data is empty");
@@ -1153,19 +1222,23 @@ void Resource::receive_part(const Packet& packet) {
 	}
 
 	// Compute the map hash for this part data using random_hash from advertisement
+	std::string random_hash_hex = _object->_random_hash.toHex();
+	std::string part_data_32_hex = part_data.left(32).toHex();
 	DEBUGF("Resource::receive_part: random_hash=%s (len=%zu)",
-		_object->_random_hash.toHex().c_str(), _object->_random_hash.size());
+		random_hash_hex.c_str(), _object->_random_hash.size());
 	DEBUGF("Resource::receive_part: part_data first 32 bytes=%s",
-		part_data.left(32).toHex().c_str());
+		part_data_32_hex.c_str());
 
 	Bytes map_hash = get_map_hash(part_data, _object->_random_hash);
 
+	std::string map_hash_hex = map_hash.toHex();
 	DEBUGF("Resource::receive_part: Computed map_hash=%s for part_data size=%zu",
-		map_hash.toHex().c_str(), part_data.size());
+		map_hash_hex.c_str(), part_data.size());
 
 	// Find which part this is by matching the map hash against hashmap
+	// Only search valid entries (up to _hashmap_height), not pre-allocated empty slots
 	int part_index = -1;
-	for (size_t i = 0; i < _object->_hashmap.size(); i++) {
+	for (size_t i = 0; i < _object->_hashmap_height; i++) {
 		if (_object->_hashmap[i] == map_hash) {
 			part_index = i;
 			break;
@@ -1173,20 +1246,34 @@ void Resource::receive_part(const Packet& packet) {
 	}
 
 	if (part_index < 0) {
-		WARNINGF("Resource::receive_part: Unknown map hash %s, ignoring part", map_hash.toHex().c_str());
+		std::string map_hash_hex = map_hash.toHex();
+		WARNINGF("Resource::receive_part: Unknown map hash %s, ignoring part", map_hash_hex.c_str());
 		// Debug: dump the expected hashmap entries
 		for (size_t i = 0; i < _object->_hashmap.size(); i++) {
-			DEBUGF("  hashmap[%zu] = %s", i, _object->_hashmap[i].toHex().c_str());
+			std::string hashmap_i_hex = _object->_hashmap[i].toHex();
+			DEBUGF("  hashmap[%zu] = %s", i, hashmap_i_hex.c_str());
 		}
 		_object->_receiving_part = false;
 		return;
 	}
 
-	// Store the part
+	// Check if we already have this part (duplicate)
+	bool is_duplicate = (_object->_parts[part_index].size() > 0);
+
+	// Store the part (overwrites if duplicate, which is fine)
 	_object->_parts[part_index] = part_data;
-	_object->_received_count++;
-	if (_object->_outstanding_parts > 0) {
-		_object->_outstanding_parts--;
+
+	// Only count new parts, not duplicates
+	if (!is_duplicate) {
+		_object->_received_count++;
+		if (_object->_outstanding_parts > 0) {
+			_object->_outstanding_parts--;
+		}
+		DEBUGF("Resource::receive_part: NEW part %d, received=%zu, outstanding=%zu",
+			part_index, _object->_received_count, _object->_outstanding_parts);
+	} else {
+		DEBUGF("Resource::receive_part: DUPLICATE part %d, received=%zu, outstanding=%zu",
+			part_index, _object->_received_count, _object->_outstanding_parts);
 	}
 
 	// Update consecutive completed height
@@ -1281,13 +1368,14 @@ void Resource::assemble() {
 			std::ostringstream filename;
 			filename << parts_dir << "/part_" << std::setfill('0') << std::setw(4) << i << ".bin";
 
-			std::ofstream f(filename.str(), std::ios::binary);
+			std::string filename_str = filename.str();
+			std::ofstream f(filename_str, std::ios::binary);
 			if (f) {
 				const Bytes& part = _object->_parts[i];
 				f.write(reinterpret_cast<const char*>(part.data()), part.size());
 				f.close();
 				DEBUGF("Resource::assemble: Saved part %zu (%zu bytes) to %s",
-					   i, part.size(), filename.str().c_str());
+					   i, part.size(), filename_str.c_str());
 			}
 		}
 
@@ -1359,7 +1447,8 @@ void Resource::assemble() {
 		return;
 	}
 	Bytes random_hash_prefix = assembled_data.left(Type::Resource::RANDOM_HASH_SIZE);
-	DEBUGF("Resource::assemble: random_hash prefix = %s", random_hash_prefix.toHex().c_str());
+	std::string random_hash_prefix_hex = random_hash_prefix.toHex();
+	DEBUGF("Resource::assemble: random_hash prefix = %s", random_hash_prefix_hex.c_str());
 	assembled_data = assembled_data.mid(Type::Resource::RANDOM_HASH_SIZE);
 	DEBUGF("Resource::assemble: After stripping random_hash: %zu bytes", assembled_data.size());
 
@@ -1370,8 +1459,10 @@ void Resource::assemble() {
 			f.write(reinterpret_cast<const char*>(assembled_data.data()), assembled_data.size());
 			f.close();
 			DEBUGF("Resource::assemble: Saved %zu stripped bytes to /tmp/cpp_stage3_stripped.bin", assembled_data.size());
-			DEBUGF("Resource::assemble: First 50 bytes: %s", assembled_data.left(50).toHex().c_str());
-			DEBUGF("Resource::assemble: Last 20 bytes: %s", assembled_data.right(20).toHex().c_str());
+			std::string first_50_hex = assembled_data.left(50).toHex();
+			std::string last_20_hex = assembled_data.right(20).toHex();
+			DEBUGF("Resource::assemble: First 50 bytes: %s", first_50_hex.c_str());
+			DEBUGF("Resource::assemble: Last 20 bytes: %s", last_20_hex.c_str());
 		}
 	}
 
@@ -1395,8 +1486,9 @@ void Resource::assemble() {
 				f.close();
 				DEBUGF("Resource::assemble: Saved %zu decompressed bytes to /tmp/cpp_stage4_decompressed.bin",
 					   assembled_data.size());
+				std::string decompressed_50_hex = assembled_data.left(50).toHex();
 				DEBUGF("Resource::assemble: Decompressed first 50 bytes: %s",
-					   assembled_data.left(50).toHex().c_str());
+					   decompressed_50_hex.c_str());
 			}
 		}
 	}
@@ -1405,8 +1497,10 @@ void Resource::assemble() {
 	Bytes calculated_hash = Identity::full_hash(assembled_data + _object->_random_hash);
 	if (calculated_hash != _object->_hash) {
 		ERROR("Resource::assemble: Hash verification failed");
-		DEBUGF("Resource::assemble: Expected: %s", _object->_hash.toHex().c_str());
-		DEBUGF("Resource::assemble: Calculated: %s", calculated_hash.toHex().c_str());
+		std::string expected_hash_hex = _object->_hash.toHex();
+		std::string calculated_hash_hex = calculated_hash.toHex();
+		DEBUGF("Resource::assemble: Expected: %s", expected_hash_hex.c_str());
+		DEBUGF("Resource::assemble: Calculated: %s", calculated_hash_hex.c_str());
 		_object->_status = Type::Resource::CORRUPT;
 		_object->_assembly_lock = false;
 		return;
@@ -1475,11 +1569,14 @@ void Resource::prove() {
 	Bytes proof = Identity::full_hash(_object->_data + _object->_hash);
 	Bytes proof_data = _object->_hash + proof;
 
+	std::string hash_hex = _object->_hash.toHex();
+	std::string proof_hex = proof.toHex();
+	std::string link_id_hex = _object->_link.hash().toHex();
 	INFOF("Resource::prove: data_size=%zu, hash_size=%zu, proof_size=%zu, proof_data_size=%zu",
 		_object->_data.size(), _object->_hash.size(), proof.size(), proof_data.size());
-	INFOF("Resource::prove: hash=%s", _object->_hash.toHex().c_str());
-	INFOF("Resource::prove: proof=%s", proof.toHex().c_str());
-	INFOF("Resource::prove: link_id=%s", _object->_link.hash().toHex().c_str());
+	INFOF("Resource::prove: hash=%s", hash_hex.c_str());
+	INFOF("Resource::prove: proof=%s", proof_hex.c_str());
+	INFOF("Resource::prove: link_id=%s", link_id_hex.c_str());
 
 	// Send the proof packet - must use PROOF packet type for Python compatibility
 	Packet proof_packet(_object->_link, proof_data, Type::Packet::PROOF, Type::Packet::RESOURCE_PRF);
