@@ -11,6 +11,9 @@
 
 #include <MsgPack.h>
 #include <algorithm>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
 
 using namespace RNS;
 using namespace RNS::Type::Resource;
@@ -41,6 +44,8 @@ Resource::Resource(const Bytes& data, const Link& link, bool advertise /*= true*
 		return;
 	}
 
+	DEBUGF("Resource::ctor: Starting with data size=%zu", data.size());
+
 	// Mark as sender (initiator)
 	_object->_initiator = true;
 	_object->_is_response = is_response;
@@ -53,11 +58,15 @@ Resource::Resource(const Bytes& data, const Link& link, bool advertise /*= true*
 	_object->_total_size = data.size();
 	_object->_uncompressed_size = data.size();
 
+	DEBUG("Resource::ctor: About to compress");
+
 	// Compress if beneficial
 	Bytes payload_data = input_data;
 	_object->_compressed = false;
 	if (auto_compress && data.size() <= Type::Resource::AUTO_COMPRESS_MAX_SIZE) {
+		DEBUG("Resource::ctor: Calling bz2_compress");
 		Bytes compressed = Cryptography::bz2_compress(input_data);
+		DEBUG("Resource::ctor: bz2_compress returned");
 		if (compressed && compressed.size() < input_data.size()) {
 			payload_data = compressed;
 			_object->_compressed = true;
@@ -65,9 +74,11 @@ Resource::Resource(const Bytes& data, const Link& link, bool advertise /*= true*
 		}
 	}
 
+	DEBUG("Resource::ctor: Generating random_hash");
 	// Generate random_hash (4 bytes) - used for hashmap collision prevention
 	_object->_random_hash = Identity::get_random_hash().left(Type::Resource::RANDOM_HASH_SIZE);
 
+	DEBUG("Resource::ctor: Computing resource hash");
 	// Compute resource hash = SHA256(original_input_data + random_hash)
 	// This is verified by receiver after assembly
 	_object->_hash = Identity::full_hash(input_data + _object->_random_hash);
@@ -83,11 +94,14 @@ Resource::Resource(const Bytes& data, const Link& link, bool advertise /*= true*
 	// This is what we expect the receiver to send back as proof
 	// (stored but not sent - receiver computes this independently)
 
+	DEBUGF("Resource::ctor: Preparing payload, payload_data size=%zu", payload_data.size());
 	// Prepare payload: random_hash + (compressed_or_uncompressed_data)
 	Bytes payload = _object->_random_hash + payload_data;
 
+	DEBUGF("Resource::ctor: About to encrypt payload size=%zu", payload.size());
 	// Encrypt the payload using link's Token (const_cast needed as encrypt() modifies internal state)
 	Bytes encrypted_data = const_cast<Link&>(link).encrypt(payload);
+	DEBUG("Resource::ctor: Encryption complete");
 	if (!encrypted_data) {
 		ERROR("Resource: Failed to encrypt payload");
 		_object->_status = Type::Resource::FAILED;
@@ -108,6 +122,9 @@ Resource::Resource(const Bytes& data, const Link& link, bool advertise /*= true*
 	// Calculate total parts
 	_object->_total_parts = (encrypted_data.size() + _object->_sdu - 1) / _object->_sdu;
 
+	DEBUGF("Resource::ctor: Building hashmap for %zu parts (encrypted_data size=%zu, sdu=%zu)",
+		_object->_total_parts, encrypted_data.size(), _object->_sdu);
+
 	// Build hashmap and parts
 	// Hashmap = concatenation of 4-byte hashes, one per part
 	// Each map_hash = SHA256(part_data + random_hash)[:4]
@@ -127,7 +144,14 @@ Resource::Resource(const Bytes& data, const Link& link, bool advertise /*= true*
 		Bytes map_hash = get_map_hash(part_data, _object->_random_hash);
 		_object->_hashmap[i] = map_hash;
 		hashmap_raw += map_hash;
+
+		// Log progress every 100 parts
+		if (i % 100 == 0 && i > 0) {
+			DEBUGF("Resource::ctor: Built %zu/%zu parts", i, _object->_total_parts);
+		}
 	}
+
+	DEBUG("Resource::ctor: Hashmap build complete");
 
 	_object->_hashmap_raw = hashmap_raw;
 	_object->_hashmap_height = _object->_total_parts;
@@ -647,12 +671,23 @@ Resource Resource::accept(const Packet& advertisement_packet,
 		return Resource(Type::NONE);
 	}
 
-	// Decrypt and parse the advertisement
-	Bytes plaintext = link.decrypt(advertisement_packet.data());
+	// Use the pre-decrypted plaintext from Link::receive
+	// NOTE: Link::receive already decrypts RESOURCE_ADV packets and stores the result
+	// in packet.plaintext(). Do NOT decrypt again - that was causing double-decryption!
+	Bytes plaintext = const_cast<Packet&>(advertisement_packet).plaintext();
 	if (!plaintext) {
-		ERROR("Resource::accept: Failed to decrypt advertisement");
-		return Resource(Type::NONE);
+		// Fallback: try decrypting if plaintext not set (shouldn't happen in normal flow)
+		WARNING("Resource::accept: No pre-decrypted plaintext, decrypting now");
+		plaintext = link.decrypt(advertisement_packet.data());
+		if (!plaintext) {
+			ERROR("Resource::accept: Failed to decrypt advertisement");
+			return Resource(Type::NONE);
+		}
 	}
+
+	// DEBUG: Log decrypted plaintext before msgpack parsing
+	DEBUGF("Resource::accept: Decrypted plaintext size=%zu", plaintext.size());
+	DEBUGF("Resource::accept: Decrypted first 64 bytes=%s", plaintext.left(64).toHex().c_str());
 
 	// Parse the advertisement
 	RNS::ResourceAdvertisement adv;
@@ -869,6 +904,12 @@ void Resource::request_next() {
 void Resource::receive_part(const Packet& packet) {
 	assert(_object);
 
+	// DEBUG: Log raw packet info
+	DEBUGF("Resource::receive_part: Received packet, context=%d, raw data size=%zu",
+		packet.context(), packet.data().size());
+	DEBUGF("Resource::receive_part: Raw packet first 64 bytes=%s",
+		packet.data().left(64).toHex().c_str());
+
 	if (_object->_receiving_part) {
 		WARNING("Resource::receive_part: Already receiving a part, ignoring");
 		return;
@@ -880,6 +921,12 @@ void Resource::receive_part(const Packet& packet) {
 	// Python sends ONLY the part data (no map_hash prefix)
 	// The receiver computes map_hash = SHA256(part_data + random_hash)[:4]
 	const Bytes& part_data = const_cast<Packet&>(packet).plaintext();
+
+	// DEBUG: Log plaintext size
+	DEBUGF("Resource::receive_part: Decrypted plaintext size=%zu", part_data.size());
+	DEBUGF("Resource::receive_part: Plaintext first 64 bytes=%s",
+		part_data.left(64).toHex().c_str());
+
 	if (part_data.size() == 0) {
 		ERROR("Resource::receive_part: Part data is empty");
 		_object->_receiving_part = false;
@@ -962,6 +1009,46 @@ void Resource::assemble() {
 
 	TRACE("Resource::assemble: Starting assembly");
 
+	// DEBUG: Save individual parts before assembly
+	{
+		std::string parts_dir = "/tmp/cpp_stage0_parts";
+		// Create directory using system call
+		system("mkdir -p /tmp/cpp_stage0_parts");
+
+		for (size_t i = 0; i < _object->_parts.size(); i++) {
+			// Format part number with leading zeros (e.g., part_0000.bin)
+			std::ostringstream filename;
+			filename << parts_dir << "/part_" << std::setfill('0') << std::setw(4) << i << ".bin";
+
+			std::ofstream f(filename.str(), std::ios::binary);
+			if (f) {
+				const Bytes& part = _object->_parts[i];
+				f.write(reinterpret_cast<const char*>(part.data()), part.size());
+				f.close();
+				DEBUGF("Resource::assemble: Saved part %zu (%zu bytes) to %s",
+					   i, part.size(), filename.str().c_str());
+			}
+		}
+
+		// Save parts metadata
+		std::ofstream meta("/tmp/cpp_parts_metadata.json", std::ios::out);
+		if (meta) {
+			meta << "{\n";
+			meta << "  \"total_parts\": " << _object->_parts.size() << ",\n";
+			meta << "  \"parts\": [\n";
+			for (size_t i = 0; i < _object->_parts.size(); i++) {
+				meta << "    {\"index\": " << i << ", \"size\": " << _object->_parts[i].size();
+				meta << ", \"hash\": \"" << _object->_hashmap[i].toHex() << "\"}";
+				if (i < _object->_parts.size() - 1) meta << ",";
+				meta << "\n";
+			}
+			meta << "  ]\n";
+			meta << "}\n";
+			meta.close();
+			DEBUG("Resource::assemble: Saved parts metadata to /tmp/cpp_parts_metadata.json");
+		}
+	}
+
 	// Concatenate all parts (Token-encrypted chunks)
 	Bytes assembled_data;
 	for (size_t i = 0; i < _object->_parts.size(); i++) {
@@ -969,6 +1056,16 @@ void Resource::assemble() {
 	}
 
 	DEBUGF("Resource::assemble: Assembled %zu bytes from %zu parts", assembled_data.size(), _object->_parts.size());
+
+	// DEBUG: Save encrypted data before decryption
+	{
+		std::ofstream f("/tmp/cpp_stage1_encrypted.bin", std::ios::binary);
+		if (f) {
+			f.write(reinterpret_cast<const char*>(assembled_data.data()), assembled_data.size());
+			f.close();
+			DEBUGF("Resource::assemble: Saved %zu encrypted bytes to /tmp/cpp_stage1_encrypted.bin", assembled_data.size());
+		}
+	}
 
 	// Decrypt if needed (Resource uses Token encryption via link.encrypt())
 	if (_object->_encrypted) {
@@ -981,6 +1078,16 @@ void Resource::assemble() {
 		}
 		assembled_data = decrypted;
 		DEBUGF("Resource::assemble: Decrypted to %zu bytes", assembled_data.size());
+
+		// DEBUG: Save decrypted data (with random_hash)
+		{
+			std::ofstream f("/tmp/cpp_stage2_decrypted.bin", std::ios::binary);
+			if (f) {
+				f.write(reinterpret_cast<const char*>(assembled_data.data()), assembled_data.size());
+				f.close();
+				DEBUGF("Resource::assemble: Saved %zu decrypted bytes to /tmp/cpp_stage2_decrypted.bin", assembled_data.size());
+			}
+		}
 	}
 
 	// Strip off the random_hash prefix (4 bytes)
@@ -990,8 +1097,22 @@ void Resource::assemble() {
 		_object->_assembly_lock = false;
 		return;
 	}
+	Bytes random_hash_prefix = assembled_data.left(Type::Resource::RANDOM_HASH_SIZE);
+	DEBUGF("Resource::assemble: random_hash prefix = %s", random_hash_prefix.toHex().c_str());
 	assembled_data = assembled_data.mid(Type::Resource::RANDOM_HASH_SIZE);
 	DEBUGF("Resource::assemble: After stripping random_hash: %zu bytes", assembled_data.size());
+
+	// DEBUG: Save data after stripping random_hash (before decompression)
+	{
+		std::ofstream f("/tmp/cpp_stage3_stripped.bin", std::ios::binary);
+		if (f) {
+			f.write(reinterpret_cast<const char*>(assembled_data.data()), assembled_data.size());
+			f.close();
+			DEBUGF("Resource::assemble: Saved %zu stripped bytes to /tmp/cpp_stage3_stripped.bin", assembled_data.size());
+			DEBUGF("Resource::assemble: First 50 bytes: %s", assembled_data.left(50).toHex().c_str());
+			DEBUGF("Resource::assemble: Last 20 bytes: %s", assembled_data.right(20).toHex().c_str());
+		}
+	}
 
 	// Decompress if needed
 	if (_object->_compressed) {
@@ -1004,6 +1125,19 @@ void Resource::assemble() {
 		}
 		assembled_data = decompressed;
 		DEBUGF("Resource::assemble: Decompressed to %zu bytes", assembled_data.size());
+
+		// DEBUG: Save decompressed data
+		{
+			std::ofstream f("/tmp/cpp_stage4_decompressed.bin", std::ios::binary);
+			if (f) {
+				f.write(reinterpret_cast<const char*>(assembled_data.data()), assembled_data.size());
+				f.close();
+				DEBUGF("Resource::assemble: Saved %zu decompressed bytes to /tmp/cpp_stage4_decompressed.bin",
+					   assembled_data.size());
+				DEBUGF("Resource::assemble: Decompressed first 50 bytes: %s",
+					   assembled_data.left(50).toHex().c_str());
+			}
+		}
 	}
 
 	// Verify hash
@@ -1021,7 +1155,43 @@ void Resource::assemble() {
 	_object->_data = assembled_data;
 	_object->_status = Type::Resource::COMPLETE;
 
-	DEBUGF("Resource::assemble: Assembly complete, data_size=%zu", _object->_data.size());
+	DEBUGF("Resource::assemble: Assembly complete, data_size=%zu, expected_total_size=%zu",
+		_object->_data.size(), _object->_total_size);
+
+	// DEBUG: Save final verified data
+	{
+		std::ofstream f("/tmp/cpp_stage5_final.bin", std::ios::binary);
+		if (f) {
+			f.write(reinterpret_cast<const char*>(assembled_data.data()), assembled_data.size());
+			f.close();
+			DEBUGF("Resource::assemble: Saved %zu final verified bytes to /tmp/cpp_stage5_final.bin",
+				   assembled_data.size());
+		}
+
+		// Save comprehensive metadata
+		std::ofstream meta("/tmp/cpp_final_metadata.json", std::ios::out);
+		if (meta) {
+			meta << "{\n";
+			meta << "  \"resource_hash\": \"" << _object->_hash.toHex() << "\",\n";
+			meta << "  \"random_hash\": \"" << _object->_random_hash.toHex() << "\",\n";
+			meta << "  \"total_size\": " << _object->_total_size << ",\n";
+			meta << "  \"transfer_size\": " << _object->_size << ",\n";
+			meta << "  \"total_parts\": " << _object->_total_parts << ",\n";
+			meta << "  \"compressed\": " << (_object->_compressed ? "true" : "false") << ",\n";
+			meta << "  \"encrypted\": " << (_object->_encrypted ? "true" : "false") << ",\n";
+			meta << "  \"final_data_size\": " << _object->_data.size() << ",\n";
+			meta << "  \"hash_verification\": \"PASSED\"\n";
+			meta << "}\n";
+			meta.close();
+			DEBUG("Resource::assemble: Saved final metadata to /tmp/cpp_final_metadata.json");
+		}
+	}
+
+	// Validate data size matches advertised total_size
+	if (_object->_data.size() != _object->_total_size) {
+		ERRORF("Resource::assemble: SIZE MISMATCH! received %zu bytes, expected %zu bytes",
+			_object->_data.size(), _object->_total_size);
+	}
 
 	// Send proof to sender
 	prove();
