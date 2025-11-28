@@ -203,6 +203,7 @@ namespace RNS {
 		void start_watchdog();
 	void __watchdog_job();
 		void send_keepalive();
+		void loop();  // Periodic processing for resource timeouts
 		void handle_request(const Bytes& request_id, const ResourceRequest& unpacked_request);
 		void handle_response(const Bytes& request_id, const Bytes& response_data, size_t response_size, size_t response_transfer_size);
 		void request_resource_concluded(const Resource& resource);

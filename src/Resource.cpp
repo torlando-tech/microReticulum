@@ -299,13 +299,16 @@ void Resource::advertise() {
 	_object->_adv_sent = OS::time();
 	_object->_last_activity = _object->_adv_sent;
 
+	// Initialize retry counter for advertisement phase
+	// (Different from transfer retries - uses MAX_ADV_RETRIES)
+	_object->_retries_left = Type::Resource::MAX_ADV_RETRIES;
+
 	// Register with link for incoming request routing
 	_object->_link.register_outgoing_resource(*this);
 
 	std::string hash_hex = _object->_hash.toHex();
-	DEBUGF("Resource::advertise: Advertisement sent for hash=%s", hash_hex.c_str());
-
-	// TODO: Start watchdog timer
+	DEBUGF("Resource::advertise: Advertisement sent for hash=%s, retries=%zu",
+		hash_hex.c_str(), _object->_retries_left);
 }
 
 // Handle incoming part request from receiver
@@ -505,6 +508,218 @@ void Resource::validate_proof(const Bytes& proof_data) {
 }
 
 void Resource::cancel() {
+	assert(_object);
+
+	if (_object->_status == Type::Resource::COMPLETE ||
+		_object->_status == Type::Resource::FAILED) {
+		return;  // Already terminated
+	}
+
+	std::string hash_hex = _object->_hash.toHex();
+	DEBUGF("Resource::cancel: Cancelling resource hash=%s", hash_hex.c_str());
+
+	_object->_status = Type::Resource::FAILED;
+
+	// Send cancel packet to remote end
+	Bytes cancel_data = _object->_hash;
+
+	if (_object->_initiator) {
+		// Sender cancelling - send RESOURCE_ICL (Initiator Cancel)
+		Packet cancel_packet(_object->_link, cancel_data,
+							Type::Packet::DATA, Type::Packet::RESOURCE_ICL);
+		cancel_packet.send();
+		_object->_link.cancel_outgoing_resource(*this);
+	} else {
+		// Receiver cancelling - send RESOURCE_RCL (Receiver Cancel)
+		Packet cancel_packet(_object->_link, cancel_data,
+							Type::Packet::DATA, Type::Packet::RESOURCE_RCL);
+		cancel_packet.send();
+		_object->_link.cancel_incoming_resource(*this);
+	}
+
+	// Fire concluded callback with FAILED status
+	if (_object->_callbacks._concluded != nullptr) {
+		_object->_callbacks._concluded(*this);
+	}
+}
+
+void Resource::check_timeout() {
+	assert(_object);
+
+	// Skip if no resource data or already failed/complete
+	if (_object->_status == Type::Resource::FAILED ||
+		_object->_status == Type::Resource::COMPLETE ||
+		_object->_status == Type::Resource::CORRUPT ||
+		_object->_status == Type::Resource::NONE ||
+		_object->_status == Type::Resource::QUEUED) {
+		return;
+	}
+
+	// Prevent reentrant calls
+	if (_object->_watchdog_lock) {
+		return;
+	}
+	_object->_watchdog_lock = true;
+
+	switch (_object->_status) {
+	case Type::Resource::ADVERTISED:
+		timeout_advertised();
+		break;
+	case Type::Resource::TRANSFERRING:
+		timeout_transferring();
+		break;
+	case Type::Resource::AWAITING_PROOF:
+		timeout_awaiting_proof();
+		break;
+	default:
+		break;
+	}
+
+	_object->_watchdog_lock = false;
+}
+
+void Resource::timeout_advertised() {
+	// Only sender can be in ADVERTISED state
+	if (!_object->_initiator) return;
+
+	double now = OS::time();
+
+	// Get RTT from link, with fallback to default
+	double rtt = _object->_link.rtt();
+	if (rtt == 0.0) {
+		rtt = Type::Reticulum::DEFAULT_PER_HOP_TIMEOUT;
+	}
+
+	double timeout = rtt * Type::Resource::PART_TIMEOUT_FACTOR +
+					 Type::Resource::SENDER_GRACE_TIME;
+
+	if (now > _object->_adv_sent + timeout) {
+		if (_object->_retries_left > 0) {
+			_object->_retries_left--;
+			DEBUGF("Resource::timeout_advertised: Retrying advertisement (%zu retries left)",
+				   _object->_retries_left);
+			advertise();
+		} else {
+			DEBUG("Resource::timeout_advertised: Advertisement timed out, max retries exceeded");
+			_object->_status = Type::Resource::FAILED;
+
+			if (_object->_callbacks._concluded != nullptr) {
+				_object->_callbacks._concluded(*this);
+			}
+
+			// Unregister from link
+			_object->_link.cancel_outgoing_resource(*this);
+		}
+	}
+}
+
+void Resource::timeout_transferring() {
+	double now = OS::time();
+
+	// Get RTT estimate
+	double rtt = _object->_rtt;
+	if (rtt == 0.0) {
+		rtt = _object->_link.rtt();
+		if (rtt == 0.0) {
+			rtt = Type::Reticulum::DEFAULT_PER_HOP_TIMEOUT;
+		}
+	}
+
+	if (_object->_initiator) {
+		// Sender: waiting for part requests from receiver
+		// Use simpler timeout - receiver drives the transfer
+		double timeout = rtt * Type::Resource::PART_TIMEOUT_FACTOR +
+						 Type::Resource::SENDER_GRACE_TIME;
+
+		if (now > _object->_last_activity + timeout) {
+			DEBUG("Resource::timeout_transferring: Sender timeout waiting for requests");
+			_object->_status = Type::Resource::FAILED;
+
+			if (_object->_callbacks._concluded != nullptr) {
+				_object->_callbacks._concluded(*this);
+			}
+
+			_object->_link.cancel_outgoing_resource(*this);
+		}
+	} else {
+		// Receiver: waiting for parts from sender
+		// Calculate timeout factor - use smaller factor after RTT is known
+		double timeout_factor = _object->_part_timeout_factor;
+		if (_object->_rtt > 0.0) {
+			timeout_factor = Type::Resource::PART_TIMEOUT_FACTOR_AFTER_RTT;
+		}
+
+		// Calculate expected time-of-flight for remaining parts
+		// Use at least 1 for outstanding_parts to avoid zero timeout
+		size_t outstanding = std::max((size_t)1, _object->_outstanding_parts);
+		double expected_tof = rtt * outstanding;
+
+		// Extra wait increases with retry count
+		size_t retries_used = _object->_max_retries - _object->_retries_left;
+		double extra_wait = retries_used * Type::Resource::PER_RETRY_DELAY;
+
+		double timeout = _object->_last_activity +
+						 (timeout_factor * expected_tof) +
+						 Type::Resource::RETRY_GRACE_TIME +
+						 extra_wait;
+
+		if (now > timeout) {
+			if (_object->_retries_left > 0) {
+				_object->_retries_left--;
+
+				// Reduce window (backoff)
+				if (_object->_window > _object->_window_min) {
+					_object->_window = std::max(_object->_window_min,
+												_object->_window / 2);
+				}
+
+				DEBUGF("Resource::timeout_transferring: Retrying request "
+					   "(retries=%zu, window=%zu)",
+					   _object->_retries_left, _object->_window);
+
+				_object->_last_activity = now;
+				request_next();
+			} else {
+				DEBUG("Resource::timeout_transferring: Transfer timed out, max retries exceeded");
+				_object->_status = Type::Resource::FAILED;
+
+				if (_object->_callbacks._concluded != nullptr) {
+					_object->_callbacks._concluded(*this);
+				}
+
+				_object->_link.cancel_incoming_resource(*this);
+			}
+		}
+	}
+}
+
+void Resource::timeout_awaiting_proof() {
+	// Only sender awaits proof
+	if (!_object->_initiator) return;
+
+	double now = OS::time();
+
+	double rtt = _object->_rtt;
+	if (rtt == 0.0) {
+		rtt = _object->_link.rtt();
+		if (rtt == 0.0) {
+			rtt = Type::Reticulum::DEFAULT_PER_HOP_TIMEOUT;
+		}
+	}
+
+	double timeout = rtt * Type::Resource::PROOF_TIMEOUT_FACTOR +
+					 Type::Resource::SENDER_GRACE_TIME;
+
+	if (now > _object->_last_activity + timeout) {
+		DEBUG("Resource::timeout_awaiting_proof: Proof timed out");
+		_object->_status = Type::Resource::FAILED;
+
+		if (_object->_callbacks._concluded != nullptr) {
+			_object->_callbacks._concluded(*this);
+		}
+
+		_object->_link.cancel_outgoing_resource(*this);
+	}
 }
 
 void Resource::prepare_next_segment() {

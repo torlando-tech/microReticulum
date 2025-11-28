@@ -251,7 +251,7 @@ private:
 - [x] Python → C++ 1MB resource (fixed 2025-11-26 - was double-decryption bug)
 - [x] Can send/receive 50MB resource (tested 2025-11-27)
 - [x] Progress callbacks fire with accurate percentages (tested 2025-11-27)
-- [ ] Timeout handling works (cancel after deadline)
+- [x] Timeout handling works (cancel after deadline) - IMPLEMENTED 2025-11-28
 - [ ] Metadata dict can be attached and retrieved
 - [x] Compression toggle works (auto_compress=true/false, default enabled)
 - [x] Proof computation and verification working (validated 2025-11-26)
@@ -2240,6 +2240,80 @@ case Type::Packet::CHANNEL:
 
 **Ready for Milestone 5 (Full Integration)**
 
+---
+
+## Resource Timeout Handling - COMPLETE (2025-11-28)
+
+### Implementation Summary
+
+Polling-based timeout handling for Resource class, matching Python RNS behavior.
+
+**Files Modified:**
+- `src/Type.h` - Added `PROOF_TIMEOUT_FACTOR=3`, changed `MAX_RETRIES` from 8 to 16
+- `src/Resource.h` - Added `check_timeout()` and private timeout handlers
+- `src/Resource.cpp` - Implemented timeout checking, `cancel()`, retry logic
+- `src/ResourceData.h` - Added `friend class Link`
+- `src/Link.h` - Added `loop()` declaration
+- `src/Link.cpp` - Implemented `loop()`, RESOURCE_ICL/RCL handlers
+- `src/Transport.cpp` - Integrated `Link::loop()` into `jobs()`
+
+**New Test Files:**
+- `test/test_interop/python/timeout_server.py` - Python server with timeout simulation modes
+- `test/test_interop/run_timeout_tests.sh` - Test runner script
+
+### Timeout States Implemented
+
+| State | Role | Timeout Calculation | On Timeout |
+|-------|------|---------------------|------------|
+| ADVERTISED | Sender | RTT × 4 + 10s | Retry advertisement (max 4) → FAILED |
+| TRANSFERRING | Receiver | last_activity + (factor × RTT × outstanding) + grace + delay | Reduce window, retry (max 16) → FAILED |
+| TRANSFERRING | Sender | RTT × 4 + 10s | → FAILED |
+| AWAITING_PROOF | Sender | RTT × 3 + 10s | → FAILED |
+
+### Cancel Packets
+
+- `RESOURCE_ICL` (0x06): Initiator cancel - sender cancels transfer
+- `RESOURCE_RCL` (0x07): Receiver cancel - receiver rejects/cancels
+
+### Testing Procedure
+
+```bash
+# Test 1: Advertisement timeout (C++ sender, Python ignores)
+# Terminal 1:
+cd test/test_interop/python
+/usr/bin/python timeout_server.py -c test_rns_config -m drop-adv
+
+# Terminal 2:
+cd examples/link
+.pio/build/native/program <destination_hash>
+# Type: send 1024
+# Expected: "Advertisement timed out" after ~50-60 seconds
+
+# Test 2: Baseline (normal transfer should still work)
+# Terminal 1:
+/usr/bin/python resource_server.py -c test_rns_config -s 1024
+
+# Terminal 2:
+.pio/build/native/program <destination_hash>
+# Expected: Resource received successfully
+```
+
+### Python Reference Formulas (Implemented)
+
+**Receiver TRANSFERRING timeout:**
+```
+timeout = last_activity + (part_timeout_factor × RTT × outstanding_parts)
+        + RETRY_GRACE_TIME + (retries_used × PER_RETRY_DELAY)
+```
+
+**Window backoff on timeout:**
+```
+if window > window_min:
+    window = max(window_min, window / 2)
+```
+
+---
+
 ### Next Steps
 
 **Milestone 5: Full Integration**
@@ -2249,6 +2323,7 @@ case Type::Packet::CHANNEL:
 - [ ] Memory usage acceptable on MCU target
 
 **Remaining Verification:**
+- [x] Timeout handling (cancel after deadline) - IMPLEMENTED 2025-11-28
 - [ ] readline() with partial data
 - [ ] Multiple concurrent streams
 - [ ] Large sustained transfers (stress testing)

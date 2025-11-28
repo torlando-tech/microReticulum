@@ -292,6 +292,9 @@ using namespace RNS::Utilities;
 				for (auto& link : active_links) {
 					if (link.status() == Type::Link::CLOSED) {
 						_active_links.erase(link);
+					} else if (link.status() == Type::Link::ACTIVE) {
+						// Check resource timeouts for active links
+						const_cast<Link&>(link).loop();
 					}
 				}
 
