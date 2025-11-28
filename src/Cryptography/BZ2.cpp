@@ -3,7 +3,6 @@
 #include <bzlib.h>
 #include <cstring>
 #include <vector>
-#include <fstream>
 #include "../Log.h"
 
 namespace RNS { namespace Cryptography {
@@ -13,25 +12,11 @@ const Bytes bz2_decompress(const Bytes& data) {
 		return Bytes();
 	}
 
-	// Debug: dump input data info
-	DEBUGF("bz2_decompress: input size=%zu, first 50 bytes=%s",
-		data.size(), data.left(50).toHex().c_str());
-	DEBUGF("bz2_decompress: last 20 bytes=%s",
-		data.right(20).toHex().c_str());
-
-	// Save compressed data to file for comparison
-	static int decompress_call = 0;
-	decompress_call++;
-	std::string filename = "/tmp/cpp_compressed_" + std::to_string(decompress_call) + ".bin";
-	std::ofstream outfile(filename, std::ios::binary);
-	if (outfile) {
-		outfile.write(reinterpret_cast<const char*>(data.data()), data.size());
-		outfile.close();
-		DEBUGF("bz2_decompress: saved %zu bytes to %s", data.size(), filename.c_str());
-	}
-
-	// Start with output buffer 4x input size (typical compression ratio)
-	size_t output_size = data.size() * 4;
+	// Start with output buffer sized for highly compressed data
+	// Pattern data can have 1000x+ compression ratios (2MB -> 278 bytes)
+	// Using 2MB minimum ensures single-iteration decompression for most cases
+	const size_t MIN_OUTPUT_SIZE = 2 * 1024 * 1024;  // 2MB minimum
+	size_t output_size = std::max(data.size() * 100, MIN_OUTPUT_SIZE);
 	std::vector<char> output(output_size);
 
 	bz_stream stream;

@@ -1532,26 +1532,35 @@ void Link::handle_resource_concluded(const Resource& resource) {
 
 	TRACE("Link::handle_resource_concluded called");
 
-	// First, clean up resource from tracking sets (matches Python's link.resource_concluded)
-	resource_concluded(resource);
+	// Make a local copy to keep the shared_ptr alive during this function.
+	// This prevents the ResourceData from being destroyed when resource_concluded()
+	// removes it from tracking sets, which would invalidate resource.data() before
+	// SegmentAccumulator can copy it.
+	Resource resource_copy = resource;
 
 	// Check if resource completed successfully
-	if (resource.status() != Type::Resource::COMPLETE) {
-		// Failed resource - notify application if callback set
-		DEBUGF("Link::handle_resource_concluded: Resource failed with status %d", resource.status());
+	if (resource_copy.status() != Type::Resource::COMPLETE) {
+		// Failed resource - clean up and notify application
+		resource_concluded(resource_copy);
+		DEBUGF("Link::handle_resource_concluded: Resource failed with status %d", resource_copy.status());
 		if (_object->_callbacks._resource_concluded) {
-			_object->_callbacks._resource_concluded(resource);
+			_object->_callbacks._resource_concluded(resource_copy);
 		}
 		return;
 	}
 
 	// Check if this is a multi-segment resource
-	if (resource.is_segmented()) {
+	if (resource_copy.is_segmented()) {
 		DEBUGF("Link::handle_resource_concluded: Segmented resource %d/%d",
-			resource.segment_index(), resource.total_segments());
+			resource_copy.segment_index(), resource_copy.total_segments());
 
-		// Route through segment accumulator
-		bool handled = _object->_segment_accumulator.segment_completed(resource);
+		// Route through segment accumulator BEFORE cleaning up the resource.
+		// The resource_copy keeps the shared_ptr alive so resource.data() remains valid.
+		bool handled = _object->_segment_accumulator.segment_completed(resource_copy);
+
+		// NOW clean up the resource from tracking sets.
+		// resource_copy keeps the data alive until end of this function.
+		resource_concluded(resource_copy);
 
 		if (handled) {
 			// Segment was accumulated - don't call app callback for individual segments
@@ -1563,10 +1572,11 @@ void Link::handle_resource_concluded(const Resource& resource) {
 		DEBUG("Link::handle_resource_concluded: segment_completed returned false, falling through");
 	}
 
-	// Single-segment resource or non-segmented - notify application directly
+	// Single-segment resource or non-segmented - clean up and notify application
+	resource_concluded(resource_copy);
 	if (_object->_callbacks._resource_concluded) {
 		DEBUG("Link::handle_resource_concluded: Firing application callback for single-segment resource");
-		_object->_callbacks._resource_concluded(resource);
+		_object->_callbacks._resource_concluded(resource_copy);
 	}
 }
 
