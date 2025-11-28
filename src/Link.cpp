@@ -1276,7 +1276,11 @@ void Link::receive(const Packet& packet) {
 					// We pass the raw data to receive_part for hash matching.
 					const_cast<Packet&>(packet).plaintext(packet.data());
 					DEBUG("Link::receive: Received RESOURCE data");
-					for (auto& resource : _object->_incoming_resources) {
+					// Copy the set before iterating - receive_part may trigger
+					// resource_concluded() which erases from _incoming_resources,
+					// invalidating iterators during the range-based for loop.
+					auto incoming_copy = _object->_incoming_resources;
+					for (auto& resource : incoming_copy) {
 						const_cast<Resource&>(resource).receive_part(packet);
 					}
 					break;

@@ -1005,6 +1005,8 @@ Resource Resource::accept(const Packet& advertisement_packet,
 	resource._object->_segment_index = adv.segment_index;
 	resource._object->_total_segments = adv.total_segments;
 	resource._object->_split = (adv.total_segments > 1);
+	DEBUGF("Resource::accept: segment_index=%d, total_segments=%d, is_segmented=%d",
+		adv.segment_index, adv.total_segments, (adv.total_segments > 1));
 
 	// Initialize hashmap tracking
 	resource._object->_hashmap.resize(total_parts);
@@ -1644,20 +1646,24 @@ void Resource::prove() {
 	// Python: proof = RNS.Identity.full_hash(self.data + self.hash)
 	//         proof_data = self.hash + proof
 	// The proof is SHA256(data + resource_hash), and the packet contains resource_hash + proof
+
 	Bytes proof = Identity::full_hash(_object->_data + _object->_hash);
 	Bytes proof_data = _object->_hash + proof;
 
-	std::string hash_hex = _object->_hash.toHex();
-	std::string proof_hex = proof.toHex();
-	std::string link_id_hex = _object->_link.hash().toHex();
+	if (!_object->_link) {
+		ERROR("Resource::prove: _link is invalid");
+		return;
+	}
+
 	INFOF("Resource::prove: data_size=%zu, hash_size=%zu, proof_size=%zu, proof_data_size=%zu",
 		_object->_data.size(), _object->_hash.size(), proof.size(), proof_data.size());
-	INFOF("Resource::prove: hash=%s", hash_hex.c_str());
-	INFOF("Resource::prove: proof=%s", proof_hex.c_str());
-	INFOF("Resource::prove: link_id=%s", link_id_hex.c_str());
+	INFOF("Resource::prove: hash=%s", _object->_hash.toHex().c_str());
+	INFOF("Resource::prove: proof=%s", proof.toHex().c_str());
+	INFOF("Resource::prove: link_id=%s", _object->_link.hash().toHex().c_str());
 
 	// Send the proof packet - must use PROOF packet type for Python compatibility
 	Packet proof_packet(_object->_link, proof_data, Type::Packet::PROOF, Type::Packet::RESOURCE_PRF);
+
 	INFOF("Resource::prove: packet_type=%d, context=%d", proof_packet.packet_type(), proof_packet.context());
 	proof_packet.send();
 
