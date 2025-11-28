@@ -22,7 +22,7 @@ import argparse
 import os
 
 APP_NAME = "microreticulum_interop"
-ASPECT = "timeout_test"
+ASPECT = "link_server"  # Must match resource_server.py for same destination hash
 
 # Global state
 server_destination = None
@@ -94,28 +94,30 @@ def send_resource(link, data):
         return None
 
 
-def custom_resource_strategy(resource):
-    """Custom resource acceptance strategy for timeout testing."""
+def resource_accepting_callback(resource):
+    """Called when deciding whether to accept a resource."""
     global mode
 
     if mode == "drop-adv":
-        # Accept but don't actually process - sender will timeout waiting for requests
-        print(f"[DROP-ADV] Ignoring resource advertisement (sender will timeout)")
-        return False  # Reject to simulate not responding
-
-    elif mode == "drop-proof":
-        # Accept the resource normally, but we'll intercept the proof
-        print(f"[DROP-PROOF] Accepting resource, will skip sending proof")
+        # Accept the advertisement but immediately cancel to prevent part requests
+        print(f"[DROP-ADV] Accepting resource but will cancel immediately")
+        print(f"  Resource hash: {resource.hash.hex()}")
+        # Return True to accept, but we'll cancel it right after
         return True
-
+    elif mode == "drop-proof":
+        print(f"[DROP-PROOF] Accepting resource, will receive but not send proof")
+        return True
     elif mode == "drop-parts":
-        # Accept but we'll stop requesting parts mid-transfer
         print(f"[DROP-PARTS] Accepting resource, will stop mid-transfer")
         return True
-
     else:
-        # Normal mode - accept all
         return True
+
+
+def drop_adv_resource_started(resource):
+    """Called when resource starts in drop-adv mode - cancel immediately."""
+    print(f"[DROP-ADV] Resource started, cancelling to prevent part requests")
+    resource.cancel()  # Cancel to prevent sending RESOURCE_REQ
 
 
 def link_established(link):
@@ -131,10 +133,14 @@ def link_established(link):
     link.set_link_closed_callback(link_closed)
 
     if mode == "drop-adv":
-        # Set a custom callback that rejects resources
-        link.set_resource_strategy(RNS.Link.ACCEPT_NONE)
-        print("[DROP-ADV] Set resource strategy to ACCEPT_NONE")
-        print("Sender will timeout waiting for part requests...")
+        # Use ACCEPT_APP with a callback that always returns False (reject)
+        # This keeps the link open but rejects incoming resources
+        link.set_resource_strategy(RNS.Link.ACCEPT_APP)
+        link.resource_strategy_callback = lambda resource: False
+        print("[DROP-ADV] Resource strategy set to reject all (callback returns False)")
+        print("Sender will timeout waiting for part requests (~50-60s expected)")
+        # Keep link alive by setting a packet callback
+        link.set_packet_callback(lambda data, packet: None)
     elif mode == "drop-proof":
         # Accept resources normally - the proof skip happens in resource handling
         link.set_resource_strategy(RNS.Link.ACCEPT_ALL)

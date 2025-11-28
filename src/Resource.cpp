@@ -295,13 +295,17 @@ void Resource::advertise() {
 	Packet adv_packet(_object->_link, adv_data, Type::Packet::DATA, Type::Packet::RESOURCE_ADV);
 	adv_packet.send();
 
+	// Set status and timing
+	bool first_advertisement = (_object->_status != Type::Resource::ADVERTISED);
 	_object->_status = Type::Resource::ADVERTISED;
 	_object->_adv_sent = OS::time();
 	_object->_last_activity = _object->_adv_sent;
 
-	// Initialize retry counter for advertisement phase
-	// (Different from transfer retries - uses MAX_ADV_RETRIES)
-	_object->_retries_left = Type::Resource::MAX_ADV_RETRIES;
+	// Initialize retry counter only on first advertisement
+	// (Don't reset on retries or we'll retry forever)
+	if (first_advertisement) {
+		_object->_retries_left = Type::Resource::MAX_ADV_RETRIES;
+	}
 
 	// Register with link for incoming request routing
 	_object->_link.register_outgoing_resource(*this);
@@ -592,6 +596,10 @@ void Resource::timeout_advertised() {
 
 	double timeout = rtt * Type::Resource::PART_TIMEOUT_FACTOR +
 					 Type::Resource::SENDER_GRACE_TIME;
+
+	double time_since_adv = now - _object->_adv_sent;
+	DEBUGF("Resource::timeout_advertised: checking - rtt=%.2f, timeout=%.2f, time_since_adv=%.2f",
+		rtt, timeout, time_since_adv);
 
 	if (now > _object->_adv_sent + timeout) {
 		if (_object->_retries_left > 0) {

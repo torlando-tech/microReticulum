@@ -2277,26 +2277,37 @@ Polling-based timeout handling for Resource class, matching Python RNS behavior.
 
 ### Testing Procedure
 
+**Test 1: Manual Cancel (Simplest)**
 ```bash
-# Test 1: Advertisement timeout (C++ sender, Python ignores)
-# Terminal 1:
+# Terminal 1: Normal server
 cd test/test_interop/python
-/usr/bin/python timeout_server.py -c test_rns_config -m drop-adv
-
-# Terminal 2:
-cd examples/link
-.pio/build/native/program <destination_hash>
-# Type: send 1024
-# Expected: "Advertisement timed out" after ~50-60 seconds
-
-# Test 2: Baseline (normal transfer should still work)
-# Terminal 1:
 /usr/bin/python resource_server.py -c test_rns_config -s 1024
 
-# Terminal 2:
+# Terminal 2: C++ client
+cd examples/link
 .pio/build/native/program <destination_hash>
-# Expected: Resource received successfully
+send 1024    # Start transfer
+cancel       # Immediately cancel
+# Expected: RESOURCE_ICL packet sent, Python sees FAILED status
 ```
+
+**Test 2: Baseline Regression Test**
+```bash
+# Verify normal transfers still work
+# Same setup as Test 1, but don't cancel
+# Expected: Resource transfers successfully in both directions
+```
+
+**Testing Challenges:**
+- Advertisement timeout testing is complex because Python RNS actively manages resource acceptance
+- When Python rejects resources (ACCEPT_APP returning False), it closes the link
+- Testing automatic timeouts requires simulating network failures (packet drops)
+- Future work: Use packet filtering tools (iptables) or modify Python RNS for testing
+
+**Manual Cancel Command Added:**
+- `cancel` command in C++ client cancels last sent resource
+- Sends RESOURCE_ICL (0x06) to remote end
+- Verifies cancel packet encoding and transmission
 
 ### Python Reference Formulas (Implemented)
 
