@@ -18,6 +18,7 @@ Press Ctrl+C to stop the server.
 """
 
 import RNS
+import RNS.Buffer
 import time
 import sys
 import argparse
@@ -95,6 +96,57 @@ def link_established(link):
 
     channel.add_message_handler(handle_channel_message)
     print("Channel configured with MessageTest handler")
+
+    # Set up bidirectional Buffer for stream testing
+    # Both sides use stream_id 0 for simplicity
+    def buffer_ready_callback(ready_bytes):
+        print(f"\n[BUFFER:READY:{ready_bytes}]")
+        sys.stdout.flush()
+
+    buffer = RNS.Buffer.create_bidirectional_buffer(
+        receive_stream_id=0,
+        send_stream_id=0,
+        channel=channel,
+        ready_callback=buffer_ready_callback
+    )
+
+    # Store buffer in link for access in separate thread
+    link.buffer = buffer
+
+    # Start a thread to handle buffer echo
+    import threading
+    def buffer_echo_handler():
+        try:
+            while link.status == RNS.Link.ACTIVE:
+                data = buffer.read(4096)
+                if data:
+                    print(f"\n[BUFFER:RX:{len(data)} bytes]")
+                    try:
+                        text = data.decode('utf-8')
+                        print(f"[BUFFER:RX_TEXT:{repr(text)}]")
+                    except:
+                        print(f"[BUFFER:RX_HEX:{data.hex()}]")
+                    sys.stdout.flush()
+
+                    # Echo back with modification (matching Python RNS test pattern)
+                    if data == b"PING\n":
+                        response = b"PONG\n"
+                    else:
+                        response = data  # Simple echo
+
+                    buffer.write(response)
+                    buffer.flush()
+                    print(f"[BUFFER:TX:{len(response)} bytes]")
+                    sys.stdout.flush()
+                else:
+                    time.sleep(0.01)
+        except Exception as e:
+            print(f"[BUFFER:ERROR:{e}]")
+            sys.stdout.flush()
+
+    buffer_thread = threading.Thread(target=buffer_echo_handler, daemon=True)
+    buffer_thread.start()
+    print("Buffer configured for bidirectional echo")
 
 
 def link_closed(link):

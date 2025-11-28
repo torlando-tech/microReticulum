@@ -551,6 +551,9 @@ namespace RNS { namespace Type {
 		// Message type limit (user messages < this, system >= this)
 		static const uint16_t MSGTYPE_USER_MAX = 0xF000;
 
+		// System message types
+		static const uint16_t SMT_STREAM_DATA = 0xFF00;
+
 		// Envelope header size: MSGTYPE(2) + SEQUENCE(2) + LENGTH(2)
 		static const size_t ENVELOPE_HEADER_SIZE = 6;
 
@@ -573,6 +576,24 @@ namespace RNS { namespace Type {
 
 		// Retry settings
 		static const uint8_t MAX_TRIES = 5;
+	}
+
+	namespace Buffer {
+		// Stream ID limits (14-bit field)
+		static const uint16_t STREAM_ID_MAX = 0x3FFF;
+
+		// Header flags
+		static const uint16_t FLAG_EOF = 0x8000;
+		static const uint16_t FLAG_COMPRESSED = 0x4000;
+		static const uint16_t STREAM_ID_MASK = 0x3FFF;
+
+		// Wire format overhead (2-byte header)
+		static const size_t STREAM_OVERHEAD = 2;
+
+		// Writer constants
+		static const size_t MAX_CHUNK_LEN = 16384;
+		static const size_t COMPRESSION_TRIES = 4;
+		static const size_t COMPRESSION_MIN_SIZE = 32;
 	}
 
 } }
