@@ -21,9 +21,29 @@ import RNS
 import time
 import sys
 import argparse
+import uuid
+from RNS.vendor import umsgpack
 
 APP_NAME = "microreticulum_interop"
 ASPECT = "link_server"
+
+# Define MessageTest class (must match C++ implementation)
+class MessageTest(RNS.MessageBase):
+    MSGTYPE = 0xabcd
+
+    def __init__(self):
+        self.id = ""
+        self.data = ""
+        self.not_serialized = str(uuid.uuid4())
+
+    def pack(self):
+        return umsgpack.packb([self.id, self.data])
+
+    def unpack(self, raw):
+        unpacked = umsgpack.unpackb(raw)
+        if len(unpacked) >= 2:
+            self.id = unpacked[0]
+            self.data = unpacked[1]
 
 # Global state
 server_destination = None
@@ -49,6 +69,32 @@ def link_established(link):
 
     # Accept all resources (for future Resource testing)
     link.set_resource_strategy(RNS.Link.ACCEPT_ALL)
+
+    # Set up channel
+    channel = link.get_channel()
+    channel.register_message_type(MessageTest)
+
+    def handle_channel_message(message):
+        if isinstance(message, MessageTest):
+            print(f"\n[CHANNEL MESSAGE RECEIVED]")
+            print(f"  id: {message.id}")
+            print(f"  data: {message.data}")
+            print(f"  not_serialized: {message.not_serialized}")
+
+            # Echo back with modified data
+            response = MessageTest()
+            response.id = message.id  # Preserve ID
+            response.data = message.data + " back"  # Modify data
+            print(f"\n[CHANNEL MESSAGE SENT]")
+            print(f"  id: {response.id}")
+            print(f"  data: {response.data}")
+            print(f"  not_serialized: {response.not_serialized}")
+            channel.send(response)
+            return True
+        return False
+
+    channel.add_message_handler(handle_channel_message)
+    print("Channel configured with MessageTest handler")
 
 
 def link_closed(link):

@@ -1741,3 +1741,178 @@ This made the bug hard to trace because the erase was far from the iteration poi
 - ✅ Iterator invalidation fixed for multi-segment completion
 
 **Ready for Milestone 3 (Channel)**
+
+---
+
+## Current Status and Next Steps (2025-11-28, Session 7)
+
+### Session Progress Summary
+
+**Goals**: Implement Milestone 3 - Channel feature
+
+**Completed**:
+- ✅ Phase 1: Core Infrastructure (MessageBase, ChannelData, Channel class)
+- ✅ Phase 2: Send Path (envelope packing, TX ring, send method)
+- ✅ Phase 3: Receive Path (envelope unpacking, factory dispatch, RX ring)
+- ✅ Phase 4: Reliable Delivery (callbacks, timeout, retry, window adaptation)
+- ✅ Phase 5: Link Integration (get_channel, packet handler, teardown)
+- ✅ Phase 6: Testing infrastructure (MessageTest class, Python handler)
+
+### Milestone 3: Channel Implementation (2025-11-28)
+
+**Status**: COMPLETE - Channel feature fully implemented
+
+#### Files Created
+
+| File | Description |
+|------|-------------|
+| `src/MessageBase.h` | Abstract base class for channel messages |
+| `src/ChannelData.h` | Internal data structure + Envelope class |
+
+#### Files Modified
+
+| File | Changes |
+|------|---------|
+| `src/Channel.h` | Full Channel class with registration, send, receive |
+| `src/Channel.cpp` | Complete implementation |
+| `src/Type.h` | Channel constants (SEQ_MAX, window sizes, RTT thresholds) |
+| `src/Link.h` | Added get_channel() method |
+| `src/Link.cpp` | Enabled Channel packet handler, added Channel include |
+| `examples/link/main.cpp` | Added MessageTest class and "channel" command |
+| `test/test_interop/python/link_server.py` | Added channel echo handler |
+
+#### Wire Protocol (Matches Python RNS)
+
+```
+[MSGTYPE:2][SEQUENCE:2][LENGTH:2][DATA:N]
+```
+- All fields: Big-endian (network byte order)
+- MSGTYPE: 16-bit message type (user < 0xF000, system >= 0xF000)
+- SEQUENCE: 16-bit sequence number (wraps at 0x10000)
+- LENGTH: 16-bit data length
+- DATA: Message payload
+
+#### Key Constants (Type.h, Channel namespace)
+
+```cpp
+SEQ_MAX = 0xFFFF              // Maximum sequence number
+SEQ_MODULUS = 0x10000         // Wraparound modulus
+MSGTYPE_USER_MAX = 0xF000     // User/system message boundary
+ENVELOPE_HEADER_SIZE = 6      // Wire format header size
+WINDOW_INITIAL = 2            // Initial window
+WINDOW_MAX_FAST = 48          // RTT < 0.18s
+WINDOW_MAX_MEDIUM = 12        // RTT 0.18-0.75s
+WINDOW_MAX_SLOW = 5           // RTT > 0.75s
+RTT_FAST = 0.18               // Fast link threshold
+RTT_MEDIUM = 0.75             // Medium link threshold
+RTT_SLOW = 1.45               // Slow link threshold
+MAX_TRIES = 5                 // Maximum retry attempts
+```
+
+#### Channel API
+
+**Message Registration**:
+```cpp
+channel.register_message_type<MessageTest>();  // User type (MSGTYPE < 0xF000)
+channel.register_message_type<StreamDataMessage>(true);  // System type (>= 0xF000)
+```
+
+**Handler Registration**:
+```cpp
+channel.add_message_handler([](RNS::MessageBase& msg) -> bool {
+    if (msg.msgtype() == MessageTest::MSGTYPE) {
+        MessageTest& test_msg = static_cast<MessageTest&>(msg);
+        // Handle message
+        return true;  // Claimed
+    }
+    return false;  // Not handled
+});
+```
+
+**Sending**:
+```cpp
+MessageTest msg;
+msg.id = "test_123";
+msg.data = "Hello";
+channel.send(msg);
+```
+
+**Buffer Integration Hooks** (for Milestone 4):
+```cpp
+channel.mdu()           // Maximum data unit
+channel.tx_ring_size()  // TX ring size for timeout calculation
+channel.link_rtt()      // Link RTT
+channel.is_ready_to_send()  // Flow control check
+channel.remove_message_handler(callback)  // Unregister handler
+```
+
+#### Reliable Delivery
+
+**Window Management**:
+- RTT-based tier selection (FAST/MEDIUM/SLOW/VERY_SLOW)
+- Window increases on delivery, decreases on timeout
+- Exponential backoff: `timeout = 1.5^(tries-1) * max(rtt*2.5, 0.025) * (ring_size+1.5)`
+
+**Sequence Handling**:
+- RX ring buffers out-of-order messages
+- Only contiguous sequences dispatched to handlers
+- WINDOW_MAX (48) determines maximum buffer before rejection
+
+#### Test Infrastructure
+
+**MessageTest Class** (msgtype 0xABCD):
+```cpp
+class MessageTest : public RNS::MessageBase {
+public:
+    static constexpr uint16_t MSGTYPE = 0xABCD;
+    std::string id;           // UUID, preserved across round-trip
+    std::string data;         // Payload, modified by server
+    std::string not_serialized; // Not packed
+
+    Bytes pack() const override;    // msgpack([id, data])
+    void unpack(const Bytes& raw) override;
+};
+```
+
+**Testing Procedure**:
+```bash
+# Terminal 1: Python server
+cd test/test_interop/python
+/usr/bin/python link_server.py -c test_rns_config
+
+# Terminal 2: C++ client
+cd examples/link
+.pio/build/native/program <destination_hash>
+# At prompt: channel
+```
+
+**Expected Result**:
+- C++ sends: `id=test_1234, data=Hello`
+- Python echoes: `id=test_1234, data=Hello back`
+- C++ receives echoed message
+
+### Milestone 3 Completion Status
+
+**Channel messaging is now functional:**
+- ✅ Message type registration (user and system types)
+- ✅ Send path with envelope packing and TX ring
+- ✅ Receive path with factory dispatch and RX ring
+- ✅ Out-of-order message handling (sequence buffering)
+- ✅ Reliable delivery (retry with exponential backoff)
+- ✅ Window adaptation based on RTT
+- ✅ Link integration (get_channel, packet handler, teardown)
+- ✅ MessageTest class for interop testing
+- ✅ Python server channel handler
+- ✅ Buffer integration hooks prepared
+
+**Ready for Milestone 4 (Buffer)**
+
+### Next Steps
+
+**Milestone 4: Buffer** - Stream-oriented interface over Channel
+- [ ] StreamDataMessage (system message type 0xF000)
+- [ ] RawChannelReader (read/readline/ready callbacks)
+- [ ] RawChannelWriter (write/flush/close)
+- [ ] Bidirectional buffer support
+- [ ] `test_11_buffer_round_trip` pattern
+- [ ] `test_12_buffer_round_trip_big` (32KB+)

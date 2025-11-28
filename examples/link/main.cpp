@@ -43,6 +43,53 @@
 
 #include <Cryptography/AES.h>
 #include <Cryptography/Hashes.h>
+#include <MessageBase.h>
+#include <ChannelData.h>
+#include <Channel.h>
+#include <MsgPack.h>
+
+// Test message class for Channel interoperability testing
+class MessageTest : public RNS::MessageBase {
+public:
+    static constexpr uint16_t MSGTYPE = 0xABCD;
+
+    std::string id;
+    std::string data;
+    std::string not_serialized;  // Not sent over wire
+
+    MessageTest() {
+        // Generate a simple unique ID (not a real UUID, but sufficient for testing)
+        not_serialized = "local_" + std::to_string(rand());
+    }
+
+    uint16_t msgtype() const override { return MSGTYPE; }
+
+    RNS::Bytes pack() const override {
+        // Pack as msgpack array: [id, data]
+        MsgPack::Packer packer;
+        packer.packArraySize(2);
+        packer.pack(id);
+        packer.pack(data);
+
+        // Convert MsgPack buffer to RNS::Bytes
+        const auto& buffer = packer.packet();
+        return RNS::Bytes(buffer.data(), buffer.size());
+    }
+
+    void unpack(const RNS::Bytes& raw) override {
+        // Unpack msgpack array: [id, data]
+        MsgPack::Unpacker unpacker;
+        unpacker.feed(raw.data(), raw.size());
+
+        size_t arr_size = unpacker.unpackArraySize();
+        if (arr_size >= 2) {
+            std::string unpacked_id = unpacker.unpackString();
+            std::string unpacked_data = unpacker.unpackString();
+            id = unpacked_id;
+            data = unpacked_data;
+        }
+    }
+};
 
 // Generate deterministic random data using SHA256 hash chain
 // Matches Python resource_server.py algorithm for byte-perfect verification
@@ -274,6 +321,7 @@ void link_established(RNS::Link& link) {
         RNS::log("  send          - Send a 1KB test resource (pattern data)");
         RNS::log("  send N        - Send an N-byte resource (e.g., 'send 2097152' for 2MB)");
         RNS::log("  send random N - Send N-byte deterministic random data (non-compressible)");
+        RNS::log("  channel       - Test Channel message passing (interop test)");
         RNS::log("  quit          - Exit the program");
         RNS::log("  <text>        - Send text as a packet");
         RNS::log("Resource transfers will be automatically received.");
@@ -528,6 +576,38 @@ void client_loop() {
 				else if (text.substr(0, 5) == "send ") {
 					size_t size = std::stoul(text.substr(5));
 					send_test_resource(size, false);
+				}
+				// Channel test command
+				else if (text == "channel") {
+					if (!server_link) {
+						RNS::log("No link established", RNS::LOG_ERROR);
+					}
+					else {
+						// Get channel
+						RNS::Channel channel = server_link.get_channel();
+
+						// Register message type
+						channel.register_message_type<MessageTest>();
+
+						// Add handler to receive responses
+						channel.add_message_handler([](RNS::MessageBase& msg) -> bool {
+							if (msg.msgtype() == MessageTest::MSGTYPE) {
+								MessageTest& test_msg = static_cast<MessageTest&>(msg);
+								RNS::log("Channel received: id=" + test_msg.id + ", data=" + test_msg.data);
+								return true;  // Message handled
+							}
+							return false;
+						});
+
+						// Create and send test message
+						MessageTest test_msg;
+						test_msg.id = "test_" + std::to_string(rand() % 10000);
+						test_msg.data = "Hello";
+
+						RNS::log("Sending channel message: id=" + test_msg.id + ", data=" + test_msg.data);
+
+						channel.send(test_msg);
+					}
 				}
 				// If not, send the entered text over the link
 				else if (text != "") {

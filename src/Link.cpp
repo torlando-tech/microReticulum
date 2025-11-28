@@ -5,6 +5,7 @@
 #include "Reticulum.h"
 #include "Transport.h"
 #include "Packet.h"
+#include "Channel.h"
 #include "Log.h"
 #include "Cryptography/Ed25519.h"
 #include "Cryptography/X25519.h"
@@ -966,24 +967,25 @@ void Link::response_resource_concluded(const Resource& resource) {
 	}
 }
 
-
 /*z
 """
 Get the ``Channel`` for this link.
 
 :return: ``Channel`` object
 """
-void Link::get_channel() {
-	assert(_object);
-	if _object->_channel is None:
-		_object->_channel = Channel(LinkChannelOutlet(self))
-	return _object->_channel
 */
-
-/*
-void Link::receive(const Packet& packet) {
+Channel& Link::get_channel() {
+	if (!_object) {
+		static Channel none_channel(Type::NONE);
+		return none_channel;
+	}
+	if (!_object->_channel) {
+		_object->_channel = Channel(*this);
+		TRACE("Link::get_channel: Created new channel");
+	}
+	return _object->_channel;
 }
-*/
+
 void Link::receive(const Packet& packet) {
 	assert(_object);
 	_object->_watchdog_lock = true;
@@ -1311,23 +1313,24 @@ void Link::receive(const Packet& packet) {
 					}
 					break;
 				}
-/*z
 				case Type::Packet::CHANNEL:
 				{
-					//z if (!_object->_channel) {
-					if (true) {
-						DEBUG(f"Channel data received without open channel")
+					TRACE("Link::receive: Received CHANNEL data");
+					if (!_object->_channel) {
+						DEBUG("Link::receive: Channel data received without open channel");
 					}
 					else {
-						//z packet.prove();
-						//z plaintext = decrypt(packet.data());
-						//z if (plaintext) {
-						//z 	_object->_channel._receive(plaintext);
-						//z }
+						// Decrypt the packet data
+						Bytes plaintext = decrypt(packet.data());
+						if (plaintext) {
+							_object->_channel._receive(plaintext);
+						}
+						else {
+							ERROR("Link::receive: Failed to decrypt channel data");
+						}
 					}
 					break;
 				}
-*/
 				}
 			}
 			else if (packet.packet_type() == Type::Packet::PROOF) {

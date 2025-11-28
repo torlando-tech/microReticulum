@@ -544,6 +544,35 @@ namespace RNS { namespace Type {
 	}
 
 	namespace Channel {
+		// Sequence constants
+		static const uint16_t SEQ_MAX = 0xFFFF;
+		static const uint32_t SEQ_MODULUS = 0x10000;
+
+		// Message type limit (user messages < this, system >= this)
+		static const uint16_t MSGTYPE_USER_MAX = 0xF000;
+
+		// Envelope header size: MSGTYPE(2) + SEQUENCE(2) + LENGTH(2)
+		static const size_t ENVELOPE_HEADER_SIZE = 6;
+
+		// Window management
+		static const uint16_t WINDOW_INITIAL = 2;
+		static const uint16_t WINDOW_MIN = 2;
+		static const uint16_t WINDOW_MAX = 48;
+		static const uint16_t WINDOW_MAX_FAST = 48;
+		static const uint16_t WINDOW_MAX_MEDIUM = 12;
+		static const uint16_t WINDOW_MAX_SLOW = 5;
+		static const uint16_t WINDOW_FLEXIBILITY = 4;
+
+		// RTT thresholds (seconds)
+		static constexpr double RTT_FAST = 0.18;
+		static constexpr double RTT_MEDIUM = 0.75;
+		static constexpr double RTT_SLOW = 1.45;
+
+		// Rate threshold for window tier promotion
+		static const uint16_t FAST_RATE_THRESHOLD = 10;
+
+		// Retry settings
+		static const uint8_t MAX_TRIES = 5;
 	}
 
 } }
