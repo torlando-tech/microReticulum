@@ -39,8 +39,10 @@ public:
 	virtual inline std::string toString() const { return "UDPInterface[" + _name + "/" + _local_host + ":" + std::to_string(_local_port) + "]"; }
 	//virtual inline std::string toString() const { return "UDPInterface[" + name() + "]"; }
 
-	// Configure ports for interop testing (call before start())
+	// Configure host/port for interop testing (call before start())
+	void set_remote_host(const std::string& host) { _remote_host = host; }
 	void set_remote_port(int port) { _remote_port = port; }
+	void set_local_host(const std::string& host) { _local_host = host; }
 	void set_local_port(int port) { _local_port = port; }
 
 protected:
