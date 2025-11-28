@@ -1324,6 +1324,12 @@ void Link::receive(const Packet& packet) {
 						Bytes plaintext = decrypt(packet.data());
 						if (plaintext) {
 							_object->_channel._receive(plaintext);
+
+							// Always send proof for CHANNEL packets.
+							// Channel relies on reliable delivery with windowing,
+							// so acknowledgments are critical for proper operation.
+							const_cast<Packet&>(packet).prove();
+							TRACE("Link::receive: Sent proof for CHANNEL packet");
 						}
 						else {
 							ERROR("Link::receive: Failed to decrypt channel data");

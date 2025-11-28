@@ -857,8 +857,38 @@ void client_loop() {
 						printf("[BUFFER:TX:PING]\n");
 						fflush(stdout);
 
-						// Response will be received via callback
-						// For automated testing, the callback logs will show results
+						// Wait for response with timeout (10 seconds)
+						RNS::Bytes received;
+						int timeout_ms = 10000;
+						int elapsed_ms = 0;
+						const int poll_interval_ms = 10;
+
+						while (elapsed_ms < timeout_ms) {
+							reticulum.loop();
+
+							if (reader.available() > 0) {
+								received = reader.read();
+								break;
+							}
+
+							RNS::Utilities::OS::sleep(poll_interval_ms / 1000.0);
+							elapsed_ms += poll_interval_ms;
+						}
+
+						// Verify response
+						std::string expected_str = "PONG\n";
+						RNS::Bytes expected((const uint8_t*)expected_str.data(), expected_str.size());
+
+						if (received.size() == 0) {
+							printf("[TEST:buffer_ping:FAIL:timeout_no_response]\n");
+						} else if (received == expected) {
+							printf("[BUFFER:RX:PONG]\n");
+							printf("[TEST:buffer_ping:PASS]\n");
+						} else {
+							printf("[BUFFER:RX:%s]\n", received.toHex().c_str());
+							printf("[TEST:buffer_ping:FAIL:wrong_response_got_%zu_bytes]\n", received.size());
+						}
+						fflush(stdout);
 					}
 				}
 				// Buffer write command
@@ -898,17 +928,11 @@ void client_loop() {
 
 						RNS::Channel channel = server_link.get_channel();
 
-						static bool buffer_test_response = false;
-						static RNS::Bytes received_data;
-						buffer_test_response = false;
-						received_data = RNS::Bytes::NONE;
-
 						auto buffer_pair = RNS::Buffer::create_bidirectional_buffer(
 							0, 0, channel,
 							[](size_t ready_bytes) {
 								printf("[BUFFER:READY:%zu]\n", ready_bytes);
 								fflush(stdout);
-								buffer_test_response = true;
 							}
 						);
 						auto& reader = buffer_pair.first;
@@ -916,10 +940,40 @@ void client_loop() {
 
 						// Send "Hello\n"
 						std::string hello_str = "Hello\n";
-						RNS::Bytes test_data((const uint8_t*)hello_str.data(), hello_str.size());
-						writer.write(test_data);
+						RNS::Bytes sent_data((const uint8_t*)hello_str.data(), hello_str.size());
+						writer.write(sent_data);
 						writer.flush();
 						printf("[BUFFER:TX:Hello\\n (6 bytes)]\n");
+						fflush(stdout);
+
+						// Wait for response with timeout (15 seconds)
+						RNS::Bytes received;
+						int timeout_ms = 15000;
+						int elapsed_ms = 0;
+						const int poll_interval_ms = 10;
+
+						while (elapsed_ms < timeout_ms) {
+							reticulum.loop();
+
+							if (reader.available() > 0) {
+								received = reader.read();
+								break;
+							}
+
+							RNS::Utilities::OS::sleep(poll_interval_ms / 1000.0);
+							elapsed_ms += poll_interval_ms;
+						}
+
+						// Verify response (expect exact echo)
+						if (received.size() == 0) {
+							printf("[TEST:buffer_small:FAIL:timeout_no_response]\n");
+						} else if (received == sent_data) {
+							printf("[BUFFER:RX:%zu bytes (byte-perfect match)]\n", received.size());
+							printf("[TEST:buffer_small:PASS]\n");
+						} else {
+							printf("[BUFFER:RX:%zu bytes (expected %zu)]\n", received.size(), sent_data.size());
+							printf("[TEST:buffer_small:FAIL:data_mismatch]\n");
+						}
 						fflush(stdout);
 					}
 				}
@@ -935,40 +989,92 @@ void client_loop() {
 
 						RNS::Channel channel = server_link.get_channel();
 
-						static size_t total_received = 0;
-						total_received = 0;
-
 						auto buffer_pair = RNS::Buffer::create_bidirectional_buffer(
 							0, 0, channel,
 							[](size_t ready_bytes) {
-								total_received += ready_bytes;
-								printf("[BUFFER:READY:%zu (total:%zu)]\n", ready_bytes, total_received);
+								printf("[BUFFER:READY:%zu]\n", ready_bytes);
 								fflush(stdout);
 							}
 						);
+						auto& reader = buffer_pair.first;
 						auto& writer = buffer_pair.second;
 
-						// Generate 32KB of data
+						// Generate 32KB of data (repeating digits pattern)
 						const size_t TEST_SIZE = 32 * 1024;
 						std::vector<uint8_t> test_vec(TEST_SIZE);
 						for (size_t i = 0; i < TEST_SIZE; i++) {
 							test_vec[i] = (uint8_t)('0' + (i % 10));
 						}
-						RNS::Bytes test_data(test_vec.data(), test_vec.size());
+						RNS::Bytes sent_data(test_vec.data(), test_vec.size());
 
 						// Write in chunks
 						size_t offset = 0;
 						while (offset < TEST_SIZE) {
 							size_t remaining = TEST_SIZE - offset;
-							RNS::Bytes chunk = test_data.mid(offset, std::min(remaining, (size_t)4096));
+							RNS::Bytes chunk = sent_data.mid(offset, std::min(remaining, (size_t)4096));
 							size_t written = writer.write(chunk);
 							offset += written;
-							printf("[BUFFER:TX:chunk %zu bytes, offset %zu/%zu]\n",
-								   written, offset, TEST_SIZE);
-							fflush(stdout);
+							// Progress every 8KB
+							if (offset % 8192 == 0 || offset == TEST_SIZE) {
+								printf("[BUFFER:TX:sent %zu/%zu bytes]\n", offset, TEST_SIZE);
+								fflush(stdout);
+							}
 						}
 						writer.flush();
 						printf("[BUFFER:TX:complete %zu bytes]\n", TEST_SIZE);
+						fflush(stdout);
+
+						// Wait for response with timeout (60 seconds)
+						// Accumulate all received data
+						RNS::Bytes received;
+						int timeout_ms = 60000;
+						int elapsed_ms = 0;
+						const int poll_interval_ms = 10;
+						int last_progress_pct = -1;
+
+						while (elapsed_ms < timeout_ms && received.size() < TEST_SIZE) {
+							reticulum.loop();
+
+							if (reader.available() > 0) {
+								RNS::Bytes chunk = reader.read();
+								received += chunk;
+
+								// Progress reporting every 10%
+								int progress_pct = (int)(100 * received.size() / TEST_SIZE);
+								if (progress_pct / 10 > last_progress_pct / 10) {
+									printf("[BUFFER:RX:received %zu/%zu bytes (%d%%)]\n",
+										   received.size(), TEST_SIZE, progress_pct);
+									fflush(stdout);
+									last_progress_pct = progress_pct;
+								}
+							}
+
+							RNS::Utilities::OS::sleep(poll_interval_ms / 1000.0);
+							elapsed_ms += poll_interval_ms;
+						}
+
+						// Verify response (byte-perfect match)
+						if (received.size() == 0) {
+							printf("[TEST:buffer_big:FAIL:timeout_no_response]\n");
+						} else if (received.size() != TEST_SIZE) {
+							printf("[BUFFER:RX:%zu bytes (expected %zu)]\n", received.size(), TEST_SIZE);
+							printf("[TEST:buffer_big:FAIL:size_mismatch]\n");
+						} else if (received == sent_data) {
+							printf("[BUFFER:RX:%zu bytes (byte-perfect match)]\n", received.size());
+							printf("[TEST:buffer_big:PASS]\n");
+						} else {
+							// Find first mismatch position for debugging
+							size_t mismatch_pos = 0;
+							for (size_t i = 0; i < TEST_SIZE; i++) {
+								if (received[i] != sent_data[i]) {
+									mismatch_pos = i;
+									break;
+								}
+							}
+							printf("[BUFFER:RX:%zu bytes - mismatch at position %zu]\n",
+								   received.size(), mismatch_pos);
+							printf("[TEST:buffer_big:FAIL:data_mismatch_at_%zu]\n", mismatch_pos);
+						}
 						fflush(stdout);
 					}
 				}

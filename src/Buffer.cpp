@@ -7,6 +7,88 @@
 namespace RNS {
 
 //==============================================================================
+// RawChannelReaderData - Internal data for RawChannelReader
+//==============================================================================
+
+class RawChannelReaderData {
+public:
+    RawChannelReaderData(uint16_t stream_id, Channel& channel)
+        : _stream_id(stream_id), _channel(&channel), _eof(false), _closed(false) {
+        MEM("RawChannelReaderData object created");
+    }
+
+    ~RawChannelReaderData() {
+        if (!_closed) {
+            close();
+        }
+        MEM("RawChannelReaderData object destroyed");
+    }
+
+    bool handle_message(MessageBase& msg) {
+        if (_closed) return false;
+
+        // Only handle StreamDataMessage
+        if (msg.msgtype() != StreamDataMessage::MSGTYPE) {
+            return false;
+        }
+
+        StreamDataMessage& stream_msg = static_cast<StreamDataMessage&>(msg);
+
+        // Filter by stream_id
+        if (stream_msg.stream_id != _stream_id) {
+            return false;
+        }
+
+        DEBUGF("RawChannelReader: Received %zu bytes on stream %u (eof=%d)",
+               stream_msg.data.size(), _stream_id, stream_msg.eof);
+
+        // Accumulate data
+        if (stream_msg.data) {
+            _buffer += stream_msg.data;
+        }
+
+        // Set EOF flag
+        if (stream_msg.eof) {
+            _eof = true;
+            DEBUG("RawChannelReader: EOF received");
+        }
+
+        // Notify callbacks
+        notify_ready();
+
+        return true;  // Message consumed
+    }
+
+    void notify_ready() {
+        size_t avail = _buffer.size();
+        if (avail == 0 && !_eof) return;
+
+        // Make a copy of callbacks in case they modify the list
+        auto callbacks_copy = _ready_callbacks;
+        for (auto& callback : callbacks_copy) {
+            try {
+                callback(avail);
+            } catch (...) {
+                ERROR("RawChannelReader: Callback threw exception");
+            }
+        }
+    }
+
+    void close() {
+        _closed = true;
+        _ready_callbacks.clear();
+        DEBUG("RawChannelReader: Closed");
+    }
+
+    uint16_t _stream_id;
+    Channel* _channel;
+    Bytes _buffer;
+    bool _eof;
+    bool _closed;
+    std::vector<RawChannelReader::ReadyCallback> _ready_callbacks;
+};
+
+//==============================================================================
 // StreamDataMessage
 //==============================================================================
 
@@ -63,136 +145,65 @@ void StreamDataMessage::unpack(const Bytes& raw) {
 }
 
 //==============================================================================
-// RawChannelReader
+// RawChannelReader - Uses shared_ptr to RawChannelReaderData
 //==============================================================================
 
 RawChannelReader::RawChannelReader(uint16_t stream_id, Channel& channel)
-    : _stream_id(stream_id), _channel(&channel), _eof(false), _closed(false) {
+    : _object(std::make_shared<RawChannelReaderData>(stream_id, channel)) {
 
     // Register StreamDataMessage type (as system message)
-    _channel->register_message_type<StreamDataMessage>(true);
+    _object->_channel->register_message_type<StreamDataMessage>(true);
 
-    // Add our message handler
-    _channel->add_message_handler([this](MessageBase& msg) -> bool {
-        return this->_handle_message(msg);
+    // Add message handler - capture shared_ptr to keep data alive
+    // and use weak_ptr to avoid preventing destruction
+    std::weak_ptr<RawChannelReaderData> weak_obj = _object;
+    _object->_channel->add_message_handler([weak_obj](MessageBase& msg) -> bool {
+        if (auto obj = weak_obj.lock()) {
+            return obj->handle_message(msg);
+        }
+        return false;  // Object destroyed, don't handle
     });
 
-    DEBUGF("RawChannelReader: Created for stream_id=%u", _stream_id);
+    DEBUGF("RawChannelReader: Created for stream_id=%u", stream_id);
 }
 
 RawChannelReader::~RawChannelReader() {
-    if (!_closed && _channel) {
-        close();
-    }
-}
-
-RawChannelReader::RawChannelReader(RawChannelReader&& other) noexcept
-    : _stream_id(other._stream_id),
-      _channel(other._channel),
-      _buffer(std::move(other._buffer)),
-      _eof(other._eof),
-      _closed(other._closed),
-      _ready_callbacks(std::move(other._ready_callbacks)) {
-    other._channel = nullptr;
-    other._closed = true;
-}
-
-RawChannelReader& RawChannelReader::operator=(RawChannelReader&& other) noexcept {
-    if (this != &other) {
-        if (!_closed && _channel) {
-            close();
-        }
-        _stream_id = other._stream_id;
-        _channel = other._channel;
-        _buffer = std::move(other._buffer);
-        _eof = other._eof;
-        _closed = other._closed;
-        _ready_callbacks = std::move(other._ready_callbacks);
-        other._channel = nullptr;
-        other._closed = true;
-    }
-    return *this;
-}
-
-bool RawChannelReader::_handle_message(MessageBase& msg) {
-    if (_closed) return false;
-
-    // Only handle StreamDataMessage
-    if (msg.msgtype() != StreamDataMessage::MSGTYPE) {
-        return false;
-    }
-
-    StreamDataMessage& stream_msg = static_cast<StreamDataMessage&>(msg);
-
-    // Filter by stream_id
-    if (stream_msg.stream_id != _stream_id) {
-        return false;
-    }
-
-    DEBUGF("RawChannelReader: Received %zu bytes on stream %u (eof=%d)",
-           stream_msg.data.size(), _stream_id, stream_msg.eof);
-
-    // Accumulate data
-    if (stream_msg.data) {
-        _buffer += stream_msg.data;
-    }
-
-    // Set EOF flag
-    if (stream_msg.eof) {
-        _eof = true;
-        DEBUG("RawChannelReader: EOF received");
-    }
-
-    // Notify callbacks
-    _notify_ready();
-
-    return true;  // Message consumed
-}
-
-void RawChannelReader::_notify_ready() {
-    size_t avail = _buffer.size();
-    if (avail == 0 && !_eof) return;
-
-    // Make a copy of callbacks in case they modify the list
-    auto callbacks_copy = _ready_callbacks;
-    for (auto& callback : callbacks_copy) {
-        try {
-            callback(avail);
-        } catch (...) {
-            ERROR("RawChannelReader: Callback threw exception");
-        }
-    }
+    // shared_ptr handles cleanup automatically
+    MEM("RawChannelReader object destroyed");
 }
 
 Bytes RawChannelReader::read(size_t max_bytes) {
-    if (_buffer.size() == 0) {
+    if (!_object || _object->_buffer.size() == 0) {
         return Bytes::NONE;
     }
 
-    size_t to_read = (max_bytes == 0) ? _buffer.size() : std::min(max_bytes, _buffer.size());
-    Bytes result = _buffer.left(to_read);
-    _buffer = _buffer.mid(to_read);
+    size_t to_read = (max_bytes == 0) ? _object->_buffer.size()
+                                      : std::min(max_bytes, _object->_buffer.size());
+    Bytes result = _object->_buffer.left(to_read);
+    _object->_buffer = _object->_buffer.mid(to_read);
 
-    DEBUGF("RawChannelReader: Read %zu bytes, %zu remaining", to_read, _buffer.size());
+    DEBUGF("RawChannelReader: Read %zu bytes, %zu remaining", to_read, _object->_buffer.size());
     return result;
 }
 
 Bytes RawChannelReader::readline() {
+    if (!_object) return Bytes::NONE;
+
     // Search for newline
-    for (size_t i = 0; i < _buffer.size(); i++) {
-        if (_buffer[i] == '\n') {
+    for (size_t i = 0; i < _object->_buffer.size(); i++) {
+        if (_object->_buffer[i] == '\n') {
             // Return including the newline
-            Bytes line = _buffer.left(i + 1);
-            _buffer = _buffer.mid(i + 1);
+            Bytes line = _object->_buffer.left(i + 1);
+            _object->_buffer = _object->_buffer.mid(i + 1);
             return line;
         }
     }
 
     // No complete line available
     // If EOF, return remaining data as final line (no newline)
-    if (_eof && _buffer.size() > 0) {
-        Bytes line = _buffer;
-        _buffer = Bytes::NONE;
+    if (_object->_eof && _object->_buffer.size() > 0) {
+        Bytes line = _object->_buffer;
+        _object->_buffer = Bytes::NONE;
         return line;
     }
 
@@ -200,15 +211,18 @@ Bytes RawChannelReader::readline() {
 }
 
 size_t RawChannelReader::available() const {
-    return _buffer.size();
+    if (!_object) return 0;
+    return _object->_buffer.size();
 }
 
 bool RawChannelReader::eof() const {
-    return _eof && _buffer.size() == 0;
+    if (!_object) return true;
+    return _object->_eof && _object->_buffer.size() == 0;
 }
 
 void RawChannelReader::add_ready_callback(ReadyCallback callback) {
-    _ready_callbacks.push_back(callback);
+    if (!_object) return;
+    _object->_ready_callbacks.push_back(callback);
 }
 
 void RawChannelReader::remove_ready_callback(ReadyCallback callback) {
@@ -218,9 +232,8 @@ void RawChannelReader::remove_ready_callback(ReadyCallback callback) {
 }
 
 void RawChannelReader::close() {
-    _closed = true;
-    _ready_callbacks.clear();
-    DEBUG("RawChannelReader: Closed");
+    if (!_object) return;
+    _object->close();
 }
 
 //==============================================================================
