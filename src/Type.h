@@ -508,11 +508,12 @@ namespace RNS { namespace Type {
 
 		static const uint8_t PART_TIMEOUT_FACTOR           = 4;
 		static const uint8_t PART_TIMEOUT_FACTOR_AFTER_RTT = 2;
-		static const uint8_t MAX_RETRIES                   = 8;
+		static const uint8_t PROOF_TIMEOUT_FACTOR         = 3;
+		static const uint8_t MAX_RETRIES                   = 16;  // Match Python RNS
 		static const uint8_t MAX_ADV_RETRIES               = 4;
 		static const uint8_t SENDER_GRACE_TIME             = 10;
-		static const float RETRY_GRACE_TIME              = 0.25;
-		static const float PER_RETRY_DELAY               = 0.5;
+		static constexpr float RETRY_GRACE_TIME            = 0.25f;
+		static constexpr float PER_RETRY_DELAY             = 0.5f;
 
 		static const uint8_t WATCHDOG_MAX_SLEEP            = 1;
 

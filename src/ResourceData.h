@@ -122,6 +122,7 @@ namespace RNS {
 		Resource::Callbacks _callbacks;
 
 	friend class Resource;
+	friend class Link;
 	};
 
 }

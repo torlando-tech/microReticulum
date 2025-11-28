@@ -82,6 +82,15 @@ namespace RNS {
 		void validate_proof(const Bytes& proof_data);
 		void cancel();
 
+		// Timeout handling (called from Link::loop())
+		void check_timeout();
+
+	private:
+		void timeout_advertised();
+		void timeout_transferring();
+		void timeout_awaiting_proof();
+
+	public:
 		// Multi-segment sending
 		void prepare_next_segment();
 //p def set_callback(self, callback):
@@ -118,6 +127,7 @@ namespace RNS {
 	protected:
 		std::shared_ptr<ResourceData> _object;
 
+	friend class Link;
 	};
 
 

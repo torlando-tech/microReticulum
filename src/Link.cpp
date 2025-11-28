@@ -2,6 +2,7 @@
 
 #include "LinkData.h"
 #include "Resource.h"
+#include "ResourceData.h"
 #include "Reticulum.h"
 #include "Transport.h"
 #include "Packet.h"
@@ -813,6 +814,22 @@ void Link::send_keepalive() {
 	had_outbound(true);
 }
 
+void Link::loop() {
+	assert(_object);
+
+	// Check timeouts for all active resources on this link
+	// Copy the sets since check_timeout may modify them via callbacks
+	auto incoming_copy = _object->_incoming_resources;
+	for (auto& resource : incoming_copy) {
+		const_cast<Resource&>(resource).check_timeout();
+	}
+
+	auto outgoing_copy = _object->_outgoing_resources;
+	for (auto& resource : outgoing_copy) {
+		const_cast<Resource&>(resource).check_timeout();
+	}
+}
+
 void Link::handle_request(const Bytes& request_id, const ResourceRequest& resource_request) {
 	assert(_object);
 	DEBUGF("Link %s handling request", link_id().toHex().c_str());
@@ -1307,6 +1324,54 @@ void Link::receive(const Packet& packet) {
 							if (resource.hash() == resource_hash) {
 								DEBUG("Link::receive: Found matching outgoing resource, routing request");
 								const_cast<Resource&>(resource).request(plaintext);
+								break;
+							}
+						}
+					}
+					break;
+				}
+				case Type::Packet::RESOURCE_ICL:
+				{
+					// Handle initiator cancel (sender cancelled the resource)
+					const Bytes plaintext = decrypt(packet.data());
+					if (plaintext) {
+						DEBUG("Link::receive: Received RESOURCE_ICL (initiator cancel)");
+						Bytes resource_hash = plaintext.left(Type::Identity::HASHLENGTH / 8);
+						// Copy set before iterating as we may modify it
+						auto incoming_copy = _object->_incoming_resources;
+						for (auto& resource : incoming_copy) {
+							if (resource.hash() == resource_hash) {
+								DEBUG("Link::receive: Found matching incoming resource, marking failed");
+								// Mark as failed without sending cancel back (avoid infinite loop)
+								const_cast<Resource&>(resource)._object->_status = Type::Resource::FAILED;
+								resource_concluded(resource);
+								if (_object->_callbacks._resource_concluded) {
+									_object->_callbacks._resource_concluded(resource);
+								}
+								break;
+							}
+						}
+					}
+					break;
+				}
+				case Type::Packet::RESOURCE_RCL:
+				{
+					// Handle receiver cancel (receiver rejected or cancelled the resource)
+					const Bytes plaintext = decrypt(packet.data());
+					if (plaintext) {
+						DEBUG("Link::receive: Received RESOURCE_RCL (receiver cancel)");
+						Bytes resource_hash = plaintext.left(Type::Identity::HASHLENGTH / 8);
+						// Copy set before iterating as we may modify it
+						auto outgoing_copy = _object->_outgoing_resources;
+						for (auto& resource : outgoing_copy) {
+							if (resource.hash() == resource_hash) {
+								DEBUG("Link::receive: Found matching outgoing resource, marking failed");
+								// Mark as failed without sending cancel back (avoid infinite loop)
+								const_cast<Resource&>(resource)._object->_status = Type::Resource::FAILED;
+								resource_concluded(resource);
+								if (_object->_callbacks._resource_concluded) {
+									_object->_callbacks._resource_concluded(resource);
+								}
 								break;
 							}
 						}
