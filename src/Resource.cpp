@@ -272,7 +272,19 @@ void Resource::advertise() {
 	adv.total_segments = _object->_total_segments;
 	adv.request_id = _object->_request_id;
 	adv.flags = _object->_flags;
-	adv.hashmap = _object->_hashmap_raw;
+
+	// Only include the first HASHMAP_MAX_LEN entries in the advertisement
+	// (matching Python RNS behavior). The receiver will request additional
+	// hashmap entries via HMU (hashmap update) packets when needed.
+	size_t hashmap_max_bytes = Type::Resource::ResourceAdvertisement::HASHMAP_MAX_LEN * Type::Resource::MAPHASH_LEN;
+	if (_object->_hashmap_raw.size() <= hashmap_max_bytes) {
+		adv.hashmap = _object->_hashmap_raw;
+	} else {
+		adv.hashmap = _object->_hashmap_raw.left(hashmap_max_bytes);
+		DEBUGF("Resource::advertise: Truncating hashmap from %zu to %zu bytes (max %u entries)",
+		       _object->_hashmap_raw.size(), hashmap_max_bytes,
+		       Type::Resource::ResourceAdvertisement::HASHMAP_MAX_LEN);
+	}
 
 	// Pack the advertisement
 	Bytes adv_data = ResourceAdvertisement::pack(adv);

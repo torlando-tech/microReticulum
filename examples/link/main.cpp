@@ -42,6 +42,26 @@
 #include <iostream>
 
 #include <Cryptography/AES.h>
+#include <Cryptography/Hashes.h>
+
+// Generate deterministic random data using SHA256 hash chain
+// Matches Python resource_server.py algorithm for byte-perfect verification
+RNS::Bytes generate_deterministic_random(size_t size) {
+	std::string seed_str = "MICRORETICULUM_SEGMENT_TEST_SEED_";
+	RNS::Bytes seed((const uint8_t*)seed_str.data(), seed_str.size());
+	RNS::Bytes current = RNS::Cryptography::sha256(seed);
+
+	RNS::Bytes data;
+	data.reserve(size);
+
+	while (data.size() < size) {
+		size_t to_append = std::min((size_t)32, size - data.size());
+		data.append(current.left(to_append));
+		current = RNS::Cryptography::sha256(current);
+	}
+
+	return data;
+}
 
 // AES-256-CBC test function
 bool test_aes_256_cbc() {
@@ -217,7 +237,7 @@ void server() {
 // Forward declarations for resource callbacks
 void resource_started(const RNS::Resource& resource);
 void resource_concluded(const RNS::Resource& resource);
-void send_test_resource(size_t size);  // Forward declaration
+void send_test_resource(size_t size = 1024, bool use_random = false);  // Forward declaration
 void accumulated_resource_received(const RNS::Bytes& data, const RNS::Bytes& original_hash);
 
 // A reference to the server link
@@ -248,13 +268,14 @@ void link_established(RNS::Link& link) {
     // If auto_send_size is set, send resource automatically
     if (auto_send_size > 0) {
         RNS::log("Auto-sending " + std::to_string(auto_send_size) + " byte resource...");
-        send_test_resource(auto_send_size);
+        send_test_resource(auto_send_size, false);
     } else {
         RNS::log("Commands:");
-        RNS::log("  send        - Send a 1KB test resource");
-        RNS::log("  send N      - Send an N-byte test resource (e.g., 'send 2097152' for 2MB)");
-        RNS::log("  quit        - Exit the program");
-        RNS::log("  <text>      - Send text as a packet");
+        RNS::log("  send          - Send a 1KB test resource (pattern data)");
+        RNS::log("  send N        - Send an N-byte resource (e.g., 'send 2097152' for 2MB)");
+        RNS::log("  send random N - Send N-byte deterministic random data (non-compressible)");
+        RNS::log("  quit          - Exit the program");
+        RNS::log("  <text>        - Send text as a packet");
         RNS::log("Resource transfers will be automatically received.");
         RNS::log("Multi-segment resources (>1MB) will be accumulated and shown when complete.");
     }
@@ -287,26 +308,73 @@ void client_packet_received(const RNS::Bytes& message, const RNS::Packet& packet
 	fflush(stdout);
 }
 
+// Verify received data - checks both pattern and random data formats
+bool verify_received_data(const RNS::Bytes& data) {
+	// First, check if it matches pattern data
+	std::string pattern = "HELLO_RETICULUM_RESOURCE_TEST_DATA_";
+	bool is_pattern = true;
+	for (size_t i = 0; i < std::min(data.size(), (size_t)100); i++) {
+		if (data.data()[i] != (uint8_t)pattern[i % pattern.length()]) {
+			is_pattern = false;
+			break;
+		}
+	}
+
+	if (is_pattern) {
+		// Verify full pattern data
+		for (size_t i = 0; i < data.size(); i++) {
+			if (data.data()[i] != (uint8_t)pattern[i % pattern.length()]) {
+				RNS::log("  Pattern data mismatch at byte " + std::to_string(i), RNS::LOG_ERROR);
+				return false;
+			}
+		}
+		RNS::log("  Pattern data VERIFIED OK (all " + std::to_string(data.size()) + " bytes)");
+		return true;
+	}
+
+	// Check if it matches deterministic random data
+	RNS::Bytes expected_random = generate_deterministic_random(data.size());
+	if (data == expected_random) {
+		RNS::log("  Random data VERIFIED OK (byte-perfect match, " + std::to_string(data.size()) + " bytes)");
+		return true;
+	}
+
+	// Find first mismatch for debugging
+	for (size_t i = 0; i < data.size(); i++) {
+		if (data.data()[i] != expected_random.data()[i]) {
+			RNS::log("  Random data mismatch at byte " + std::to_string(i) +
+			         " (got 0x" + std::to_string(data.data()[i]) +
+			         ", expected 0x" + std::to_string(expected_random.data()[i]) + ")", RNS::LOG_ERROR);
+			return false;
+		}
+	}
+
+	return false;
+}
+
 // Segment accumulator callback for complete multi-segment resources
 void accumulated_resource_received(const RNS::Bytes& data, const RNS::Bytes& original_hash) {
 	RNS::log("=== ACCUMULATED RESOURCE RECEIVED ===");
 	RNS::log("  Total size: " + std::to_string(data.size()) + " bytes");
 	RNS::log("  Original hash: " + original_hash.toHex().substr(0, 16) + "...");
-	RNS::log("  Data (first 100 bytes): " + data.left(100).toString());
 
-	// Verify data pattern
-	std::string pattern = "HELLO_RETICULUM_RESOURCE_TEST_DATA_";
-	bool valid = true;
-	for (size_t i = 0; i < std::min(data.size(), (size_t)1000); i++) {
-		if (data.data()[i] != (uint8_t)pattern[i % pattern.length()]) {
-			valid = false;
-			RNS::log("  Data mismatch at byte " + std::to_string(i), RNS::LOG_ERROR);
+	// Check if data looks like text or binary
+	bool is_text = true;
+	for (size_t i = 0; i < std::min(data.size(), (size_t)100); i++) {
+		uint8_t c = data.data()[i];
+		if (c < 32 || c > 126) {
+			is_text = false;
 			break;
 		}
 	}
-	if (valid) {
-		RNS::log("  Data pattern VERIFIED OK");
+
+	if (is_text) {
+		RNS::log("  Data (first 100 bytes): " + data.left(100).toString());
+	} else {
+		RNS::log("  Data (first 32 bytes hex): " + data.left(32).toHex());
 	}
+
+	verify_received_data(data);
 	RNS::log("=====================================");
 }
 
@@ -332,9 +400,10 @@ void resource_concluded(const RNS::Resource& resource) {
 				RNS::log("  Segment accumulated, waiting for more...");
 			}
 		} else {
-			// Single-segment resource - show data directly
+			// Single-segment resource - verify and show data
 			RNS::log("  Single-segment resource");
-			RNS::log("  Data (first 50 bytes): " + resource.data().left(50).toString());
+			RNS::Bytes data = resource.data();
+			verify_received_data(data);
 		}
 	} else if (resource.status() == RNS::Type::Resource::FAILED) {
 		RNS::log("Resource transfer FAILED", RNS::LOG_ERROR);
@@ -359,25 +428,44 @@ void send_resource_concluded(const RNS::Resource& resource) {
 	}
 }
 
+// Progress callback for resource transfers
+void resource_progress_callback(const RNS::Resource& resource) {
+	float progress = resource.get_progress() * 100.0f;
+	static float last_reported = -10.0f;
+	// Report every 5% or at completion
+	if (progress - last_reported >= 5.0f || progress >= 99.9f) {
+		RNS::log("  Progress: " + std::to_string((int)progress) + "%");
+		last_reported = progress;
+	}
+}
+
 // Send a test resource over the link
-void send_test_resource(size_t size = 1024) {
+// If use_random is true, uses deterministic random data (non-compressible)
+// If use_random is false, uses repeating pattern data (highly compressible)
+void send_test_resource(size_t size, bool use_random) {
 	if (!server_link) {
 		RNS::log("Cannot send resource - no active link", RNS::LOG_ERROR);
 		return;
 	}
 
-	// Generate test data efficiently using a pre-allocated buffer
-	RNS::log("Generating test data of size " + std::to_string(size) + "...");
-	std::string pattern = "HELLO_RETICULUM_RESOURCE_TEST_DATA_";
-	RNS::log("  Allocating buffer...");
-	std::vector<uint8_t> buffer(size);
-	RNS::log("  Buffer allocated, filling...");
-	for (size_t i = 0; i < size; i++) {
-		buffer[i] = (uint8_t)pattern[i % pattern.length()];
+	RNS::Bytes test_data;
+
+	if (use_random) {
+		// Generate deterministic random data (matches Python's SHA256 hash chain)
+		RNS::log("Generating deterministic random data of size " + std::to_string(size) + "...");
+		test_data = generate_deterministic_random(size);
+		RNS::log("  Random data generated (first 32 bytes hex): " + test_data.left(32).toHex());
+	} else {
+		// Generate repeating pattern data
+		RNS::log("Generating pattern data of size " + std::to_string(size) + "...");
+		std::string pattern = "HELLO_RETICULUM_RESOURCE_TEST_DATA_";
+		std::vector<uint8_t> buffer(size);
+		for (size_t i = 0; i < size; i++) {
+			buffer[i] = (uint8_t)pattern[i % pattern.length()];
+		}
+		test_data = RNS::Bytes(buffer.data(), size);
+		RNS::log("  Pattern data generated");
 	}
-	RNS::log("  Buffer filled, creating Bytes...");
-	RNS::Bytes test_data(buffer.data(), size);
-	RNS::log("  Bytes created successfully");
 
 	// Check if this will be segmented
 	size_t max_efficient = RNS::Type::Resource::MAX_EFFICIENT_SIZE;
@@ -387,11 +475,13 @@ void send_test_resource(size_t size = 1024) {
 	}
 
 	RNS::log("Creating and sending resource with " + std::to_string(size) + " bytes...");
-	RNS::log("  Data (first 50 bytes): " + test_data.left(50).toString());
+	if (!use_random) {
+		RNS::log("  Data (first 50 bytes): " + test_data.left(50).toString());
+	}
 
 	// Create and advertise resource - it will be sent automatically
 	// For segmented resources, this creates and sends segment 1
-	RNS::Resource resource(test_data, server_link, true, true, send_resource_concluded);
+	RNS::Resource resource(test_data, server_link, true, true, send_resource_concluded, resource_progress_callback);
 	RNS::log("  Resource hash: " + resource.hash().toHex());
 	if (resource.is_segmented()) {
 		RNS::log("  Segment 1/" + std::to_string(resource.total_segments()) + " advertised");
@@ -427,12 +517,17 @@ void client_loop() {
 				}
 				// Send a test resource
 				else if (text == "send" || text == "resource") {
-					send_test_resource(1024);
+					send_test_resource(1024, false);
 				}
-				// Send a larger resource
+				// Send deterministic random data: "send random N"
+				else if (text.substr(0, 12) == "send random ") {
+					size_t size = std::stoul(text.substr(12));
+					send_test_resource(size, true);
+				}
+				// Send pattern data: "send N"
 				else if (text.substr(0, 5) == "send ") {
 					size_t size = std::stoul(text.substr(5));
-					send_test_resource(size);
+					send_test_resource(size, false);
 				}
 				// If not, send the entered text over the link
 				else if (text != "") {
