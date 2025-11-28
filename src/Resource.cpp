@@ -1127,6 +1127,13 @@ void Resource::hashmap_update(int segment, const Bytes& hashmap_data) {
 	DEBUGF("Resource::hashmap_update: segment=%d, Storing %zu hashes starting at index %zu (initial_count=%zu)",
 		segment, hash_count, start_index, _object->_initial_hashmap_count);
 
+	// Validate start_index is within hashmap bounds to prevent out-of-bounds access
+	if (start_index >= _object->_hashmap.size()) {
+		ERRORF("Resource::hashmap_update: start_index %zu out of bounds (hashmap size %zu), segment=%d",
+			start_index, _object->_hashmap.size(), segment);
+		return;
+	}
+
 	// Check if we've already processed this segment (duplicate detection)
 	if (start_index < _object->_hashmap_height &&
 	    _object->_hashmap[start_index].size() > 0 &&
