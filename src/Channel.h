@@ -8,13 +8,13 @@
 #include "MessageBase.h"
 #include "Type.h"
 #include "Log.h"
+#include "ChannelData.h"
 
 #include <memory>
 #include <functional>
 
 namespace RNS {
 
-class ChannelData;
 class Envelope;
 
 class Channel {

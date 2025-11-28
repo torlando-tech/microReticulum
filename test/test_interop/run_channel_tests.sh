@@ -8,8 +8,9 @@
 # 3. Runs the C++ client with test commands
 # 4. Parses output for PASS/FAIL markers
 # 5. Generates a summary report
+# 6. Optionally generates JSON output for comparison engine
 #
-# Usage: ./run_channel_tests.sh [test_name]
+# Usage: ./run_channel_tests.sh [test_name] [--json-output FILE]
 #        test_name: basic, wire, sequence, empty, all (default: all)
 
 set -e
@@ -20,8 +21,29 @@ PYTHON_SERVER="$SCRIPT_DIR/python/channel_test_server.py"
 CPP_CLIENT_DIR="$MICRO_RET_DIR/examples/link"
 CONFIG_DIR="$SCRIPT_DIR/python/test_rns_config"
 
-# Test selection
-TEST_TO_RUN="${1:-all}"
+# Source JSON utilities
+source "$SCRIPT_DIR/test_json_utils.sh"
+
+# Parse arguments
+TEST_TO_RUN="all"
+JSON_OUTPUT_FILE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --json-output)
+            JSON_OUTPUT_FILE="$2"
+            shift 2
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+        *)
+            TEST_TO_RUN="$1"
+            shift
+            ;;
+    esac
+done
 
 # Colors for output
 RED='\033[0;31m'
@@ -257,6 +279,9 @@ main() {
     echo "========================================"
     echo ""
 
+    # Initialize JSON test run tracking
+    json_init_test_run
+
     # Build client
     build_client
 
@@ -269,6 +294,12 @@ main() {
 
     # Run tests
     run_all_tests "$DEST_HASH"
+
+    # Generate JSON output if requested
+    if [[ -n "$JSON_OUTPUT_FILE" ]]; then
+        json_generate_results "$JSON_OUTPUT_FILE"
+        json_print_summary "$JSON_OUTPUT_FILE"
+    fi
 
     # Print summary
     print_summary

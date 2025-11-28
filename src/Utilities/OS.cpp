@@ -7,9 +7,9 @@ using namespace RNS;
 using namespace RNS::Utilities;
 
 
-#if defined(RNS_USE_ALLOCATOR)
+#if RNS_USE_ALLOCATOR
 
-#if defined(RNS_USE_TLSF)
+#if RNS_USE_TLSF
 #if defined(ESP32)
 	//#define BUFFER_SIZE 1024 * 80
 	#define BUFFER_SIZE 0
@@ -42,7 +42,7 @@ size_t _max_size = 0;
 // CBA Added attribute weak to avoid collision with new override on nrf52
 void* operator new(size_t size) {
 //__attribute__((weak)) void* operator new(size_t size) {
-#if defined(RNS_USE_TLSF)
+#if RNS_USE_TLSF
 	//if (OS::_tlsf == nullptr) {
 	if (!tlsf_init) {
 		tlsf_init = true;
@@ -94,7 +94,7 @@ void* operator new(size_t size) {
 		_max_size = size;
 	}
 	void* p;
-#if defined(RNS_USE_TLSF)
+#if RNS_USE_TLSF
 	if (OS::_tlsf != nullptr) {
 		//TRACEF("--- allocating memory from tlsf (%u bytes)", size);
     	p = tlsf_malloc(OS::_tlsf, size);
@@ -117,7 +117,7 @@ void* operator new(size_t size) {
 // CBA Added attribute weak to avoid collision with new override on nrf52
 void operator delete(void* p) {
 //__attribute__((weak)) void operator delete(void* p) {
-#if defined(RNS_USE_TLSF)
+#if RNS_USE_TLSF
 	if (OS::_tlsf != nullptr) {
 		//TRACEF("--- freeing memory from tlsf (addr=%lx)", p);
 		tlsf_free(OS::_tlsf, p);
@@ -133,7 +133,7 @@ void operator delete(void* p) {
 	free(p);
 #endif
 	++_delete_count;
-#if defined(RNS_USE_TLSF)
+#if RNS_USE_TLSF
 	//if (_delete_count == _new_count) {
 	//	TRACE("TLFS deinitializing");
 	//	OS::dump_memory_stats();
@@ -143,7 +143,7 @@ void operator delete(void* p) {
 #endif
 }
 
-#if defined(RNS_USE_TLSF)
+#if RNS_USE_TLSF
 uint32_t _tlsf_used_count = 0;
 uint32_t _tlsf_used_size = 0;
 uint32_t _tlsf_free_count = 0;
@@ -191,7 +191,7 @@ void dump_tlsf_stats() {
 	TRACEF("Min Size: %u", _min_size);
 	TRACEF("Max Size: %u", _max_size);
 	TRACEF("Avg Size: %u\n", (size_t)(_new_size / _new_count));
-#if defined(RNS_USE_TLSF)
+#if RNS_USE_TLSF
 	dump_tlsf_stats();
 #endif
 }
@@ -257,7 +257,7 @@ size_t maxContiguousAllocation() {
 		dbgMemInfo();
 	}
 #endif
-#if defined(RNS_USE_ALLOCATOR)
+#if RNS_USE_ALLOCATOR
 	OS::dump_allocator_stats();
 #endif
 }

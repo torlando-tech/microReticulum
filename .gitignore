@@ -3,3 +3,6 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+# WiFi credentials (use wifi_credentials.h.example as template)
+examples/common/udp_interface/wifi_credentials.h

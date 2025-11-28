@@ -2,6 +2,8 @@
 # Message Exchange Test Script
 # Tests 100+ message exchange between C++ microReticulum and Python RNS
 # This validates the Link encryption key derivation works correctly
+#
+# Usage: ./run_message_test.sh [--json-output FILE]
 
 set -e
 
@@ -9,6 +11,29 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PYTHON_DIR="$SCRIPT_DIR/python"
 LINK_EXAMPLE_DIR="$PROJECT_ROOT/examples/link"
+
+# Source JSON utilities
+source "$SCRIPT_DIR/test_json_utils.sh"
+
+# Parse arguments
+JSON_OUTPUT_FILE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --json-output)
+            JSON_OUTPUT_FILE="$2"
+            shift 2
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            exit 1
+            ;;
+    esac
+done
 
 # Colors for output
 RED='\033[0;31m'
@@ -21,10 +46,17 @@ NC='\033[0m' # No Color
 NUM_MESSAGES=100
 MESSAGE_DELAY=0.1  # seconds between messages
 
+# Test results arrays (for JSON compatibility)
+declare -a PASSED_TESTS
+declare -a FAILED_TESTS
+
 echo "========================================"
 echo "Message Exchange Test (100+ messages)"
 echo "========================================"
 echo ""
+
+# Initialize JSON test run tracking
+json_init_test_run
 
 # Cleanup function
 cleanup() {
@@ -156,6 +188,15 @@ if [ "$LINK_ESTABLISHED" = true ] && [ "$PY_RECEIVED" -ge "$NUM_MESSAGES" ] && [
     echo "--- Sample Python Log (first 2 packets) ---"
     grep -A3 "\[PACKET RECEIVED\]" /tmp/py_msg_test.log | head -12
 
+    # Track test result
+    PASSED_TESTS+=("message")
+
+    # Generate JSON output if requested
+    if [[ -n "$JSON_OUTPUT_FILE" ]]; then
+        json_generate_results "$JSON_OUTPUT_FILE"
+        json_print_summary "$JSON_OUTPUT_FILE"
+    fi
+
     exit 0
 else
     echo ""
@@ -168,5 +209,15 @@ else
     echo ""
     echo "--- Python Server Log ---"
     cat /tmp/py_msg_test.log
+
+    # Track test result
+    FAILED_TESTS+=("message")
+
+    # Generate JSON output if requested
+    if [[ -n "$JSON_OUTPUT_FILE" ]]; then
+        json_generate_results "$JSON_OUTPUT_FILE"
+        json_print_summary "$JSON_OUTPUT_FILE"
+    fi
+
     exit 1
 fi

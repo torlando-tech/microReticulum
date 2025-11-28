@@ -69,8 +69,8 @@ public:
         // Pack as msgpack array: [id, data]
         MsgPack::Packer packer;
         packer.packArraySize(2);
-        packer.pack(id);
-        packer.pack(data);
+        packer.pack(id.c_str());
+        packer.pack(data.c_str());
 
         // Convert MsgPack buffer to RNS::Bytes
         const auto& buffer = packer.packet();
@@ -84,10 +84,10 @@ public:
 
         size_t arr_size = unpacker.unpackArraySize();
         if (arr_size >= 2) {
-            std::string unpacked_id = unpacker.unpackString();
-            std::string unpacked_data = unpacker.unpackString();
-            id = unpacked_id;
-            data = unpacked_data;
+            auto unpacked_id = unpacker.unpackString();
+            auto unpacked_data = unpacker.unpackString();
+            id = std::string(unpacked_id.c_str());
+            data = std::string(unpacked_data.c_str());
         }
     }
 };
@@ -191,6 +191,13 @@ RNS::Reticulum reticulum;
 
 // A reference to the latest client link that connected
 RNS::Link latest_client_link({RNS::Type::NONE});
+
+#ifdef ARDUINO
+// Global destination for Arduino (used by setup/loop pattern)
+RNS::Destination arduino_server_destination({RNS::Type::NONE});
+// Global interface for Arduino (must persist beyond setup())
+RNS::Interface arduino_udp_interface({RNS::Type::NONE});
+#endif
 
 void client_disconnected(RNS::Link& link) {
 	RNS::log("Client disconnected");
@@ -1211,6 +1218,79 @@ void client(const char* destination_hexhash) {
 ##########################################################
 */
 
+#ifdef ARDUINO
+
+// Arduino setup function - runs once at boot
+void setup() {
+	Serial.begin(115200);
+	while (!Serial && millis() < 3000); // Wait up to 3s for serial
+
+	RNS::loglevel(RNS::LOG_DEBUG);
+	RNS::log("=== microReticulum Link Example for ESP32 ===");
+
+	// Initialize filesystem
+	if (!SPIFFS.begin(true)) {
+		RNS::error("SPIFFS initialization failed!");
+		return;
+	}
+	RNS::FileSystem universal_filesystem = new UniversalFileSystem();
+	universal_filesystem.init();
+	RNS::Utilities::OS::register_filesystem(universal_filesystem);
+
+	// Initialize UDP interface with laptop communication settings
+	UDPInterface* udp_iface = new UDPInterface();
+	udp_iface->set_local_port(14242);
+	udp_iface->set_remote_host("192.168.1.100");  // Laptop IP on MyNetwork
+	udp_iface->set_remote_port(14243);
+	arduino_udp_interface = udp_iface;  // Use global so it persists beyond setup()
+	arduino_udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
+	RNS::Transport::register_interface(arduino_udp_interface);
+	arduino_udp_interface.start();
+
+	// Initialize and start Reticulum
+	reticulum.start();
+
+	// Create server identity and destination
+	// (inline version of server() without the blocking loop)
+	RNS::Identity server_identity = RNS::Identity();
+	arduino_server_destination = RNS::Destination(
+		server_identity,
+		RNS::Type::Destination::IN,
+		RNS::Type::Destination::SINGLE,
+		APP_NAME,
+		"link_server"
+	);
+	arduino_server_destination.set_link_established_callback(client_connected);
+
+	RNS::log(
+		"Link example <" +
+		arduino_server_destination.hash().toHex() +
+		"> running, waiting for a connection."
+	);
+	RNS::log("Send newline via Serial to announce");
+}
+
+// Arduino loop function - runs repeatedly
+void loop() {
+	// Run Reticulum event loop
+	reticulum.loop();
+
+	// Handle Serial input for manual announce
+	while (Serial.available() > 0) {
+		char ch = Serial.read();
+		if (ch == '\n' || ch == '\r') {
+			if (arduino_server_destination) {
+				arduino_server_destination.announce();
+				RNS::log("Sent announce from " + arduino_server_destination.hash().toHex());
+			}
+		}
+	}
+
+	delay(10);
+}
+
+#else
+
 // Signal handler function
 void cleanup_handler(int signum) {
 	if (signum == SIGINT) {
@@ -1290,3 +1370,5 @@ int main(int argc, char *argv[]) {
 
 	return 0;
 }
+
+#endif // ARDUINO

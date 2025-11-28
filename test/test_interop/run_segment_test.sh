@@ -11,6 +11,8 @@
 #   - Python RNS installed (pip install rns)
 #   - C++ example built (pio run -e native in examples/link)
 #
+# Usage: ./run_segment_test.sh [--json-output FILE]
+# Note: This is an interactive/manual test script
 
 set -e
 
@@ -18,6 +20,29 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 EXAMPLE_DIR="$SCRIPT_DIR/../../examples/link"
 PYTHON_DIR="$SCRIPT_DIR/python"
 CONFIG_DIR="$PYTHON_DIR/test_rns_config"
+
+# Source JSON utilities
+source "$SCRIPT_DIR/test_json_utils.sh"
+
+# Parse arguments
+JSON_OUTPUT_FILE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --json-output)
+            JSON_OUTPUT_FILE="$2"
+            shift 2
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            exit 1
+            ;;
+    esac
+done
 
 # Test sizes
 SMALL_SIZE=1024          # 1KB (single segment)
@@ -30,6 +55,10 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Test results arrays (empty for manual tests)
+declare -a PASSED_TESTS
+declare -a FAILED_TESTS
+
 echo "==========================================="
 echo "  Segment Resource Transfer Test"
 echo "==========================================="
@@ -37,6 +66,9 @@ echo ""
 echo "MAX_EFFICIENT_SIZE is now 1MB, matching Python RNS."
 echo "Resources larger than 1MB will be split into segments."
 echo ""
+
+# Initialize JSON test run tracking
+json_init_test_run
 
 # Build C++ example
 echo "Building C++ example..."
@@ -134,3 +166,13 @@ esac
 
 echo ""
 echo "Test session ended."
+
+# Generate JSON output if requested (manual test - no automated results)
+if [[ -n "$JSON_OUTPUT_FILE" ]]; then
+    # Note: This is a manual test, so we output empty results
+    # User should manually verify test success
+    echo "Note: This is a manual/interactive test."
+    echo "JSON output will show 0 tests (manual verification required)."
+    json_generate_results "$JSON_OUTPUT_FILE"
+    json_print_summary "$JSON_OUTPUT_FILE"
+fi
