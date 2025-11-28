@@ -405,24 +405,40 @@ void Resource::request(const Bytes& request_data) {
 
 		if (last_index >= 0) {
 			// Send additional hashmap starting after last_index
+			// Python format: resource_hash (32 bytes) + msgpack([segment, hashmap_bytes])
+			// Only send up to HASHMAP_MAX_LEN entries per HMU packet
 			size_t start_idx = last_index + 1;
 			if (start_idx < _object->_hashmap.size()) {
-				Bytes additional_hashmap;
-				for (size_t i = start_idx; i < _object->_hashmap.size(); i++) {
-					additional_hashmap += _object->_hashmap[i];
+				// Calculate segment number: each segment contains HASHMAP_MAX_LEN hashes
+				size_t hashmap_max_len = Type::Resource::ResourceAdvertisement::HASHMAP_MAX_LEN;
+				uint8_t segment = start_idx / hashmap_max_len;
+
+				// Calculate range for this segment
+				size_t hashmap_start = segment * hashmap_max_len;
+				size_t hashmap_end = std::min((segment + 1) * hashmap_max_len, _object->_hashmap.size());
+
+				// Build hashmap bytes for this segment
+				Bytes hashmap_bytes;
+				for (size_t i = hashmap_start; i < hashmap_end; i++) {
+					hashmap_bytes += _object->_hashmap[i];
 				}
 
-				// HMU packet format: [segment:1][hashmap_data:N]
-				// For simplicity, use segment 0
-				Bytes hmu_data;
-				hmu_data.append((uint8_t)0);
-				hmu_data += additional_hashmap;
+				// Build HMU packet: resource_hash + msgpack([segment, hashmap_bytes])
+				Bytes hmu_data = _object->_hash;  // 32-byte resource hash
+
+				// Pack [segment, hashmap_bytes] as msgpack array
+				MsgPack::Packer packer;
+				packer.pack(MsgPack::arr_size_t(2));
+				packer.serialize((uint8_t)segment);
+				MsgPack::bin_t<uint8_t> hashmap_bin(hashmap_bytes.data(), hashmap_bytes.data() + hashmap_bytes.size());
+				packer.serialize(hashmap_bin);
+				hmu_data.append(packer.data(), packer.size());
 
 				Packet hmu_packet(_object->_link, hmu_data, Type::Packet::DATA, Type::Packet::RESOURCE_HMU);
 				hmu_packet.send();
 
-				DEBUGF("Resource::request: Sent HMU with %zu additional hashes",
-					additional_hashmap.size() / Type::Resource::MAPHASH_LEN);
+				DEBUGF("Resource::request: Sent HMU segment %d with %zu hashes (indices %zu-%zu)",
+					segment, hashmap_end - hashmap_start, hashmap_start, hashmap_end - 1);
 			}
 		}
 	}
