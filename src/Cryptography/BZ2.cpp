@@ -1,6 +1,9 @@
 #include "BZ2.h"
 
+#ifdef NATIVE
 #include <bzlib.h>
+#endif
+
 #include <cstring>
 #include <vector>
 #include "../Log.h"
@@ -8,6 +11,7 @@
 namespace RNS { namespace Cryptography {
 
 const Bytes bz2_decompress(const Bytes& data) {
+#ifdef NATIVE
 	if (data.empty()) {
 		return Bytes();
 	}
@@ -63,9 +67,14 @@ const Bytes bz2_decompress(const Bytes& data) {
 	BZ2_bzDecompressEnd(&stream);
 	DEBUGF("bz2_decompress: final output size=%zu", result.size());
 	return result;
+#else
+	ERROR("bz2_decompress: BZ2 support not available on this platform");
+	return Bytes();
+#endif
 }
 
 const Bytes bz2_compress(const Bytes& data) {
+#ifdef NATIVE
 	if (data.empty()) {
 		return Bytes();
 	}
@@ -98,6 +107,10 @@ const Bytes bz2_compress(const Bytes& data) {
 	BZ2_bzCompressEnd(&stream);
 
 	return Bytes(reinterpret_cast<uint8_t*>(output.data()), compressed_size);
+#else
+	ERROR("bz2_compress: BZ2 support not available on this platform");
+	return Bytes();
+#endif
 }
 
 } }

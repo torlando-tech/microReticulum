@@ -985,7 +985,8 @@ bool RNS::ResourceAdvertisement::unpack(const Bytes& data, RNS::ResourceAdvertis
 
 	for (size_t i = 0; i < map_size; i++) {
 		// Read key (string)
-		std::string key = unpacker.unpackString();
+		auto key_str = unpacker.unpackString();
+		std::string key(key_str.c_str());
 
 		if (key == "t") {
 			adv.transfer_size = unpacker.unpackUInt<size_t>();
@@ -1091,37 +1092,37 @@ Bytes RNS::ResourceAdvertisement::pack(const RNS::ResourceAdvertisement& res_adv
 	packer.pack(MsgPack::map_size_t(11));
 
 	// Pack all 11 fields in same order as Python
-	packer.serialize(std::string("t"));
+	packer.serialize("t");
 	packer.serialize(t_val);
 
-	packer.serialize(std::string("d"));
+	packer.serialize("d");
 	packer.serialize(d_val);
 
-	packer.serialize(std::string("n"));
+	packer.serialize("n");
 	packer.serialize(n_val);
 
-	packer.serialize(std::string("h"));
+	packer.serialize("h");
 	packer.serialize(h_bin);
 
-	packer.serialize(std::string("r"));
+	packer.serialize("r");
 	packer.serialize(r_bin);
 
-	packer.serialize(std::string("o"));
+	packer.serialize("o");
 	packer.serialize(o_bin);
 
-	packer.serialize(std::string("i"));
+	packer.serialize("i");
 	packer.serialize(i_val);
 
-	packer.serialize(std::string("l"));
+	packer.serialize("l");
 	packer.serialize(l_val);
 
-	packer.serialize(std::string("q"));
+	packer.serialize("q");
 	packer.serialize(q_bin);
 
-	packer.serialize(std::string("f"));
+	packer.serialize("f");
 	packer.serialize(f_val);
 
-	packer.serialize(std::string("m"));
+	packer.serialize("m");
 	packer.serialize(m_bin);
 
 	return Bytes(packer.data(), packer.size());
@@ -1311,7 +1312,8 @@ void Resource::hashmap_update_packet(const Bytes& plaintext) {
 		MsgPack::bin_t<uint8_t> bin = unpacker.unpackBinary();
 		hashmap_data = Bytes(bin.data(), bin.size());
 	} else if (unpacker.isStr()) {
-		std::string str = unpacker.unpackString();
+		auto str_val = unpacker.unpackString();
+		std::string str(str_val.c_str());
 		hashmap_data = Bytes(reinterpret_cast<const uint8_t*>(str.data()), str.size());
 	} else {
 		ERROR("Resource::hashmap_update_packet: Invalid hashmap type in msgpack");

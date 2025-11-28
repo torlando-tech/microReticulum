@@ -2,6 +2,8 @@
 # Resource Transfer Diagnostic Test Runner
 # Tests Python-to-C++ resource transfer with intermediate stage dumps
 # to identify exactly where corruption occurs
+#
+# Usage: ./run_diagnostic_test.sh [--json-output FILE]
 
 set -e
 
@@ -10,6 +12,29 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PYTHON_DIR="$SCRIPT_DIR/python"
 LINK_EXAMPLE_DIR="$PROJECT_ROOT/examples/link"
 DUMP_DIR="/tmp/diagnostic_dumps"
+
+# Source JSON utilities
+source "$SCRIPT_DIR/test_json_utils.sh"
+
+# Parse arguments
+JSON_OUTPUT_FILE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --json-output)
+            JSON_OUTPUT_FILE="$2"
+            shift 2
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            exit 1
+            ;;
+    esac
+done
 
 # Colors
 RED='\033[0;31m'
@@ -21,9 +46,16 @@ NC='\033[0m' # No Color
 # Test sizes: 1KB, 10KB, 100KB, 1MB, 5MB
 SIZES=(1024 10240 102400 1048576 5242880)
 
+# Test results arrays
+declare -a PASSED_TESTS
+declare -a FAILED_TESTS
+
 echo "========================================"
 echo "Resource Transfer Diagnostic Test"
 echo "========================================"
+
+# Initialize JSON test run tracking
+json_init_test_run
 
 # Cleanup function
 cleanup() {
@@ -61,9 +93,6 @@ chmod +x "$SCRIPT_DIR/diagnostic_compare.py"
 mkdir -p "$DUMP_DIR"
 
 # Run tests for each size
-PASSED=0
-FAILED=0
-
 for SIZE in "${SIZES[@]}"; do
     echo ""
     echo "========================================="
@@ -151,7 +180,7 @@ for SIZE in "${SIZES[@]}"; do
         tail -20 /tmp/py_diagnostic_${SIZE}.log
         echo "--- C++ Log (last 20 lines) ---"
         tail -20 /tmp/cpp_diagnostic_${SIZE}.log
-        FAILED=$((FAILED + 1))
+        FAILED_TESTS+=("diagnostic_${SIZE}b")
         continue
     fi
 
@@ -174,13 +203,13 @@ for SIZE in "${SIZES[@]}"; do
 
     if [ $COMPARE_RESULT -eq 0 ]; then
         echo -e "${GREEN}PASS - All stages match${NC}"
-        PASSED=$((PASSED + 1))
+        PASSED_TESTS+=("diagnostic_${SIZE}b")
     else
         echo -e "${RED}FAIL - Corruption detected${NC}"
         echo "See report: $DUMP_DIR/report_${SIZE}.html"
         echo "--- Comparison Summary ---"
         cat /tmp/compare_${SIZE}.log | grep -A 10 "COMPARISON SUMMARY"
-        FAILED=$((FAILED + 1))
+        FAILED_TESTS+=("diagnostic_${SIZE}b")
     fi
 done
 
@@ -190,14 +219,20 @@ echo "========================================="
 echo "DIAGNOSTIC TEST SUMMARY"
 echo "========================================="
 echo "Total tests: ${#SIZES[@]}"
-echo -e "Passed: ${GREEN}$PASSED${NC}"
-echo -e "Failed: ${RED}$FAILED${NC}"
+echo -e "Passed: ${GREEN}${#PASSED_TESTS[@]}${NC}"
+echo -e "Failed: ${RED}${#FAILED_TESTS[@]}${NC}"
 echo ""
 echo "Reports available in: $DUMP_DIR"
 ls -lh "$DUMP_DIR"/*.html 2>/dev/null || echo "No reports generated"
 echo "========================================="
 
-if [ $FAILED -eq 0 ]; then
+# Generate JSON output if requested
+if [[ -n "$JSON_OUTPUT_FILE" ]]; then
+    json_generate_results "$JSON_OUTPUT_FILE"
+    json_print_summary "$JSON_OUTPUT_FILE"
+fi
+
+if [ ${#FAILED_TESTS[@]} -eq 0 ]; then
     echo -e "\n${GREEN}All tests passed!${NC}\n"
     exit 0
 else

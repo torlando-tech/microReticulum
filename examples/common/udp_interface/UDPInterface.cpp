@@ -1,4 +1,5 @@
 #include "UDPInterface.h"
+#include "wifi_credentials.h"
 
 #include <Transport.h>
 #include "../src/Log.h"
@@ -46,8 +47,8 @@ UDPInterface::UDPInterface(const char* name /*= "UDPInterface"*/) : RNS::Interfa
 
 //bool UDPInterface::start(const char* wifi_ssid, const char* wifi_password, int port /*= DEFAULT_UDP_PORT*/, const char* local_host /*= nullptr*/) {
 /*virtual*/ bool UDPInterface::start() {
-	const char* wifi_ssid = "wifi_ssid";
-	const char* wifi_password = "wifi_password";
+	const char* wifi_ssid = WIFI_SSID;
+	const char* wifi_password = WIFI_PASSWORD;
 	const char* local_host = nullptr;
 
 	_online = false;
@@ -73,15 +74,28 @@ UDPInterface::UDPInterface(const char* name /*= "UDPInterface"*/) : RNS::Interfa
 	TRACE("UDPInterface: wifi password: " + _wifi_password);
 
 	// Connect to the WiFi network
+	WiFi.mode(WIFI_STA);  // Explicitly set station mode (required for some ESP32-S3 boards)
 	WiFi.begin(_wifi_ssid.c_str(), _wifi_password.c_str());
 	Serial.println("");
 
-	// Wait for WiFi network connection to complete
+	// Wait for WiFi network connection to complete (with timeout)
 	Serial.print("Connecting to ");
 	Serial.print(_wifi_ssid.c_str());
-	while (WiFi.status() != WL_CONNECTED) {
+	int wifi_attempts = 0;
+	while (WiFi.status() != WL_CONNECTED && wifi_attempts < 40) {  // 20 second timeout
 		delay(500);
 		Serial.print(".");
+		wifi_attempts++;
+		if (wifi_attempts % 10 == 0) {
+			Serial.print(" (status=");
+			Serial.print(WiFi.status());
+			Serial.print(") ");
+		}
+	}
+	if (WiFi.status() != WL_CONNECTED) {
+		Serial.println("\nWiFi connection FAILED! Status: ");
+		Serial.println(WiFi.status());
+		return false;
 	}
 	Serial.println("");
 	Serial.print("Connected to ");
@@ -125,6 +139,9 @@ UDPInterface::UDPInterface(const char* name /*= "UDPInterface"*/) : RNS::Interfa
 
 	// This initializes udp and transfer buffer
 	udp.begin(_local_port);
+
+	_online = true;
+	return true;
 #else
 
 	// resolve local host
@@ -240,9 +257,21 @@ UDPInterface::UDPInterface(const char* name /*= "UDPInterface"*/) : RNS::Interfa
 		if (_online) {
 			// Send packet
 #ifdef ARDUINO
-			udp.beginPacket(_remote_host.c_str(), _remote_port);
-			udp.write(data.data(), data.size());
-			udp.endPacket();
+			// Use broadcast address to bypass potential client isolation
+			IPAddress broadcastIP(10, 0, 0, 255);
+			Serial.print("UDP broadcast to ");
+			Serial.print(broadcastIP.toString());
+			Serial.print(":");
+			Serial.println(_remote_port);
+			int beginResult = udp.beginPacket(broadcastIP, _remote_port);
+			Serial.print("beginPacket result: ");
+			Serial.println(beginResult);
+			size_t written = udp.write(data.data(), data.size());
+			Serial.print("write result: ");
+			Serial.println(written);
+			int endResult = udp.endPacket();
+			Serial.print("endPacket result: ");
+			Serial.println(endResult);
 #else
 			TRACE("Sending UDP packet to " + std::string(_remote_host) + ":" + std::to_string(_remote_port));
 			sockaddr_in sock_addr;

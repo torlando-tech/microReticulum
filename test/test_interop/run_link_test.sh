@@ -1,6 +1,8 @@
 #!/bin/bash
 # Link Interop Test Script
 # Tests C++ microReticulum Link establishment with Python RNS server
+#
+# Usage: ./run_link_test.sh [--json-output FILE]
 
 set -e
 
@@ -9,15 +11,45 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PYTHON_DIR="$SCRIPT_DIR/python"
 LINK_EXAMPLE_DIR="$PROJECT_ROOT/examples/link"
 
+# Source JSON utilities
+source "$SCRIPT_DIR/test_json_utils.sh"
+
+# Parse arguments
+JSON_OUTPUT_FILE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --json-output)
+            JSON_OUTPUT_FILE="$2"
+            shift 2
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            exit 1
+            ;;
+    esac
+done
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Test results arrays (for JSON compatibility)
+declare -a PASSED_TESTS
+declare -a FAILED_TESTS
+
 echo "========================================"
 echo "Link Interop Test"
 echo "========================================"
+
+# Initialize JSON test run tracking
+json_init_test_run
 
 # Cleanup function
 cleanup() {
@@ -114,6 +146,16 @@ if [ "$CPP_LINK_OK" = true ] && [ "$PY_LINK_OK" = true ]; then
     echo ""
     echo "--- Python Server Log ---"
     grep -A5 "LINK ESTABLISHED" /tmp/py_link_test.log 2>/dev/null || tail -10 /tmp/py_link_test.log
+
+    # Track test result
+    PASSED_TESTS+=("link")
+
+    # Generate JSON output if requested
+    if [[ -n "$JSON_OUTPUT_FILE" ]]; then
+        json_generate_results "$JSON_OUTPUT_FILE"
+        json_print_summary "$JSON_OUTPUT_FILE"
+    fi
+
     exit 0
 else
     echo -e "${RED}FAIL${NC}"
@@ -130,5 +172,15 @@ else
     echo ""
     echo "--- Python Server Log ---"
     cat /tmp/py_link_test.log
+
+    # Track test result
+    FAILED_TESTS+=("link")
+
+    # Generate JSON output if requested
+    if [[ -n "$JSON_OUTPUT_FILE" ]]; then
+        json_generate_results "$JSON_OUTPUT_FILE"
+        json_print_summary "$JSON_OUTPUT_FILE"
+    fi
+
     exit 1
 fi

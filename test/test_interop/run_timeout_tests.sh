@@ -6,13 +6,14 @@
 # Each test can take 30-90 seconds due to real timeout values.
 #
 # Usage:
-#   ./run_timeout_tests.sh [test_name]
+#   ./run_timeout_tests.sh [test_name] [--json-output FILE]
 #
 # Available tests:
 #   adv-timeout     Test sender advertisement timeout (C++ sends, Python ignores)
 #   send-only       Test baseline - Python sends, C++ receives
 #   all             Run all tests
 #
+# Note: This is an interactive/manual test script
 
 set -e
 
@@ -21,11 +22,43 @@ PYTHON_DIR="$SCRIPT_DIR/python"
 CPP_DIR="$SCRIPT_DIR/../../examples/link"
 CONFIG_DIR="$PYTHON_DIR/test_rns_config"
 
+# Source JSON utilities
+source "$SCRIPT_DIR/test_json_utils.sh"
+
+# Parse arguments
+TEST_NAME="${1:-all}"
+JSON_OUTPUT_FILE=""
+shift || true
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --json-output)
+            JSON_OUTPUT_FILE="$2"
+            shift 2
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            exit 1
+            ;;
+    esac
+done
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
+
+# Test results arrays (empty for manual tests)
+declare -a PASSED_TESTS
+declare -a FAILED_TESTS
+
+# Initialize JSON test run tracking
+json_init_test_run
 
 # Cleanup function
 cleanup() {
@@ -141,7 +174,7 @@ test_send_only() {
 }
 
 # Main
-case "${1:-all}" in
+case "$TEST_NAME" in
     adv-timeout)
         test_adv_timeout
         ;;
@@ -156,7 +189,7 @@ case "${1:-all}" in
         test_adv_timeout
         ;;
     *)
-        echo "Usage: $0 [test_name]"
+        echo "Usage: $0 [test_name] [--json-output FILE]"
         echo ""
         echo "Available tests:"
         echo "  adv-timeout   Test sender advertisement timeout"
@@ -167,3 +200,13 @@ case "${1:-all}" in
 esac
 
 echo -e "\n${GREEN}Test session complete.${NC}"
+
+# Generate JSON output if requested (manual test - no automated results)
+if [[ -n "$JSON_OUTPUT_FILE" ]]; then
+    # Note: This is a manual test, so we output empty results
+    # User should manually verify test success
+    echo "Note: This is a manual/interactive test."
+    echo "JSON output will show 0 tests (manual verification required)."
+    json_generate_results "$JSON_OUTPUT_FILE"
+    json_print_summary "$JSON_OUTPUT_FILE"
+fi
