@@ -93,6 +93,7 @@ void RNS::doLog(LogLevel level, const char* msg) {
 	Serial.flush();
 #else
 	printf("%s [%s] %s\n", getTimeString(), getLevelName(level), msg);
+	fflush(stdout);
 #endif
 }
 

@@ -126,6 +126,10 @@ void Channel::send(const MessageBase& message) {
            message.msgtype(), sequence, packed_data.size());
     DEBUGF("Channel::send: wire_data (%zu bytes): %s", wire_data.size(), wire_data.toHex().c_str());
 
+    // Structured output for automated testing
+    std::string wire_hex = wire_data.toHex();
+    DEBUGF("[WIRE:TX:%s]", wire_hex.c_str());
+
     // Create and send packet via Link
     // Use CHANNEL context (0x0E)
     Packet packet(_object->_link, wire_data, Type::Packet::DATA, Type::Packet::CHANNEL);
@@ -159,6 +163,10 @@ void Channel::_receive(const Bytes& plaintext) {
     }
 
     TRACEF("Channel::_receive: Received %zu bytes", plaintext.size());
+
+    // Structured output for automated testing
+    std::string wire_hex = plaintext.toHex();
+    DEBUGF("[WIRE:RX:%s]", wire_hex.c_str());
 
     // Unpack wire data to envelope
     Envelope envelope;

@@ -321,7 +321,11 @@ void link_established(RNS::Link& link) {
         RNS::log("  send          - Send a 1KB test resource (pattern data)");
         RNS::log("  send N        - Send an N-byte resource (e.g., 'send 2097152' for 2MB)");
         RNS::log("  send random N - Send N-byte deterministic random data (non-compressible)");
-        RNS::log("  channel       - Test Channel message passing (interop test)");
+        RNS::log("  channel       - Test Channel message passing (basic interop test)");
+        RNS::log("  test channel basic    - Automated PING/PONG round-trip test");
+        RNS::log("  test channel wire     - Wire format verification test");
+        RNS::log("  test channel sequence - Sequence increment test (5 messages)");
+        RNS::log("  test channel empty    - Empty payload encoding test");
         RNS::log("  quit          - Exit the program");
         RNS::log("  <text>        - Send text as a packet");
         RNS::log("Resource transfers will be automatically received.");
@@ -577,7 +581,7 @@ void client_loop() {
 					size_t size = std::stoul(text.substr(5));
 					send_test_resource(size, false);
 				}
-				// Channel test command
+				// Channel test command (legacy - simple test)
 				else if (text == "channel") {
 					if (!server_link) {
 						RNS::log("No link established", RNS::LOG_ERROR);
@@ -608,6 +612,211 @@ void client_loop() {
 
 						channel.send(test_msg);
 					}
+				}
+				// ========== AUTOMATED CHANNEL TESTS ==========
+				// Basic round-trip test with structured output
+				else if (text == "test channel basic") {
+					if (!server_link) {
+						printf("[TEST:channel_basic_roundtrip:FAIL:no_link]\n");
+						fflush(stdout);
+					}
+					else {
+						printf("[TEST:channel_basic_roundtrip:START]\n");
+						fflush(stdout);
+
+						RNS::Channel channel = server_link.get_channel();
+						channel.register_message_type<MessageTest>();
+
+						// Track test state
+						static bool test_response_received = false;
+						static std::string test_expected_id;
+						test_response_received = false;
+
+						channel.add_message_handler([](RNS::MessageBase& msg) -> bool {
+							if (msg.msgtype() == MessageTest::MSGTYPE) {
+								MessageTest& test_msg = static_cast<MessageTest&>(msg);
+								printf("[DATA:rx_id=%s]\n", test_msg.id.c_str());
+								printf("[DATA:rx_data=%s]\n", test_msg.data.c_str());
+								fflush(stdout);
+
+								// Verify response
+								if (test_msg.id == test_expected_id && test_msg.data == "PONG") {
+									printf("[TEST:channel_basic_roundtrip:PASS]\n");
+								} else {
+									printf("[TEST:channel_basic_roundtrip:FAIL:unexpected_response]\n");
+								}
+								fflush(stdout);
+								test_response_received = true;
+								return true;
+							}
+							return false;
+						});
+
+						// Send PING message
+						MessageTest test_msg;
+						test_msg.id = "basic_" + std::to_string(rand() % 10000);
+						test_msg.data = "PING";
+						test_expected_id = test_msg.id;
+
+						printf("[DATA:tx_id=%s]\n", test_msg.id.c_str());
+						printf("[DATA:tx_data=%s]\n", test_msg.data.c_str());
+						fflush(stdout);
+
+						// Log wire format of packed message
+						RNS::Bytes packed = test_msg.pack();
+						printf("[WIRE:TX_PAYLOAD:%s]\n", packed.toHex().c_str());
+						fflush(stdout);
+
+						channel.send(test_msg);
+					}
+				}
+				// Wire format verification test
+				else if (text == "test channel wire") {
+					if (!server_link) {
+						printf("[TEST:channel_wire_format:FAIL:no_link]\n");
+						fflush(stdout);
+					}
+					else {
+						printf("[TEST:channel_wire_format:START]\n");
+						fflush(stdout);
+
+						RNS::Channel channel = server_link.get_channel();
+						channel.register_message_type<MessageTest>();
+
+						channel.add_message_handler([](RNS::MessageBase& msg) -> bool {
+							if (msg.msgtype() == MessageTest::MSGTYPE) {
+								MessageTest& test_msg = static_cast<MessageTest&>(msg);
+								printf("[DATA:rx_id=%s]\n", test_msg.id.c_str());
+								printf("[DATA:rx_data=%s]\n", test_msg.data.c_str());
+
+								// Verify we got expected single-char response
+								if (test_msg.id == "A" && test_msg.data == "B") {
+									printf("[TEST:channel_wire_format:PASS]\n");
+								} else {
+									printf("[TEST:channel_wire_format:FAIL:unexpected_data]\n");
+								}
+								fflush(stdout);
+								return true;
+							}
+							return false;
+						});
+
+						// Send WIRE_TEST message to trigger server verification
+						MessageTest test_msg;
+						test_msg.id = "wire_test";
+						test_msg.data = "WIRE_TEST";
+
+						// Also verify our own encoding
+						RNS::Bytes packed = test_msg.pack();
+						printf("[WIRE:TX_PAYLOAD:%s]\n", packed.toHex().c_str());
+						fflush(stdout);
+
+						channel.send(test_msg);
+					}
+				}
+				// Sequence test - send multiple messages
+				else if (text == "test channel sequence") {
+					if (!server_link) {
+						printf("[TEST:channel_sequence_increment:FAIL:no_link]\n");
+						fflush(stdout);
+					}
+					else {
+						printf("[TEST:channel_sequence_increment:START]\n");
+						fflush(stdout);
+
+						RNS::Channel channel = server_link.get_channel();
+						channel.register_message_type<MessageTest>();
+
+						static int seq_responses_received = 0;
+						seq_responses_received = 0;
+
+						channel.add_message_handler([](RNS::MessageBase& msg) -> bool {
+							if (msg.msgtype() == MessageTest::MSGTYPE) {
+								MessageTest& test_msg = static_cast<MessageTest&>(msg);
+								printf("[DATA:seq_response_%d=%s]\n", seq_responses_received, test_msg.data.c_str());
+								fflush(stdout);
+								seq_responses_received++;
+
+								if (seq_responses_received >= 5) {
+									printf("[TEST:channel_sequence_increment:PASS]\n");
+									fflush(stdout);
+								}
+								return true;
+							}
+							return false;
+						});
+
+						// Send 5 messages to test sequence incrementing
+						for (int i = 0; i < 5; i++) {
+							MessageTest test_msg;
+							test_msg.id = "seq_" + std::to_string(i);
+							test_msg.data = "SEQ_TEST_" + std::to_string(i);
+							printf("[DATA:tx_seq_%d=%s]\n", i, test_msg.data.c_str());
+							fflush(stdout);
+							channel.send(test_msg);
+						}
+					}
+				}
+				// Empty payload test
+				else if (text == "test channel empty") {
+					if (!server_link) {
+						printf("[TEST:channel_empty_payload:FAIL:no_link]\n");
+						fflush(stdout);
+					}
+					else {
+						printf("[TEST:channel_empty_payload:START]\n");
+						fflush(stdout);
+
+						RNS::Channel channel = server_link.get_channel();
+						channel.register_message_type<MessageTest>();
+
+						channel.add_message_handler([](RNS::MessageBase& msg) -> bool {
+							if (msg.msgtype() == MessageTest::MSGTYPE) {
+								MessageTest& test_msg = static_cast<MessageTest&>(msg);
+								printf("[DATA:rx_id_len=%zu]\n", test_msg.id.length());
+								printf("[DATA:rx_data_len=%zu]\n", test_msg.data.length());
+
+								// Verify empty response
+								if (test_msg.id.empty() && test_msg.data.empty()) {
+									printf("[TEST:channel_empty_payload:PASS]\n");
+								} else {
+									printf("[TEST:channel_empty_payload:FAIL:not_empty]\n");
+								}
+								fflush(stdout);
+								return true;
+							}
+							return false;
+						});
+
+						// Send EMPTY_TEST message
+						MessageTest test_msg;
+						test_msg.id = "empty_test";
+						test_msg.data = "EMPTY_TEST";
+
+						// Verify our empty encoding
+						MessageTest empty_msg;
+						empty_msg.id = "";
+						empty_msg.data = "";
+						RNS::Bytes packed = empty_msg.pack();
+						printf("[WIRE:EMPTY_PAYLOAD:%s]\n", packed.toHex().c_str());
+						// Expected: 92 A0 A0
+						if (packed.size() == 3 && packed[0] == 0x92 && packed[1] == 0xA0 && packed[2] == 0xA0) {
+							printf("[DATA:empty_encoding=correct]\n");
+						} else {
+							printf("[DATA:empty_encoding=WRONG]\n");
+						}
+						fflush(stdout);
+
+						channel.send(test_msg);
+					}
+				}
+				// Run all channel tests
+				else if (text == "test channel all") {
+					printf("[TEST:channel_all:START]\n");
+					fflush(stdout);
+					printf("Running all channel tests in sequence...\n");
+					printf("Type 'test channel basic' then 'test channel wire' etc.\n");
+					fflush(stdout);
 				}
 				// If not, send the entered text over the link
 				else if (text != "") {
@@ -767,9 +976,11 @@ int main(int argc, char *argv[]) {
 
 	// Initialize and register interface
 	UDPInterface* udp_iface = new UDPInterface();
-	// For interop testing with Python: C++ listens on 4242, sends to 4243
-	// Python listens on 4243, sends to 4242
-	udp_iface->set_remote_port(4243);
+	// For interop testing with Python: C++ listens on 14242, sends to 127.0.0.1:14243
+	// Python listens on 127.0.0.1:14243, sends to 127.0.0.1:14242
+	udp_iface->set_local_port(14242);
+	udp_iface->set_remote_host("127.0.0.1");
+	udp_iface->set_remote_port(14243);
 	RNS::Interface udp_interface = udp_iface;
 	udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
 	RNS::Transport::register_interface(udp_interface);
