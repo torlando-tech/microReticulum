@@ -1907,6 +1907,27 @@ cd examples/link
 
 **Ready for Milestone 4 (Buffer)**
 
+#### Bugs Fixed During Testing
+
+**Bug: Envelope::pack() header bytes not appended (2025-11-28)**
+
+- **Issue**: The 6-byte envelope header was not being included in the wire format
+- **Symptom**: Python server received only msgpack data (16 bytes) instead of header+data (22 bytes)
+- **Root Cause**: `Bytes` class doesn't have `operator+=(uint8_t)`, so statements like `result += (uint8_t)value` silently failed
+- **Fix**: Changed all 6 header byte appends from `result += (uint8_t)...` to `result.append((uint8_t)...)`
+
+Before fix (wire format, only msgpack data):
+```
+92a8746573745f383836a548656c6c6f  (16 bytes - just msgpack)
+```
+
+After fix (correct wire format with header):
+```
+abcd0000001092a8746573745f383836a548656c6c6f  (22 bytes - 6 byte header + 16 byte msgpack)
+```
+
+**Lesson Learned**: The `Bytes` class operator overloads don't support `+=` with single bytes. Always use `.append()` for individual bytes.
+
 ### Next Steps
 
 **Milestone 4: Buffer** - Stream-oriented interface over Channel

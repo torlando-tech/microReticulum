@@ -65,16 +65,16 @@ public:
         result.reserve(6 + data_len);
 
         // MSGTYPE (2 bytes, big-endian)
-        result += (uint8_t)((_msgtype >> 8) & 0xFF);
-        result += (uint8_t)(_msgtype & 0xFF);
+        result.append((uint8_t)((_msgtype >> 8) & 0xFF));
+        result.append((uint8_t)(_msgtype & 0xFF));
 
         // SEQUENCE (2 bytes, big-endian)
-        result += (uint8_t)((_sequence >> 8) & 0xFF);
-        result += (uint8_t)(_sequence & 0xFF);
+        result.append((uint8_t)((_sequence >> 8) & 0xFF));
+        result.append((uint8_t)(_sequence & 0xFF));
 
         // LENGTH (2 bytes, big-endian)
-        result += (uint8_t)((data_len >> 8) & 0xFF);
-        result += (uint8_t)(data_len & 0xFF);
+        result.append((uint8_t)((data_len >> 8) & 0xFF));
+        result.append((uint8_t)(data_len & 0xFF));
 
         // DATA
         result += _raw;

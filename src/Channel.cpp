@@ -110,7 +110,11 @@ void Channel::send(const MessageBase& message) {
 
     // Create envelope with current sequence number
     uint16_t sequence = _object->_next_sequence;
+    DEBUGF("Channel::send: Before envelope - msgtype=0x%04X, seq=%u, packed_data (%zu bytes): %s",
+           message.msgtype(), sequence, packed_data.size(), packed_data.toHex().c_str());
     Envelope envelope(message.msgtype(), sequence, packed_data);
+    DEBUGF("Channel::send: After envelope - msgtype=0x%04X, seq=%u",
+           envelope.msgtype(), envelope.sequence());
 
     // Increment sequence (with wraparound)
     _object->_next_sequence = (_object->_next_sequence + 1) % Type::Channel::SEQ_MODULUS;
@@ -120,6 +124,7 @@ void Channel::send(const MessageBase& message) {
 
     DEBUGF("Channel::send: Sending message type 0x%04X, seq=%u, data_len=%zu",
            message.msgtype(), sequence, packed_data.size());
+    DEBUGF("Channel::send: wire_data (%zu bytes): %s", wire_data.size(), wire_data.toHex().c_str());
 
     // Create and send packet via Link
     // Use CHANNEL context (0x0E)
