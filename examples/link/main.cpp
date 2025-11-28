@@ -290,6 +290,7 @@ void accumulated_resource_received(const RNS::Bytes& data, const RNS::Bytes& ori
 
 // A reference to the server link
 RNS::Link server_link({RNS::Type::NONE});
+RNS::Resource last_sent_resource({RNS::Type::NONE});  // Track last sent resource for cancel testing
 
 // Auto-send size (set via command line arg 2, 0 = disabled/interactive)
 size_t auto_send_size = 0;
@@ -322,6 +323,7 @@ void link_established(RNS::Link& link) {
         RNS::log("  send          - Send a 1KB test resource (pattern data)");
         RNS::log("  send N        - Send an N-byte resource (e.g., 'send 2097152' for 2MB)");
         RNS::log("  send random N - Send N-byte deterministic random data (non-compressible)");
+        RNS::log("  cancel        - Cancel the last sent resource (sends RESOURCE_ICL)");
         RNS::log("  channel       - Test Channel message passing (basic interop test)");
         RNS::log("  test channel basic    - Automated PING/PONG round-trip test");
         RNS::log("  test channel wire     - Wire format verification test");
@@ -540,6 +542,7 @@ void send_test_resource(size_t size, bool use_random) {
 	// Create and advertise resource - it will be sent automatically
 	// For segmented resources, this creates and sends segment 1
 	RNS::Resource resource(test_data, server_link, true, true, send_resource_concluded, resource_progress_callback);
+	last_sent_resource = resource;  // Store for potential cancel
 	RNS::log("  Resource hash: " + resource.hash().toHex());
 	if (resource.is_segmented()) {
 		RNS::log("  Segment 1/" + std::to_string(resource.total_segments()) + " advertised");
@@ -586,6 +589,16 @@ void client_loop() {
 				else if (text.substr(0, 5) == "send ") {
 					size_t size = std::stoul(text.substr(5));
 					send_test_resource(size, false);
+				}
+				// Cancel last sent resource
+				else if (text == "cancel") {
+					if (!last_sent_resource) {
+						RNS::log("No resource to cancel", RNS::LOG_ERROR);
+					} else {
+						RNS::log("Cancelling resource " + last_sent_resource.hash().toHex());
+						last_sent_resource.cancel();
+						RNS::log("Cancel sent (RESOURCE_ICL)");
+					}
 				}
 				// Channel test command (legacy - simple test)
 				else if (text == "channel") {
