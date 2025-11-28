@@ -231,6 +231,8 @@ namespace RNS {
 		// Multi-segment resource support
 		SegmentAccumulator& segment_accumulator();
 		void setup_segment_accumulator(SegmentAccumulator::AccumulatedCallback callback);
+		// Internal handler for resource completion - routes through segment accumulator
+		void handle_resource_concluded(const Resource& resource);
 
 		//void __str__();
 		std::string toString() const;

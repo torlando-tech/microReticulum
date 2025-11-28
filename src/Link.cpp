@@ -25,6 +25,9 @@ using namespace RNS::Type::Link;
 using namespace RNS::Cryptography;
 using namespace RNS::Utilities;
 
+// Forward declaration of static callback for Resource::accept()
+static void link_resource_concluded_callback(const Resource& resource);
+
 /*static*/ uint8_t Link::resource_strategies = ACCEPT_NONE | ACCEPT_APP | ACCEPT_ALL;
 
 /*static*/ std::set<link_mode> Link::ENABLED_MODES = {MODE_AES256_CBC};
@@ -1228,7 +1231,8 @@ void Link::receive(const Packet& packet) {
 						// Accept all incoming resources for now
 						// TODO: Add resource strategy callbacks
 						DEBUG("Link::receive: Received RESOURCE_ADV, accepting resource");
-						Resource resource = Resource::accept(packet);
+						// Pass the internal callback to route through segment accumulator
+						Resource resource = Resource::accept(packet, link_resource_concluded_callback);
 						if (resource) {
 							register_incoming_resource(resource);
 							DEBUGF("Link::receive: Registered incoming resource hash=%s",
@@ -1508,6 +1512,62 @@ SegmentAccumulator& Link::segment_accumulator() {
 void Link::setup_segment_accumulator(SegmentAccumulator::AccumulatedCallback callback) {
 	assert(_object);
 	_object->_segment_accumulator.set_accumulated_callback(callback);
+}
+
+// Static callback for resource completion - routes through Link's segment accumulator
+// This is used as the callback for Resource::accept() to enable automatic segment handling
+static void link_resource_concluded_callback(const Resource& resource) {
+	Link link = resource.link();
+	if (!link) {
+		ERROR("link_resource_concluded_callback: Resource has no link reference");
+		return;
+	}
+
+	// Delegate to Link's internal handler
+	const_cast<Link&>(link).handle_resource_concluded(resource);
+}
+
+void Link::handle_resource_concluded(const Resource& resource) {
+	assert(_object);
+
+	TRACE("Link::handle_resource_concluded called");
+
+	// First, clean up resource from tracking sets (matches Python's link.resource_concluded)
+	resource_concluded(resource);
+
+	// Check if resource completed successfully
+	if (resource.status() != Type::Resource::COMPLETE) {
+		// Failed resource - notify application if callback set
+		DEBUGF("Link::handle_resource_concluded: Resource failed with status %d", resource.status());
+		if (_object->_callbacks._resource_concluded) {
+			_object->_callbacks._resource_concluded(resource);
+		}
+		return;
+	}
+
+	// Check if this is a multi-segment resource
+	if (resource.is_segmented()) {
+		DEBUGF("Link::handle_resource_concluded: Segmented resource %d/%d",
+			resource.segment_index(), resource.total_segments());
+
+		// Route through segment accumulator
+		bool handled = _object->_segment_accumulator.segment_completed(resource);
+
+		if (handled) {
+			// Segment was accumulated - don't call app callback for individual segments
+			// The accumulated callback will fire when all segments are received
+			// (This matches Python's behavior: callback only fires when segment_index == total_segments)
+			return;
+		}
+		// Fall through if segment_completed returned false (shouldn't happen normally)
+		DEBUG("Link::handle_resource_concluded: segment_completed returned false, falling through");
+	}
+
+	// Single-segment resource or non-segmented - notify application directly
+	if (_object->_callbacks._resource_concluded) {
+		DEBUG("Link::handle_resource_concluded: Firing application callback for single-segment resource");
+		_object->_callbacks._resource_concluded(resource);
+	}
 }
 
 std::string Link::toString() const {

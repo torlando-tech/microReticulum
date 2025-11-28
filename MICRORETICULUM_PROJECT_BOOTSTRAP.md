@@ -1453,36 +1453,88 @@ Fixed to match Python format: `[resource_hash:32][msgpack([segment, hashmap])]`
 [DBG] Resource::request: Sent HMU segment 30 with 40 hashes (indices 2220-2259)
 ```
 
-### Known Limitation: Segment Accumulation
+### RESOLVED: Segment Accumulation Callback Chain (2025-11-27)
 
-Python → C++ multi-segment resources (>1MB) are received as individual segments but
-not automatically accumulated into the final resource. Each segment completes successfully
-with its own proof, but the `SegmentAccumulator` callback chain is not fully connected.
+**Status**: FIXED - SegmentAccumulator now properly integrated with resource receive flow
 
-**Workaround**: For receiving large resources from Python, C++ receives each segment
-individually. The segment data is valid and verified.
+**Problem**:
+The SegmentAccumulator was a well-designed component that tracked multi-segment resources
+and assembled them when complete. However, it was completely disconnected from the packet
+flow because `Link.cpp:1231` called `Resource::accept(packet)` with NO callbacks.
 
-**Fix Required**: `Link.cpp:1231` should pass the resource callback to `Resource::accept()`:
+**Root Cause Analysis**:
+- `Resource::accept()` accepts a `concluded` callback parameter
+- When no callback is passed, the resource completes silently
+- `SegmentAccumulator::segment_completed()` was never called
+- Multi-segment resources were received individually but never accumulated
+
+**Python RNS Behavior** (from `RNS/Resource.py` lines 712-738):
+- `link.resource_concluded(self)` is called for EVERY segment (cleanup/tracking)
+- `self.callback(self)` is called ONLY when `segment_index == total_segments`
+- Python accumulates via disk file; C++ uses in-memory SegmentAccumulator
+
+**The Fix** (`src/Link.cpp`):
+
+1. Added forward declaration at line 29:
 ```cpp
-// Current (missing callback):
-Resource resource = Resource::accept(packet);
-
-// Should be:
-Resource resource = Resource::accept(packet, _object->_callbacks._resource_concluded);
+static void link_resource_concluded_callback(const Resource& resource);
 ```
 
-### Files Modified This Session
+2. Added static callback function (lines 1519-1527):
+```cpp
+static void link_resource_concluded_callback(const Resource& resource) {
+    Link link = resource.link();
+    if (!link) {
+        ERROR("link_resource_concluded_callback: Resource has no link reference");
+        return;
+    }
+    const_cast<Link&>(link).handle_resource_concluded(resource);
+}
+```
 
-- `src/Resource.cpp` - HMU response segmentation fix (lines 406-443)
+3. Added handler method in Link class (lines 1530-1570):
+```cpp
+void Link::handle_resource_concluded(const Resource& resource) {
+    // Clean up resource from tracking sets
+    resource_concluded(resource);
+
+    // If failed, notify application
+    if (resource.status() != Type::Resource::COMPLETE) {
+        if (_object->_callbacks._resource_concluded)
+            _object->_callbacks._resource_concluded(resource);
+        return;
+    }
+
+    // Route segmented resources through accumulator
+    if (resource.is_segmented()) {
+        if (_object->_segment_accumulator.segment_completed(resource))
+            return;  // Accumulated, don't call app callback yet
+    }
+
+    // Single-segment or final accumulated: notify application
+    if (_object->_callbacks._resource_concluded)
+        _object->_callbacks._resource_concluded(resource);
+}
+```
+
+4. Wired callback at `Resource::accept()` (line 1235):
+```cpp
+Resource resource = Resource::accept(packet, link_resource_concluded_callback);
+```
+
+**Files Modified**:
+- `src/Link.h` - Added `handle_resource_concluded()` declaration
+- `src/Link.cpp` - Added static callback, handler implementation, wired at line 1235
 
 ### Milestone 2 Summary
 
 **Resource transfers are now functional for:**
 - ✅ Any size C++ → Python (tested up to 50MB)
 - ✅ Any size Python → C++ single-segment resources (up to ~1MB)
-- ✅ Python → C++ multi-segment (segments received individually, not accumulated)
+- ✅ Python → C++ multi-segment (SegmentAccumulator now connected)
 - ✅ HMU hashmap segmentation working both directions
 - ✅ Dynamic window scaling (4→75 for fast links)
 - ✅ Progress callbacks
+- ✅ Callback chain properly wired for segment accumulation
 
 **Ready for Milestone 3 (Channel)**
