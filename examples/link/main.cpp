@@ -46,6 +46,7 @@
 #include <MessageBase.h>
 #include <ChannelData.h>
 #include <Channel.h>
+#include <Buffer.h>
 #include <MsgPack.h>
 
 // Test message class for Channel interoperability testing
@@ -326,6 +327,11 @@ void link_established(RNS::Link& link) {
         RNS::log("  test channel wire     - Wire format verification test");
         RNS::log("  test channel sequence - Sequence increment test (5 messages)");
         RNS::log("  test channel empty    - Empty payload encoding test");
+        RNS::log("Buffer commands:");
+        RNS::log("  buffer ping           - Send PING, expect PONG via Buffer");
+        RNS::log("  buffer write <text>   - Write text to buffer, echo expected");
+        RNS::log("  buffer test small     - Test small (6 byte) round-trip");
+        RNS::log("  buffer test big       - Test 32KB round-trip");
         RNS::log("  quit          - Exit the program");
         RNS::log("  <text>        - Send text as a packet");
         RNS::log("Resource transfers will be automatically received.");
@@ -817,6 +823,154 @@ void client_loop() {
 					printf("Running all channel tests in sequence...\n");
 					printf("Type 'test channel basic' then 'test channel wire' etc.\n");
 					fflush(stdout);
+				}
+				// ========== BUFFER TESTS ==========
+				// Simple buffer ping test
+				else if (text == "buffer ping") {
+					if (!server_link) {
+						printf("[TEST:buffer_ping:FAIL:no_link]\n");
+						fflush(stdout);
+					}
+					else {
+						printf("[TEST:buffer_ping:START]\n");
+						fflush(stdout);
+
+						RNS::Channel channel = server_link.get_channel();
+
+						// Create bidirectional buffer
+						// Both sides use stream_id 0 for simplicity
+						auto buffer_pair = RNS::Buffer::create_bidirectional_buffer(
+							0, 0, channel,
+							[](size_t ready_bytes) {
+								printf("[BUFFER:READY:%zu]\n", ready_bytes);
+								fflush(stdout);
+							}
+						);
+						auto& reader = buffer_pair.first;
+						auto& writer = buffer_pair.second;
+
+						// Send PING
+						std::string ping_str = "PING\n";
+						RNS::Bytes ping_data((const uint8_t*)ping_str.data(), ping_str.size());
+						writer.write(ping_data);
+						writer.flush();
+						printf("[BUFFER:TX:PING]\n");
+						fflush(stdout);
+
+						// Response will be received via callback
+						// For automated testing, the callback logs will show results
+					}
+				}
+				// Buffer write command
+				else if (text.substr(0, 13) == "buffer write ") {
+					if (!server_link) {
+						RNS::log("No link established", RNS::LOG_ERROR);
+					}
+					else {
+						std::string payload = text.substr(13) + "\n";
+						RNS::Channel channel = server_link.get_channel();
+
+						auto buffer_pair = RNS::Buffer::create_bidirectional_buffer(
+							0, 0, channel,
+							[](size_t ready_bytes) {
+								printf("[BUFFER:READY:%zu]\n", ready_bytes);
+								fflush(stdout);
+							}
+						);
+						auto& writer = buffer_pair.second;
+
+						RNS::Bytes data((const uint8_t*)payload.data(), payload.size());
+						size_t written = writer.write(data);
+						writer.flush();
+						printf("[BUFFER:TX:%zu bytes]\n", written);
+						fflush(stdout);
+					}
+				}
+				// Small buffer test (6 bytes - "Hello\n")
+				else if (text == "buffer test small") {
+					if (!server_link) {
+						printf("[TEST:buffer_small:FAIL:no_link]\n");
+						fflush(stdout);
+					}
+					else {
+						printf("[TEST:buffer_small:START]\n");
+						fflush(stdout);
+
+						RNS::Channel channel = server_link.get_channel();
+
+						static bool buffer_test_response = false;
+						static RNS::Bytes received_data;
+						buffer_test_response = false;
+						received_data = RNS::Bytes::NONE;
+
+						auto buffer_pair = RNS::Buffer::create_bidirectional_buffer(
+							0, 0, channel,
+							[](size_t ready_bytes) {
+								printf("[BUFFER:READY:%zu]\n", ready_bytes);
+								fflush(stdout);
+								buffer_test_response = true;
+							}
+						);
+						auto& reader = buffer_pair.first;
+						auto& writer = buffer_pair.second;
+
+						// Send "Hello\n"
+						std::string hello_str = "Hello\n";
+						RNS::Bytes test_data((const uint8_t*)hello_str.data(), hello_str.size());
+						writer.write(test_data);
+						writer.flush();
+						printf("[BUFFER:TX:Hello\\n (6 bytes)]\n");
+						fflush(stdout);
+					}
+				}
+				// Big buffer test (32KB)
+				else if (text == "buffer test big") {
+					if (!server_link) {
+						printf("[TEST:buffer_big:FAIL:no_link]\n");
+						fflush(stdout);
+					}
+					else {
+						printf("[TEST:buffer_big:START]\n");
+						fflush(stdout);
+
+						RNS::Channel channel = server_link.get_channel();
+
+						static size_t total_received = 0;
+						total_received = 0;
+
+						auto buffer_pair = RNS::Buffer::create_bidirectional_buffer(
+							0, 0, channel,
+							[](size_t ready_bytes) {
+								total_received += ready_bytes;
+								printf("[BUFFER:READY:%zu (total:%zu)]\n", ready_bytes, total_received);
+								fflush(stdout);
+							}
+						);
+						auto& writer = buffer_pair.second;
+
+						// Generate 32KB of data
+						const size_t TEST_SIZE = 32 * 1024;
+						std::vector<uint8_t> test_vec(TEST_SIZE);
+						for (size_t i = 0; i < TEST_SIZE; i++) {
+							test_vec[i] = (uint8_t)('0' + (i % 10));
+						}
+						RNS::Bytes test_data(test_vec.data(), test_vec.size());
+
+						// Write in chunks
+						size_t offset = 0;
+						while (offset < TEST_SIZE) {
+							size_t remaining = TEST_SIZE - offset;
+							RNS::Bytes chunk = test_data.mid(offset, std::min(remaining, (size_t)4096));
+							size_t written = writer.write(chunk);
+							offset += written;
+							printf("[BUFFER:TX:chunk %zu bytes, offset %zu/%zu]\n",
+								   written, offset, TEST_SIZE);
+							fflush(stdout);
+						}
+						writer.flush();
+						printf("[BUFFER:TX:complete %zu bytes]\n", TEST_SIZE);
+						fflush(stdout);
+					}
 				}
 				// If not, send the entered text over the link
 				else if (text != "") {
