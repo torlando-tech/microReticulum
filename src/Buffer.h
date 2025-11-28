@@ -47,23 +47,40 @@ public:
     void unpack(const Bytes& raw) override;
 };
 
+// Forward declaration for internal data
+class RawChannelReaderData;
+
 /**
  * RawChannelReader - Read stream data from a Channel
+ *
+ * Uses shared_ptr internally so that move operations preserve callback validity.
  */
 class RawChannelReader {
 public:
     using ReadyCallback = std::function<void(size_t)>;
 
     RawChannelReader(uint16_t stream_id, Channel& channel);
+    RawChannelReader(Type::NoneConstructor none) { MEM("RawChannelReader NONE object created"); }
     ~RawChannelReader();
 
-    // Disable copy (we register handlers)
-    RawChannelReader(const RawChannelReader&) = delete;
-    RawChannelReader& operator=(const RawChannelReader&) = delete;
+    // Copy/move - shallow copy of shared_ptr (like other RNS types)
+    RawChannelReader(const RawChannelReader& other) : _object(other._object) {
+        MEM("RawChannelReader object copy created");
+    }
+    RawChannelReader(RawChannelReader&& other) noexcept : _object(std::move(other._object)) {
+        MEM("RawChannelReader object moved");
+    }
+    RawChannelReader& operator=(const RawChannelReader& other) {
+        _object = other._object;
+        return *this;
+    }
+    RawChannelReader& operator=(RawChannelReader&& other) noexcept {
+        _object = std::move(other._object);
+        return *this;
+    }
 
-    // Move support
-    RawChannelReader(RawChannelReader&& other) noexcept;
-    RawChannelReader& operator=(RawChannelReader&& other) noexcept;
+    // Validity check
+    operator bool() const { return _object.get() != nullptr; }
 
     // Reading interface
     Bytes read(size_t max_bytes = 0);  // 0 = read all available
@@ -79,15 +96,7 @@ public:
     void close();
 
 private:
-    bool _handle_message(MessageBase& msg);
-    void _notify_ready();
-
-    uint16_t _stream_id;
-    Channel* _channel;
-    Bytes _buffer;
-    bool _eof = false;
-    bool _closed = false;
-    std::vector<ReadyCallback> _ready_callbacks;
+    std::shared_ptr<RawChannelReaderData> _object;
 };
 
 /**

@@ -2073,5 +2073,182 @@ Python RX: Decoded correctly, echoed PONG
 **Remaining Buffer Tests:**
 - [x] Small round-trip test (PING/PONG verified 2025-11-28)
 - [x] EOF signaling verified (0x8000 flag in header, writer.close() sends EOF)
-- [ ] 32KB round-trip test (test infrastructure needs work, core Buffer works)
+- [x] 32KB round-trip test (FIXED and PASSING - see Session 9 below)
 - [ ] readline() with partial data (implementation exists, needs verification)
+
+---
+
+## Current Status and Next Steps (2025-11-28, Session 9)
+
+### Session Progress Summary
+
+**Goals**: Fix 32KB Buffer round-trip test failures and create comprehensive test infrastructure
+
+**Bugs Found and Fixed**:
+
+#### 1. RawChannelReader Use-After-Free Bug (`src/Buffer.h`, `src/Buffer.cpp`)
+
+**Status**: FIXED - All buffer tests now pass!
+
+**Symptom**:
+Buffer ping/small tests appeared to work but the 32KB test was timing out. Investigation showed that
+the first PONG was received but Python kept retrying, and eventually the link was torn down.
+
+**Root Cause**:
+The `RawChannelReader` class captured `this` in a lambda callback registered with Channel:
+```cpp
+// OLD CODE (BUG):
+_channel->add_message_handler([this](MessageBase& msg) -> bool {
+    return this->_handle_message(msg);  // `this` points to stack object
+});
+```
+
+When `create_bidirectional_buffer()` returned, it moved the RawChannelReader into the returned pair.
+The lambda callback still pointed to the original stack object (now destroyed) → use-after-free!
+
+**The Fix**:
+Refactored `RawChannelReader` to use the shared_ptr pattern (like other RNS classes):
+
+```cpp
+// NEW CODE (FIXED):
+class RawChannelReaderData {  // Internal data class
+    // All state moved here
+};
+
+class RawChannelReader {
+    std::shared_ptr<RawChannelReaderData> _object;  // Shared ownership
+
+    // Constructor captures weak_ptr, not raw this:
+    std::weak_ptr<RawChannelReaderData> weak_obj = _object;
+    _object->_channel->add_message_handler([weak_obj](MessageBase& msg) -> bool {
+        if (auto obj = weak_obj.lock()) {
+            return obj->handle_message(msg);
+        }
+        return false;  // Object destroyed, don't handle
+    });
+};
+```
+
+Now when the reader is moved or copied, the callback still points to valid memory because:
+- The callback captures a `weak_ptr` to the shared data
+- The shared data outlives any individual reader instance
+- If all readers are destroyed, `weak_ptr::lock()` returns nullptr
+
+#### 2. Missing CHANNEL Packet Proofs (`src/Link.cpp:1316-1339`)
+
+**Status**: FIXED - Channel reliable delivery now works properly!
+
+**Symptom**:
+Python server kept retrying the same message (seq=0) because it never received acknowledgment.
+C++ received and processed the message correctly, but Python didn't know this.
+
+**Root Cause**:
+The CHANNEL packet handler in `Link::receive()` didn't send proofs back to the sender:
+```cpp
+// OLD CODE (BUG):
+case Type::Packet::CHANNEL:
+    Bytes plaintext = decrypt(packet.data());
+    _object->_channel._receive(plaintext);
+    // NO PROOF SENT!
+    break;
+```
+
+Compare with CONTEXT_NONE handler which properly sends proofs:
+```cpp
+case Type::Packet::CONTEXT_NONE:
+    // ... process packet ...
+    if (_object->_destination.proof_strategy() == Type::Destination::PROVE_ALL) {
+        const_cast<Packet&>(packet).prove();  // PROOF SENT!
+    }
+```
+
+**The Fix**:
+Always send proofs for CHANNEL packets since Channel relies on reliable delivery:
+```cpp
+case Type::Packet::CHANNEL:
+    Bytes plaintext = decrypt(packet.data());
+    if (plaintext) {
+        _object->_channel._receive(plaintext);
+
+        // Always send proof for CHANNEL packets.
+        // Channel relies on reliable delivery with windowing,
+        // so acknowledgments are critical for proper operation.
+        const_cast<Packet&>(packet).prove();
+        TRACE("Link::receive: Sent proof for CHANNEL packet");
+    }
+    break;
+```
+
+### Test Infrastructure Created
+
+**`test/test_interop/run_buffer_tests.sh`**:
+- Automated buffer interoperability test suite
+- Supports `ping`, `small`, `big`, and `all` modes
+- Features:
+  - Automatic server startup with destination hash capture
+  - Named pipe (FIFO) based test input
+  - PASS/FAIL marker parsing
+  - Summary report generation
+  - Process cleanup on exit
+
+### Test Results
+
+| Test | Description | Data Size | Result |
+|------|-------------|-----------|--------|
+| buffer_ping | PING/PONG exchange | 5 bytes | ✅ PASS |
+| buffer_small | Small data round-trip | 6 bytes | ✅ PASS |
+| buffer_big | 32KB data round-trip | 32,768 bytes | ✅ PASS |
+
+**All 3 buffer tests pass with byte-perfect verification!**
+
+### Files Modified This Session
+
+| File | Changes |
+|------|---------|
+| `src/Buffer.h` | Refactored RawChannelReader to use shared_ptr pattern |
+| `src/Buffer.cpp` | Added RawChannelReaderData class, refactored implementation |
+| `src/Link.cpp` | Added `packet.prove()` for CHANNEL packets |
+| `test/test_interop/run_buffer_tests.sh` | Fixed process cleanup patterns, simplified test sequencing |
+
+### Lessons Learned
+
+1. **Lambda capture lifetime**: When registering callbacks that capture `this`, always consider object
+   lifetime. If the object can be moved or copied, the callback may point to stale memory.
+
+2. **Shared_ptr pattern**: The RNS codebase uses shared_ptr extensively for object lifecycle management.
+   When adding new classes that register callbacks, follow this pattern.
+
+3. **Weak_ptr for callbacks**: Using `weak_ptr` in callbacks allows safe handling of object destruction
+   without preventing it.
+
+4. **Protocol acknowledgments**: Channel-based communication requires acknowledgments for reliable
+   delivery. Without proofs, the sender has no way to know messages were received.
+
+### Milestone 4 Completion Status
+
+**Buffer streaming is now FULLY functional:**
+- ✅ StreamDataMessage (system message type 0xFF00)
+- ✅ RawChannelReader with proper lifecycle management
+- ✅ RawChannelWriter with BZ2 compression
+- ✅ Bidirectional buffer support
+- ✅ PING/PONG interop test passing
+- ✅ Small round-trip test passing (6 bytes)
+- ✅ **32KB round-trip test passing (byte-perfect)**
+- ✅ EOF signaling working
+- ✅ Ready callbacks working
+- ✅ Channel proof acknowledgments working
+
+**Ready for Milestone 5 (Full Integration)**
+
+### Next Steps
+
+**Milestone 5: Full Integration**
+- [ ] All Python `tests/link.py` tests pass against C++ implementation
+- [ ] ESP32-S3 build succeeds
+- [ ] LoRa interface works on hardware
+- [ ] Memory usage acceptable on MCU target
+
+**Remaining Verification:**
+- [ ] readline() with partial data
+- [ ] Multiple concurrent streams
+- [ ] Large sustained transfers (stress testing)

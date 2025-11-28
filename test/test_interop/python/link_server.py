@@ -245,6 +245,7 @@ def setup_server(config_path=None):
     print(f"  App name: {APP_NAME}")
     print(f"  Aspect: {ASPECT}")
     print(f"  Destination hash: {server_destination.hash.hex()}")
+    print(f"[DEST:{server_destination.hash.hex()}]", flush=True)  # For automated test scripts
     print(f"{'='*60}")
     print(f"\nUse this destination hash to connect from C++ client.")
     print(f"Press Ctrl+C to stop the server.\n")
