@@ -7,6 +7,7 @@
 
 #include <UDPInterface.h>
 #include <TCPClientInterface.h>
+#include <AutoInterface.h>
 #ifdef ARDUINO
 #include "../common/tcp_interface/tcp_config.h"
 #endif
@@ -1357,10 +1358,12 @@ int main(int argc, char *argv[]) {
 	universal_filesystem.init();
 	RNS::Utilities::OS::register_filesystem(universal_filesystem);
 
-	// Parse --tcp option for TCP interface (format: --tcp host:port)
+	// Parse interface options
 	std::string tcp_host;
 	int tcp_port = 0;
-	int arg_offset = 0;  // Offset for parsing remaining args after --tcp
+	std::string auto_ifname;  // Interface name for AutoInterface
+	bool use_auto = false;
+	int arg_offset = 0;  // Offset for parsing remaining args after interface option
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--tcp") == 0 && i + 1 < argc) {
 			std::string tcp_arg = argv[i + 1];
@@ -1375,6 +1378,17 @@ int main(int argc, char *argv[]) {
 			arg_offset = 2;  // Skip --tcp and host:port
 			break;
 		}
+		else if (strcmp(argv[i], "--auto") == 0) {
+			use_auto = true;
+			// Optional interface name argument
+			if (i + 1 < argc && argv[i + 1][0] != '-') {
+				auto_ifname = argv[i + 1];
+				arg_offset = 2;
+			} else {
+				arg_offset = 1;
+			}
+			break;
+		}
 	}
 
 	// Initialize and register interface
@@ -1386,6 +1400,15 @@ int main(int argc, char *argv[]) {
 		tcp_iface->set_target_host(tcp_host);
 		tcp_iface->set_target_port(tcp_port);
 		active_interface = tcp_iface;
+	} else if (use_auto) {
+		// Use AutoInterface (IPv6 multicast discovery)
+		printf("Using AutoInterface (IPv6 multicast discovery)\n");
+		AutoInterface* auto_iface = new AutoInterface();
+		if (!auto_ifname.empty()) {
+			auto_iface->set_interface_name(auto_ifname);
+			printf("  Network interface: %s\n", auto_ifname.c_str());
+		}
+		active_interface = auto_iface;
 	} else {
 		// Use UDP interface (default)
 		printf("Using UDP interface\n");
@@ -1417,6 +1440,13 @@ int main(int argc, char *argv[]) {
 				i++;  // Skip --tcp and its argument
 				continue;
 			}
+			else if (strcmp(argv[i], "--auto") == 0) {
+				// Skip --auto and optional interface name
+				if (i + 1 < argc && argv[i + 1][0] != '-') {
+					i++;  // Skip interface name too
+				}
+				continue;
+			}
 			adjusted_argv[j++] = argv[i];
 		}
 		effective_argc = j;
@@ -1425,8 +1455,12 @@ int main(int argc, char *argv[]) {
 
 	if (effective_argc <= 1) {
 		printf("\nMust specify a destination for client mode, or \"-s\" or \"--server\" for server mode.\n\n");
-		printf("Use \"--tcp host:port\" to use TCP instead of UDP.\n");
-		printf("Use \"--test-aes\" to run AES-256-CBC test.\n\n");
+		printf("Interface options:\n");
+		printf("  --tcp host:port  - Use TCP interface\n");
+		printf("  --auto [ifname]  - Use AutoInterface (IPv6 multicast discovery)\n");
+		printf("  (default)        - Use UDP interface\n\n");
+		printf("Other options:\n");
+		printf("  --test-aes       - Run AES-256-CBC test\n\n");
 		return -1;
 	}
 	// AES test mode
