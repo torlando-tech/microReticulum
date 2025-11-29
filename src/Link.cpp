@@ -1745,6 +1745,41 @@ bool Link::initiator() const {
 	return _object->_initiator;
 }
 
+float Link::get_rssi() const {
+	assert(_object);
+	return _object->_rssi;
+}
+
+float Link::get_snr() const {
+	assert(_object);
+	return _object->_snr;
+}
+
+float Link::get_q() const {
+	assert(_object);
+	return _object->_q;
+}
+
+uint16_t Link::get_tx_count() const {
+	assert(_object);
+	return _object->_tx;
+}
+
+uint16_t Link::get_rx_count() const {
+	assert(_object);
+	return _object->_rx;
+}
+
+uint16_t Link::get_txbytes() const {
+	assert(_object);
+	return _object->_txbytes;
+}
+
+uint16_t Link::get_rxbytes() const {
+	assert(_object);
+	return _object->_rxbytes;
+}
+
 // setters
 
 void Link::destination(const Destination& destination) {
