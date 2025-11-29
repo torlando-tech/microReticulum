@@ -52,7 +52,7 @@ public:
     static const int TCP_KEEPCNT_PROBES = 12;
 
 public:
-    TCPClientInterface(const char* name = "TCPClientInterface");
+    TCPClientInterface(const char* name = "TCPClient");
     virtual ~TCPClientInterface();
 
     // Configuration (call before start())
