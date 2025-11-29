@@ -93,6 +93,7 @@ using namespace RNS::Utilities;
 /*static*/ uint16_t Transport::_path_table_maxsize		= 100;
 // CBA ACCUMULATES
 /*static*/ uint16_t Transport::_path_table_maxpersist	= 100;
+/*static*/ bool Transport::_probe_destination_enabled	= false;
 /*static*/ double Transport::_last_saved				= 0.0;
 /*static*/ float Transport::_save_interval				= 3600.0;
 /*static*/ uint32_t Transport::_destination_table_crc	= 0;
