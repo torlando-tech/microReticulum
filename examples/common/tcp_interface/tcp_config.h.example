@@ -1,0 +1,7 @@
+#pragma once
+
+// TCP server configuration - DO NOT COMMIT tcp_config.h
+// Copy tcp_config.h.example to tcp_config.h and fill in your values
+
+#define TCP_SERVER_HOST "192.168.1.100"  // IP of Python RNS TCPServerInterface
+#define TCP_SERVER_PORT 4965             // Default Python RNS TCP port
