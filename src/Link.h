@@ -257,6 +257,14 @@ namespace RNS {
 		std::set<RequestReceipt>& pending_requests() const;
 		Type::Link::teardown_reason teardown_reason() const;
 		bool initiator() const;
+		// Statistics getters for display
+		float get_rssi() const;
+		float get_snr() const;
+		float get_q() const;
+		uint16_t get_tx_count() const;
+		uint16_t get_rx_count() const;
+		uint16_t get_txbytes() const;
+		uint16_t get_rxbytes() const;
 
 		// setters
 		void destination(const Destination& destination);

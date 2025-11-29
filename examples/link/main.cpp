@@ -53,6 +53,10 @@
 #include <Buffer.h>
 #include <MsgPack.h>
 
+#ifdef HAS_DISPLAY
+#include <Display.h>
+#endif
+
 // Test message class for Channel interoperability testing
 class MessageTest : public RNS::MessageBase {
 public:
@@ -201,6 +205,8 @@ RNS::Link latest_client_link({RNS::Type::NONE});
 RNS::Destination arduino_server_destination({RNS::Type::NONE});
 // Global interface for Arduino (must persist beyond setup())
 RNS::Interface arduino_tcp_interface({RNS::Type::NONE});
+// Global identity for Arduino (for display)
+RNS::Identity arduino_server_identity({RNS::Type::NONE});
 #endif
 
 void client_disconnected(RNS::Link& link) {
@@ -1232,6 +1238,15 @@ void setup() {
 	RNS::loglevel(RNS::LOG_DEBUG);
 	RNS::log("=== microReticulum Link Example for ESP32 ===");
 
+	// Initialize display (before other I2C devices)
+	#ifdef HAS_DISPLAY
+	if (RNS::Display::init()) {
+		RNS::log("Display initialized successfully");
+	} else {
+		RNS::log("Display initialization failed (continuing without display)");
+	}
+	#endif
+
 	// Initialize filesystem
 	if (!SPIFFS.begin(true)) {
 		RNS::error("SPIFFS initialization failed!");
@@ -1254,16 +1269,23 @@ void setup() {
 	reticulum.start();
 
 	// Create server identity and destination
-	// (inline version of server() without the blocking loop)
-	RNS::Identity server_identity = RNS::Identity();
+	// (using global identity for display access)
+	arduino_server_identity = RNS::Identity();
 	arduino_server_destination = RNS::Destination(
-		server_identity,
+		arduino_server_identity,
 		RNS::Type::Destination::IN,
 		RNS::Type::Destination::SINGLE,
 		APP_NAME,
 		"link_server"
 	);
 	arduino_server_destination.set_link_established_callback(client_connected);
+
+	// Configure display with data sources
+	#ifdef HAS_DISPLAY
+	RNS::Display::set_identity(arduino_server_identity);
+	RNS::Display::set_interface(&arduino_tcp_interface);
+	RNS::Display::set_reticulum(&reticulum);
+	#endif
 
 	RNS::log(
 		"Link example <" +
@@ -1277,6 +1299,11 @@ void setup() {
 void loop() {
 	// Run Reticulum event loop
 	reticulum.loop();
+
+	// Update display
+	#ifdef HAS_DISPLAY
+	RNS::Display::update();
+	#endif
 
 	// Handle Serial input for manual announce
 	while (Serial.available() > 0) {

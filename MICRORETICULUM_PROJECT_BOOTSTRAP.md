@@ -2668,3 +2668,119 @@ ESP32-S3 port is now **100% functional for basic communication**. The TCPClientI
 - Automatic reconnection
 
 Next steps: Test Link establishment and full protocol interop over TCP.
+
+---
+
+## Display Implementation (2025-11-28)
+
+### Overview
+
+Added OLED display support for T-Beam Supreme showing μRNS branding and status information with auto-rotating pages.
+
+### Hardware Configuration
+
+- **Display**: SH1106G OLED, 128x64 pixels, I2C
+- **I2C Pins**: SDA=GPIO17, SCL=GPIO18
+- **I2C Address**: 0x3C
+- **Library**: Adafruit SH110X
+
+### Files Created
+
+| File | Description |
+|------|-------------|
+| `src/Display.h` | Display class declaration with page management |
+| `src/Display.cpp` | Implementation with auto-rotate logic |
+| `src/DisplayGraphics.h` | Bitmap graphics (signal bars, icons) in PROGMEM |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `examples/link/platformio.ini` | Added display library deps and build flags |
+| `examples/link/main.cpp` | Added display init/update calls |
+| `src/Interface.h` | Added `get_rxbytes()`, `get_txbytes()` getters |
+| `src/Link.h/.cpp` | Added statistics getters (rssi, snr, tx/rx counts) |
+
+### Build Flags for T-Beam Supreme
+
+```ini
+-DHAS_DISPLAY=1
+-DDISPLAY_TYPE_SH1106=1
+-DDISPLAY_SDA=17
+-DDISPLAY_SCL=18
+-DDISPLAY_ADDR=0x3C
+```
+
+### Display Layout
+
+**Three auto-rotating pages (4-second interval):**
+
+1. **Page 1 - Main Status**: μRNS logo, identity hash, interface status, link count
+2. **Page 2 - Interface Details**: Interface name, mode, bitrate, status
+3. **Page 3 - Network Info**: Links/paths count, RTT, TX/RX stats, uptime
+
+**Layout Constants** (`Display.cpp`):
+```cpp
+HEADER_HEIGHT = 17    // Divider line Y position
+CONTENT_Y = 21        // Content start Y position
+LINE_HEIGHT = 10      // Text line spacing
+LEFT_MARGIN = 2       // Left edge padding
+```
+
+### Logo Implementation
+
+The μRNS logo uses text rendering with CP437 character set:
+```cpp
+display->setTextSize(2);      // 2x size for visibility
+display->setCursor(3, 0);     // Position
+display->write(0xE6);         // μ character (CP437 code 230)
+display->print("RNS");
+```
+
+**Note**: Initially tried bitmap-based logo but hand-coded hex values didn't render correctly. Text rendering is simpler and guaranteed readable. For pixel-perfect logo, use [image2cpp](https://javl.github.io/image2cpp/) to convert a PNG to the correct byte format for Adafruit GFX.
+
+### Signal Bars (Currently Disabled)
+
+Signal bar bitmaps were implemented but caused a stray pixel issue. The bitmaps are defined in `DisplayGraphics.h` with 5 states (0-4 bars based on RSSI). The drawing code is commented out in `Display::draw_signal_bars()` pending debugging.
+
+**To re-enable**: Uncomment the code in `draw_signal_bars()` and fix the bitmap byte alignment issue.
+
+### API Usage
+
+```cpp
+// In setup()
+#ifdef HAS_DISPLAY
+if (RNS::Display::init()) {
+    RNS::Display::set_identity(identity);
+    RNS::Display::set_interface(&interface);
+    RNS::Display::set_reticulum(&reticulum);
+}
+#endif
+
+// In loop()
+#ifdef HAS_DISPLAY
+RNS::Display::update();  // Handles page rotation internally
+#endif
+```
+
+### Memory Usage
+
+```
+RAM:   16.0% (52KB / 320KB)
+Flash: 69.6% (1.4MB / 2MB)
+```
+
+### Known Issues / TODO
+
+1. **Signal bars disabled**: Stray pixel issue needs debugging - likely bitmap byte alignment
+2. **No RSSI updates**: `Display::set_rssi()` is implemented but not called from LoRa interface
+3. **TX/RX stats placeholder**: Page 3 shows "--" for TX/RX - need to wire up interface byte counters
+4. **RTT placeholder**: Shows "--" - would need active link reference to display actual RTT
+
+### Future Enhancements
+
+- Pixel-perfect logo bitmap via image2cpp
+- Fix signal bars bitmap alignment
+- Add battery indicator (T-Beam has AXP power management)
+- Button input to manually switch pages
+- Display blanking timeout for power save

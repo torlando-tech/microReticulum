@@ -185,6 +185,8 @@ namespace RNS {
 		inline bool RPT() const { assert(_impl); return _impl->_RPT; }
 		inline bool online() const { assert(_impl); return _impl->_online; }
 		inline std::string name() const { assert(_impl); return _impl->_name; }
+		inline size_t get_rxbytes() const { assert(_impl); return _impl->_rxb; }
+		inline size_t get_txbytes() const { assert(_impl); return _impl->_txb; }
 		inline const Bytes& ifac_identity() const { assert(_impl); return _impl->_ifac_identity; }
 		inline Type::Interface::modes mode() const { assert(_impl); return _impl->_mode; }
 		inline void mode(Type::Interface::modes mode) { assert(_impl); _impl->_mode = mode; }
