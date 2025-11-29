@@ -5,7 +5,14 @@
 #include <cstring>
 #include <algorithm>
 
-#ifndef ARDUINO
+#ifdef ARDUINO
+// ESP32 lwIP headers for raw socket support
+#include <lwip/sockets.h>
+#include <lwip/netdb.h>
+#include <lwip/mld6.h>
+#include <lwip/netif.h>
+#include <errno.h>
+#else
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -14,9 +21,59 @@
 #include <errno.h>
 #include <net/if.h>
 #include <ifaddrs.h>
+#include <fcntl.h>
 #endif
 
 using namespace RNS;
+
+// Helper: Convert IPv6 address bytes to compressed string format (RFC 5952)
+// This matches Python's inet_ntop output
+static std::string ipv6_to_compressed_string(const uint8_t* addr) {
+    // Build 8 groups of 16-bit values
+    uint16_t groups[8];
+    for (int i = 0; i < 8; i++) {
+        groups[i] = (addr[i*2] << 8) | addr[i*2+1];
+    }
+
+    // Find longest run of zeros for :: compression
+    int best_start = -1, best_len = 0;
+    int cur_start = -1, cur_len = 0;
+    for (int i = 0; i < 8; i++) {
+        if (groups[i] == 0) {
+            if (cur_start < 0) cur_start = i;
+            cur_len++;
+        } else {
+            if (cur_len > best_len && cur_len > 1) {
+                best_start = cur_start;
+                best_len = cur_len;
+            }
+            cur_start = -1;
+            cur_len = 0;
+        }
+    }
+    if (cur_len > best_len && cur_len > 1) {
+        best_start = cur_start;
+        best_len = cur_len;
+    }
+
+    // Build string
+    std::string result;
+    char buf[8];
+    for (int i = 0; i < 8; i++) {
+        if (best_start >= 0 && i >= best_start && i < best_start + best_len) {
+            if (i == best_start) result += "::";
+            continue;
+        }
+        if (!result.empty() && result.back() != ':') result += ":";
+        snprintf(buf, sizeof(buf), "%x", groups[i]);
+        result += buf;
+    }
+    // Handle trailing ::
+    if (best_start >= 0 && best_start + best_len == 8 && result.size() == 2) {
+        // Just "::" for all zeros
+    }
+    return result;
+}
 
 AutoInterface::AutoInterface(const char* name) : InterfaceImpl(name) {
     _IN = true;
@@ -39,9 +96,40 @@ bool AutoInterface::start() {
     INFO("AutoInterface: Data port: " + std::to_string(_data_port));
 
 #ifdef ARDUINO
-    // ESP32 implementation - TODO in Phase 3
-    ERROR("AutoInterface: ESP32 support not yet implemented");
-    return false;
+    // ESP32 implementation using WiFiUDP
+
+    // Get link-local address for our interface
+    if (!get_link_local_address()) {
+        ERROR("AutoInterface: Could not get link-local IPv6 address");
+        return false;
+    }
+
+    // Calculate multicast address from group_id hash
+    calculate_multicast_address();
+
+    // Calculate our discovery token
+    calculate_discovery_token();
+
+    // Set up discovery socket (multicast receive)
+    if (!setup_discovery_socket()) {
+        ERROR("AutoInterface: Could not set up discovery socket");
+        return false;
+    }
+
+    // Set up data socket (unicast send/receive)
+    if (!setup_data_socket()) {
+        // Data socket failure is non-fatal - we can still discover peers
+        WARNING("AutoInterface: Could not set up data socket (discovery-only mode)");
+    }
+
+    _online = true;
+    _data_socket_ok = true;  // Track if data socket initialized
+    INFO("AutoInterface: Started successfully (data_socket=yes)");
+    INFO("AutoInterface: Multicast address: " + _multicast_address_str);
+    INFO("AutoInterface: Link-local address: " + _link_local_address_str);
+    INFO("AutoInterface: Discovery token: " + _discovery_token.toHex());
+
+    return true;
 #else
     // Get link-local address for our interface
     if (!get_link_local_address()) {
@@ -83,7 +171,16 @@ bool AutoInterface::start() {
 
 void AutoInterface::stop() {
 #ifdef ARDUINO
-    // ESP32 cleanup
+    // ESP32 cleanup - raw sockets for both discovery and data
+    if (_discovery_socket > -1) {
+        close(_discovery_socket);
+        _discovery_socket = -1;
+    }
+    if (_data_socket > -1) {
+        close(_data_socket);
+        _data_socket = -1;
+    }
+    _data_socket_ok = false;
 #else
     if (_discovery_socket > -1) {
         close(_discovery_socket);
@@ -101,7 +198,6 @@ void AutoInterface::stop() {
 void AutoInterface::loop() {
     if (!_online) return;
 
-#ifndef ARDUINO
     double now = RNS::Utilities::OS::time();
 
     // Send periodic discovery announce
@@ -121,7 +217,6 @@ void AutoInterface::loop() {
 
     // Expire old deque entries
     expire_deque_entries();
-#endif
 }
 
 void AutoInterface::send_outgoing(const Bytes& data) {
@@ -129,8 +224,43 @@ void AutoInterface::send_outgoing(const Bytes& data) {
 
     if (!_online) return;
 
-#ifndef ARDUINO
-    // Send to all known peers via unicast
+#ifdef ARDUINO
+    // ESP32: Send to all known peers via unicast using persistent raw IPv6 socket
+    // (WiFiUDP doesn't support IPv6)
+    if (_data_socket < 0) {
+        WARNING("AutoInterface: Data socket not ready, cannot send");
+        return;
+    }
+
+    for (const auto& peer : _peers) {
+        if (peer.is_local) continue;  // Don't send to ourselves
+
+        struct sockaddr_in6 peer_addr;
+        memset(&peer_addr, 0, sizeof(peer_addr));
+        peer_addr.sin6_family = AF_INET6;
+        peer_addr.sin6_port = htons(_data_port);
+        peer_addr.sin6_scope_id = _if_index;
+
+        // Copy IPv6 address from peer (IPv6Address stores 16 bytes)
+        for (int i = 0; i < 16; i++) {
+            ((uint8_t*)&peer_addr.sin6_addr)[i] = peer.address[i];
+        }
+
+        ssize_t sent = sendto(_data_socket, data.data(), data.size(), 0,
+                              (struct sockaddr*)&peer_addr, sizeof(peer_addr));
+        if (sent < 0) {
+            WARNING("AutoInterface: Failed to send to peer " + peer.address_string() +
+                    " errno=" + std::to_string(errno));
+        } else {
+            INFO("AutoInterface: Sent " + std::to_string(sent) + " bytes to " + peer.address_string() +
+                 " port " + std::to_string(_data_port));
+        }
+    }
+
+    // Perform post-send housekeeping
+    InterfaceImpl::handle_outgoing(data);
+#else
+    // POSIX: Send to all known peers via unicast
     for (const auto& peer : _peers) {
         if (peer.is_local) continue;  // Don't send to ourselves
 
@@ -156,7 +286,71 @@ void AutoInterface::send_outgoing(const Bytes& data) {
 #endif
 }
 
-#ifndef ARDUINO
+// ============================================================================
+// Platform-specific: get_link_local_address()
+// ============================================================================
+
+#ifdef ARDUINO
+
+bool AutoInterface::get_link_local_address() {
+    // ESP32: Get link-local IPv6 from WiFi
+    if (WiFi.status() != WL_CONNECTED) {
+        ERROR("AutoInterface: WiFi not connected");
+        return false;
+    }
+
+    // Enable IPv6 and wait for link-local address
+    WiFi.enableIpV6();
+    DEBUG("AutoInterface: IPv6 enabled, waiting for link-local address...");
+
+    // Give time for SLAAC to assign link-local address
+    for (int i = 0; i < 100; i++) {  // Increased timeout to 10 seconds
+        IPv6Address lladdr = WiFi.localIPv6();
+
+        // Debug: print what we're getting
+        if (i % 10 == 0) {
+            DEBUG("AutoInterface: Attempt " + std::to_string(i) + " - IPv6: " +
+                  std::string(lladdr.toString().c_str()));
+        }
+
+        // Check if we got a valid address (not all zeros)
+        // IPv6Address stores bytes in network order
+        if (lladdr[0] != 0 || lladdr[1] != 0) {
+            // Store as in6_addr - copy from IPv6Address internal storage
+            // IPv6Address operator[] returns bytes in network order
+            uint8_t addr_bytes[16];
+            for (int j = 0; j < 16; j++) {
+                addr_bytes[j] = lladdr[j];
+                ((uint8_t*)&_link_local_address)[j] = lladdr[j];
+            }
+
+            // Store the address string in COMPRESSED format to match Python's inet_ntop
+            _link_local_address_str = ipv6_to_compressed_string(addr_bytes);
+
+            // Also store as IPAddress for easier ESP32 use
+            _link_local_ip = lladdr;
+
+            INFO("AutoInterface: Found IPv6 address " + _link_local_address_str);
+
+            // Check if it's link-local (fe80::/10)
+            if (lladdr[0] == 0xfe && (lladdr[1] & 0xc0) == 0x80) {
+                INFO("AutoInterface: Confirmed link-local address");
+                return true;
+            } else {
+                // Got an address but it's not link-local - might be global
+                // Still use it for now
+                WARNING("AutoInterface: Got non-link-local IPv6: " + _link_local_address_str);
+                return true;
+            }
+        }
+        delay(100);
+    }
+
+    ERROR("AutoInterface: No IPv6 address after timeout");
+    return false;
+}
+
+#else  // POSIX/Linux
 
 bool AutoInterface::get_link_local_address() {
     struct ifaddrs* ifaddr;
@@ -200,6 +394,8 @@ bool AutoInterface::get_link_local_address() {
     return found;
 }
 
+#endif  // ARDUINO
+
 void AutoInterface::calculate_multicast_address() {
     // Python: group_hash = RNS.Identity.full_hash(self.group_id)
     Bytes group_id_bytes((const uint8_t*)_group_id.c_str(), _group_id.length());
@@ -218,54 +414,323 @@ void AutoInterface::calculate_multicast_address() {
     addr[0] = 0xff;
     addr[1] = 0x12;  // 1=temporary, 2=link scope
 
-    // First 16-bit group is 0
-    addr[2] = 0x00;
-    addr[3] = 0x00;
-
-    // Python: gt += ':' + '{:02x}'.format(g[3]+(g[2]<<8))
-    // This creates little-endian 16-bit values from hash bytes
-    // But for IPv6 address, we need network byte order (big-endian)
+    // Python: gt = "ff12:" + ":".join(['{:02x}'.format(g[i+1]+(g[i]<<8)) for i in range(0,14,2)])
+    // This uses hash bytes 0-13 (14 bytes total) to fill the remaining 7 groups
+    // Each group is: high byte = g[i], low byte = g[i+1]
 
     const uint8_t* g = group_hash.data();
 
-    // Segment 2: g[3]+(g[2]<<8) = little-endian, then stored big-endian
+    // Group 1: g[1]+(g[0]<<8) stored as [g[0], g[1]]
+    addr[2] = g[0];
+    addr[3] = g[1];
+
+    // Group 2: g[3]+(g[2]<<8)
     addr[4] = g[2];
     addr[5] = g[3];
 
-    // Segment 3: g[5]+(g[4]<<8)
+    // Group 3: g[5]+(g[4]<<8)
     addr[6] = g[4];
     addr[7] = g[5];
 
-    // Segment 4: g[7]+(g[6]<<8)
+    // Group 4: g[7]+(g[6]<<8)
     addr[8] = g[6];
     addr[9] = g[7];
 
-    // Segment 5: g[9]+(g[8]<<8)
+    // Group 5: g[9]+(g[8]<<8)
     addr[10] = g[8];
     addr[11] = g[9];
 
-    // Segment 6: g[11]+(g[10]<<8)
+    // Group 6: g[11]+(g[10]<<8)
     addr[12] = g[10];
     addr[13] = g[11];
 
-    // Segment 7: g[13]+(g[12]<<8)
+    // Group 7: g[13]+(g[12]<<8)
     addr[14] = g[12];
     addr[15] = g[13];
 
     memcpy(&_multicast_address, addr, 16);
     _multicast_address_bytes = Bytes(addr, 16);
+
+    // Convert to string for logging
+    char buf[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, &_multicast_address, buf, sizeof(buf));
+    _multicast_address_str = buf;
+
+#ifdef ARDUINO
+    // Also store as IPv6Address for ESP32 use
+    _multicast_ip = IPv6Address(addr);
+#endif
 }
 
+// ============================================================================
+// Platform-independent: calculate_discovery_token()
+// ============================================================================
+
 void AutoInterface::calculate_discovery_token() {
-    // Python: discovery_token = RNS.Identity.full_hash(self.group_id+link_local_address.encode("utf-8"))
+    // Python: discovery_token = RNS.Identity.full_hash(self.group_id+link_local_address.encode("utf-8"))[:16]
+    // Note: Python uses only the first 16 bytes (TOKEN_SIZE) of the hash
     Bytes combined;
     combined.append((const uint8_t*)_group_id.c_str(), _group_id.length());
     combined.append((const uint8_t*)_link_local_address_str.c_str(), _link_local_address_str.length());
 
-    _discovery_token = Identity::full_hash(combined);
+    Bytes full_hash = Identity::full_hash(combined);
+    // Truncate to TOKEN_SIZE (16 bytes) as Python does
+    _discovery_token = Bytes(full_hash.data(), TOKEN_SIZE);
     TRACE("AutoInterface: Discovery token input: " + combined.toHex());
     TRACE("AutoInterface: Discovery token: " + _discovery_token.toHex());
 }
+
+// ============================================================================
+// Platform-specific: Socket setup
+// ============================================================================
+
+#ifdef ARDUINO
+
+bool AutoInterface::setup_discovery_socket() {
+    // ESP32: Use raw lwIP socket for IPv6 multicast (WiFiUDP.beginMulticast() only supports IPv4)
+
+    // Create IPv6 UDP socket
+    _discovery_socket = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+    if (_discovery_socket < 0) {
+        ERROR("AutoInterface: Failed to create discovery socket (errno=" + std::to_string(errno) + ")");
+        return false;
+    }
+
+    // Allow address reuse
+    int reuse = 1;
+    setsockopt(_discovery_socket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    // Bind to discovery port on in6addr_any (ESP32 lwIP doesn't support binding to multicast)
+    struct sockaddr_in6 bind_addr;
+    memset(&bind_addr, 0, sizeof(bind_addr));
+    bind_addr.sin6_family = AF_INET6;
+    bind_addr.sin6_port = htons(_discovery_port);
+    bind_addr.sin6_addr = in6addr_any;  // Receive from any source
+
+    if (bind(_discovery_socket, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0) {
+        ERROR("AutoInterface: Failed to bind discovery socket (errno=" + std::to_string(errno) + ")");
+        close(_discovery_socket);
+        _discovery_socket = -1;
+        return false;
+    }
+
+    // Set non-blocking
+    int flags = fcntl(_discovery_socket, F_GETFL, 0);
+    fcntl(_discovery_socket, F_SETFL, flags | O_NONBLOCK);
+
+    // Join the IPv6 multicast group using lwIP mld6 API
+    // (setsockopt IPV6_JOIN_GROUP not supported in ESP32 Arduino's lwIP build)
+    ip6_addr_t mcast_addr;
+    memcpy(&mcast_addr.addr, &_multicast_address, sizeof(_multicast_address));
+
+    // Find the station netif (WiFi interface)
+    struct netif* nif = netif_list;
+    while (nif != NULL) {
+        if (nif->name[0] == 's' && nif->name[1] == 't') {  // "st" = station
+            break;
+        }
+        nif = nif->next;
+    }
+
+    if (nif != NULL) {
+        err_t err = mld6_joingroup_netif(nif, &mcast_addr);
+        if (err == ERR_OK) {
+            INFO("AutoInterface: Joined IPv6 multicast group via mld6 API: " + _multicast_address_str);
+        } else {
+            WARNING("AutoInterface: mld6_joingroup failed (err=" + std::to_string(err) +
+                    ") - discovery may not work");
+        }
+    } else {
+        WARNING("AutoInterface: Could not find station netif for multicast join");
+    }
+
+    INFO("AutoInterface: Discovery socket listening on port " + std::to_string(_discovery_port));
+    return true;
+}
+
+bool AutoInterface::setup_data_socket() {
+    // ESP32: Use raw IPv6 socket for data port (WiFiUDP doesn't support IPv6)
+    _data_socket = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+    if (_data_socket < 0) {
+        ERROR("AutoInterface: Failed to create data socket (errno=" + std::to_string(errno) + ")");
+        return false;
+    }
+
+    // Allow address reuse
+    int reuse = 1;
+    setsockopt(_data_socket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    // Find the station netif and get its index
+    struct netif* nif = netif_list;
+    while (nif != NULL) {
+        if (nif->name[0] == 's' && nif->name[1] == 't') {  // "st" = station
+            break;
+        }
+        nif = nif->next;
+    }
+    _if_index = nif ? netif_get_index(nif) : 0;
+    INFO("AutoInterface: Using interface index " + std::to_string(_if_index) + " for data socket");
+
+    // Bind to our link-local address and data port (helps with routing)
+    struct sockaddr_in6 bind_addr;
+    memset(&bind_addr, 0, sizeof(bind_addr));
+    bind_addr.sin6_family = AF_INET6;
+    bind_addr.sin6_port = htons(_data_port);
+    memcpy(&bind_addr.sin6_addr, &_link_local_address, sizeof(_link_local_address));
+    bind_addr.sin6_scope_id = _if_index;
+
+    if (bind(_data_socket, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0) {
+        WARNING("AutoInterface: Failed to bind to link-local (errno=" + std::to_string(errno) +
+                "), trying any address");
+        // Fallback to any address
+        bind_addr.sin6_addr = in6addr_any;
+        bind_addr.sin6_scope_id = 0;
+        if (bind(_data_socket, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0) {
+            ERROR("AutoInterface: Failed to bind data socket (errno=" + std::to_string(errno) + ")");
+            close(_data_socket);
+            _data_socket = -1;
+            return false;
+        }
+    }
+
+    // Set non-blocking
+    int flags = fcntl(_data_socket, F_GETFL, 0);
+    fcntl(_data_socket, F_SETFL, flags | O_NONBLOCK);
+
+    INFO("AutoInterface: Data socket listening on port " + std::to_string(_data_port));
+    return true;
+}
+
+bool AutoInterface::join_multicast_group() {
+    // ESP32: Multicast join handled by beginMulticast()
+    INFO("AutoInterface: Joined multicast group " + _multicast_address_str);
+    return true;
+}
+
+void AutoInterface::send_announce() {
+    // ESP32: Send discovery token to multicast address using raw socket
+    if (_discovery_socket < 0) {
+        WARNING("AutoInterface: Discovery socket not initialized");
+        return;
+    }
+
+    struct sockaddr_in6 dest_addr;
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    dest_addr.sin6_family = AF_INET6;
+    dest_addr.sin6_port = htons(_discovery_port);
+    memcpy(&dest_addr.sin6_addr, &_multicast_address, sizeof(_multicast_address));
+
+    ssize_t sent = sendto(_discovery_socket, _discovery_token.data(), _discovery_token.size(), 0,
+                          (struct sockaddr*)&dest_addr, sizeof(dest_addr));
+    if (sent > 0) {
+        DEBUG("AutoInterface: Sent discovery announce (" + std::to_string(sent) + " bytes) to " + _multicast_address_str);
+    } else {
+        WARNING("AutoInterface: Failed to send discovery announce (errno=" + std::to_string(errno) + ")");
+    }
+}
+
+void AutoInterface::process_discovery() {
+    // ESP32: Use raw socket recvfrom for IPv6 multicast
+    if (_discovery_socket < 0) return;
+
+    uint8_t recv_buffer[128];
+    struct sockaddr_in6 src_addr;
+    socklen_t src_len = sizeof(src_addr);
+
+    ssize_t len = recvfrom(_discovery_socket, recv_buffer, sizeof(recv_buffer), 0,
+                           (struct sockaddr*)&src_addr, &src_len);
+
+    // Debug: log even when no packet received (periodically)
+    static int recv_check_count = 0;
+    if (++recv_check_count >= 600) {  // Every ~10 seconds at 60Hz loop
+        DEBUG("AutoInterface: Discovery poll (peers=" + std::to_string(_peers.size()) +
+              ", socket=" + std::to_string(_discovery_socket) +
+              ", errno=" + std::to_string(errno) + ")");
+        recv_check_count = 0;
+    }
+
+    // Debug: log if we got any data at all
+    if (len > 0) {
+        INFO("AutoInterface: recvfrom returned " + std::to_string(len) + " bytes");
+    }
+
+    while (len > 0) {
+        // Convert source address to COMPRESSED string format (match Python)
+        std::string src_str = ipv6_to_compressed_string((const uint8_t*)&src_addr.sin6_addr);
+
+        INFO("AutoInterface: Received discovery packet from " + src_str +
+              " (" + std::to_string(len) + " bytes)");
+
+        // Verify the peering hash (first TOKEN_SIZE bytes)
+        Bytes combined;
+        combined.append((const uint8_t*)_group_id.c_str(), _group_id.length());
+        combined.append((const uint8_t*)src_str.c_str(), src_str.length());
+        Bytes expected_hash = Identity::full_hash(combined);
+
+        // Debug: show received vs expected
+        Bytes received_token(recv_buffer, std::min((size_t)len, (size_t)16));
+        DEBUG("AutoInterface: Received token: " + received_token.toHex());
+        DEBUG("AutoInterface: Expected token: " + Bytes(expected_hash.data(), 16).toHex());
+        DEBUG("AutoInterface: For input: " + _group_id + src_str);
+
+        // Compare received token with expected (first TOKEN_SIZE=16 bytes)
+        if (len >= (ssize_t)TOKEN_SIZE && memcmp(recv_buffer, expected_hash.data(), TOKEN_SIZE) == 0) {
+            // Valid peer - use IPv6Address (IPAddress is IPv4-only!)
+            IPv6Address remoteIP((const uint8_t*)&src_addr.sin6_addr);
+            INFO("AutoInterface: Valid peer discovered: " + src_str);
+            add_or_refresh_peer(remoteIP, RNS::Utilities::OS::time());
+        } else {
+            WARNING("AutoInterface: Invalid discovery hash from " + src_str);
+        }
+
+        // Try to receive more
+        src_len = sizeof(src_addr);
+        len = recvfrom(_discovery_socket, recv_buffer, sizeof(recv_buffer), 0,
+                       (struct sockaddr*)&src_addr, &src_len);
+    }
+}
+
+void AutoInterface::process_data() {
+    // ESP32: Use raw socket for IPv6 data reception
+    if (_data_socket < 0) return;
+
+    uint8_t recv_buffer[Type::Reticulum::MTU + 64];
+    struct sockaddr_in6 src_addr;
+    socklen_t src_len = sizeof(src_addr);
+
+    ssize_t len = recvfrom(_data_socket, recv_buffer, sizeof(recv_buffer), 0,
+                           (struct sockaddr*)&src_addr, &src_len);
+
+    while (len > 0) {
+        _buffer.clear();
+        _buffer.append(recv_buffer, len);
+
+        // Check for duplicates
+        if (is_duplicate(_buffer)) {
+            TRACE("AutoInterface: Dropping duplicate packet");
+            src_len = sizeof(src_addr);
+            len = recvfrom(_data_socket, recv_buffer, sizeof(recv_buffer), 0,
+                           (struct sockaddr*)&src_addr, &src_len);
+            continue;
+        }
+
+        add_to_deque(_buffer);
+
+        // Convert source address to string for logging
+        std::string src_str = ipv6_to_compressed_string((const uint8_t*)&src_addr.sin6_addr);
+        DEBUG("AutoInterface: Received data from " + src_str + " (" + std::to_string(len) + " bytes)");
+
+        // Pass to transport
+        InterfaceImpl::handle_incoming(_buffer);
+
+        // Try to receive more
+        src_len = sizeof(src_addr);
+        len = recvfrom(_data_socket, recv_buffer, sizeof(recv_buffer), 0,
+                       (struct sockaddr*)&src_addr, &src_len);
+    }
+}
+
+#else  // POSIX/Linux
 
 bool AutoInterface::setup_discovery_socket() {
     // Create IPv6 UDP socket
@@ -363,9 +828,7 @@ bool AutoInterface::join_multicast_group() {
         return false;
     }
 
-    char buf[INET6_ADDRSTRLEN];
-    inet_ntop(AF_INET6, &_multicast_address, buf, sizeof(buf));
-    INFO("AutoInterface: Joined multicast group " + std::string(buf));
+    INFO("AutoInterface: Joined multicast group " + _multicast_address_str);
     return true;
 }
 
@@ -409,7 +872,6 @@ void AutoInterface::process_discovery() {
               " (" + std::to_string(len) + " bytes)");
 
         // Verify the peering hash
-        // Python: expected_hash = RNS.Identity.full_hash(self.group_id+ipv6_src[0].encode("utf-8"))
         Bytes combined;
         combined.append((const uint8_t*)_group_id.c_str(), _group_id.length());
         combined.append((const uint8_t*)src_str, strlen(src_str));
@@ -458,6 +920,39 @@ void AutoInterface::process_data() {
     }
 }
 
+#endif  // ARDUINO
+
+// ============================================================================
+// Platform-specific: Peer management
+// ============================================================================
+
+#ifdef ARDUINO
+
+void AutoInterface::add_or_refresh_peer(const IPv6Address& addr, double timestamp) {
+    // Check if this is our own address (IPv6Address == properly compares all 16 bytes)
+    if (addr == _link_local_ip) {
+        DEBUG("AutoInterface: Received own multicast echo - ignoring");
+        return;
+    }
+
+    // Check if peer already exists
+    for (auto& peer : _peers) {
+        if (peer.same_address(addr)) {
+            peer.last_heard = timestamp;
+            TRACE("AutoInterface: Refreshed peer " + peer.address_string());
+            return;
+        }
+    }
+
+    // Add new peer
+    AutoInterfacePeer new_peer(addr, _data_port, timestamp);
+    _peers.push_back(new_peer);
+
+    INFO("AutoInterface: Added new peer " + new_peer.address_string());
+}
+
+#else  // POSIX
+
 void AutoInterface::add_or_refresh_peer(const struct in6_addr& addr, double timestamp) {
     // Check if this is our own address
     if (memcmp(&addr, &_link_local_address, sizeof(addr)) == 0) {
@@ -480,6 +975,12 @@ void AutoInterface::add_or_refresh_peer(const struct in6_addr& addr, double time
 
     INFO("AutoInterface: Added new peer " + new_peer.address_string());
 }
+
+#endif  // ARDUINO
+
+// ============================================================================
+// Platform-independent: Deduplication
+// ============================================================================
 
 void AutoInterface::expire_stale_peers() {
     double now = RNS::Utilities::OS::time();
@@ -527,5 +1028,3 @@ void AutoInterface::expire_deque_entries() {
         _packet_deque.pop_front();
     }
 }
-
-#endif // !ARDUINO

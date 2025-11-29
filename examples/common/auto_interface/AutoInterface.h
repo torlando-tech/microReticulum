@@ -9,11 +9,14 @@
 #ifdef ARDUINO
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <IPv6Address.h>
 #include <lwip/ip6_addr.h>
 #include <lwip/netdb.h>
+#include <lwip/sockets.h>
 #else
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <arpa/inet.h>
 #endif
 
 #include <vector>
@@ -84,7 +87,11 @@ private:
     void process_data();
 
     // Peer management
+#ifdef ARDUINO
+    void add_or_refresh_peer(const IPv6Address& addr, double timestamp);
+#else
     void add_or_refresh_peer(const struct in6_addr& addr, double timestamp);
+#endif
     void expire_stale_peers();
 
     // Deduplication
@@ -104,11 +111,18 @@ private:
     struct in6_addr _multicast_address;
     struct in6_addr _link_local_address;
     std::string _link_local_address_str;
+    std::string _multicast_address_str;   // For logging
+    bool _data_socket_ok = false;         // Data socket initialized successfully
+#ifdef ARDUINO
+    IPv6Address _link_local_ip;           // ESP32: link-local as IPv6Address
+    IPv6Address _multicast_ip;            // ESP32: multicast as IPv6Address
+#endif
 
     // Sockets
 #ifdef ARDUINO
-    WiFiUDP _discovery_udp;
-    WiFiUDP _data_udp;
+    int _discovery_socket = -1;  // Raw socket for IPv6 multicast discovery
+    int _data_socket = -1;       // Raw socket for IPv6 unicast data (WiFiUDP doesn't support IPv6)
+    unsigned int _if_index = 0;  // Interface index for scope_id
 #else
     int _discovery_socket = -1;
     int _data_socket = -1;
