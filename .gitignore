@@ -9,3 +9,6 @@ examples/common/udp_interface/wifi_credentials.h
 
 # TCP server config (use tcp_config.h.example as template)
 examples/common/tcp_interface/tcp_config.h
+
+# AutoInterface config (use auto_config.h.example as template)
+examples/common/auto_interface/auto_config.h

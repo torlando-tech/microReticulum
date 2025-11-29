@@ -2784,3 +2784,146 @@ Flash: 69.6% (1.4MB / 2MB)
 - Add battery indicator (T-Beam has AXP power management)
 - Button input to manually switch pages
 - Display blanking timeout for power save
+
+---
+
+## AutoInterface Implementation (IPv6 Multicast Peer Discovery)
+
+**Date**: November 2024
+
+### Overview
+
+Implemented C++ AutoInterface for automatic peer discovery via IPv6 multicast, matching Python RNS AutoInterface behavior for full interoperability.
+
+### Python Protocol Analysis
+
+The AutoInterface uses IPv6 multicast for peer discovery:
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| Discovery Port | 29716 | Multicast receive |
+| Data Port | 42671 | Unicast send/receive |
+| Default Group ID | "reticulum" | Used to derive multicast address |
+| Announce Interval | ~1.67s | (5/3 seconds) |
+| Peering Timeout | 10s | Peer expiration |
+
+**Multicast Address Derivation**:
+```python
+# Python RNS formula:
+addr_hash = RNS.Identity.full_hash(group_id.encode("utf-8"))
+# Format: ff12:0:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX
+# Where segments come from hash bytes as little-endian 16-bit values
+```
+
+**Discovery Token**:
+```python
+# Full SHA-256 hash (32 bytes), NOT truncated
+token = RNS.Identity.full_hash(group_id + link_local_address)
+```
+
+### Files Created
+
+| File | Description |
+|------|-------------|
+| `examples/common/auto_interface/AutoInterface.h` | Class declaration with protocol constants |
+| `examples/common/auto_interface/AutoInterface.cpp` | POSIX/Linux implementation |
+| `examples/common/auto_interface/AutoInterfacePeer.h` | Lightweight peer holder struct |
+| `examples/common/auto_interface/auto_config.h.example` | Configuration template |
+| `examples/common/auto_interface/library.properties` | PlatformIO library metadata |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `examples/link/platformio.ini` | Added auto_interface symlink lib |
+| `examples/link/main.cpp` | Added `--auto [ifname]` option |
+| `.gitignore` | Added auto_config.h |
+
+### Key Implementation Details
+
+**Multicast Address Calculation** (matching Python exactly):
+```cpp
+void AutoInterface::calculate_multicast_address() {
+    Bytes group_hash = Identity::full_hash(
+        Bytes((const uint8_t*)_group_id.c_str(), _group_id.length()));
+    
+    uint8_t* g = group_hash.writable(32);
+    uint8_t addr[16];
+    addr[0] = 0xff; addr[1] = 0x12;  // ff12 = multicast, link-scope
+    addr[2] = 0x00; addr[3] = 0x00;  // first segment is 0
+    // Hash bytes as little-endian 16-bit values
+    addr[4] = g[2]; addr[5] = g[3];
+    addr[6] = g[4]; addr[7] = g[5];
+    // ... etc
+}
+```
+
+**Discovery Token Verification**:
+```cpp
+// Verify incoming peer announcement
+Bytes combined;
+combined.append((const uint8_t*)_group_id.c_str(), _group_id.length());
+combined.append((const uint8_t*)src_addr_str, strlen(src_addr_str));
+Bytes expected_hash = Identity::full_hash(combined);
+
+if (memcmp(recv_buffer, expected_hash.data(), 32) == 0) {
+    // Valid peer - add to peer list
+}
+```
+
+### Challenges Encountered
+
+1. **Type Conversion Errors**: Initial implementation had `const char*` to `const uint8_t*` conversion issues in hash calculations. Fixed with explicit casts.
+
+2. **Argument Parsing Bug**: The `--auto` option wasn't properly handled in the argument adjustment loop (which only handled `--tcp`). Running `--auto -s` caused a crash when `-s` was passed to `stoul()`. Fixed by adding proper `--auto` handling in the loop.
+
+3. **Data Socket Bind Failure**: When Python RNS is running on the same interface, both try to bind to the same link-local address:port combination. Made data socket failure non-fatal - AutoInterface continues in "discovery-only" mode.
+
+4. **Same-Machine Testing Limitation**: On the same machine with the same interface, C++ and Python AutoInterface both have the same link-local address. Discovery packets from Python appear to C++ as "own multicast echo" and are (correctly) ignored. Proper testing requires different machines or interfaces.
+
+### Verified Interoperability
+
+Successfully tested peer discovery with Python RNS:
+
+```
+AutoInterface: Found link-local address fe80::3451:d6aa:317f:7fcf on interface wlan0
+AutoInterface: Joined multicast group ff12:0:d70b:fb1c:16e4:5e39:485e:31e1
+AutoInterface: Discovery socket bound to port 29716
+AutoInterface: Started successfully (data_socket=no)
+
+AutoInterface: Received discovery packet from fe80::c000:d2ff:fef2:f3e (32 bytes)
+AutoInterface: Added new peer fe80::c000:d2ff:fef2:f3e
+AutoInterface: Received discovery packet from fe80::6c41:9463:e7db:1162 (32 bytes)
+AutoInterface: Added new peer fe80::6c41:9463:e7db:1162
+AutoInterface: Received discovery packet from fe80::788b:7fff:fe9b:987d (32 bytes)
+AutoInterface: Added new peer fe80::788b:7fff:fe9b:987d
+```
+
+### Usage
+
+```bash
+# With default interface (auto-detect)
+./program --auto -s
+
+# With specific interface
+./program --auto wlan0 -s
+
+# Client mode with destination
+./program --auto <destination_hash>
+```
+
+### Platform Support
+
+| Platform | Status | Notes |
+|----------|--------|-------|
+| Native Linux | ✅ Working | Full implementation |
+| ESP32 | 🚧 Pending | Requires WiFi/LwIP adaptation |
+| nRF52840 | ❌ N/A | No WiFi capability |
+
+### ESP32 Adaptation (TODO)
+
+For ESP32 implementation:
+1. Replace POSIX socket calls with LwIP/Arduino equivalents
+2. Use `WiFi.localIPv6()` for link-local address
+3. Use `WiFiUDP` with IPv6 multicast support
+4. Handle WiFi connection/disconnection events

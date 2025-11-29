@@ -1,0 +1,129 @@
+#pragma once
+
+#include "../src/Interface.h"
+#include "../src/Identity.h"
+#include "../src/Bytes.h"
+#include "../src/Type.h"
+#include "AutoInterfacePeer.h"
+
+#ifdef ARDUINO
+#include <WiFi.h>
+#include <WiFiUdp.h>
+#else
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
+
+#include <vector>
+#include <deque>
+#include <string>
+#include <cstdint>
+
+// AutoInterface - automatic peer discovery via IPv6 multicast
+// Matches Python RNS AutoInterface behavior for interoperability
+class AutoInterface : public RNS::InterfaceImpl {
+
+public:
+    // Protocol constants (match Python RNS)
+    static const uint16_t DEFAULT_DISCOVERY_PORT = 29716;
+    static const uint16_t DEFAULT_DATA_PORT = 42671;
+    static constexpr const char* DEFAULT_GROUP_ID = "reticulum";
+    static constexpr double PEERING_TIMEOUT = 10.0;      // seconds
+    static constexpr double ANNOUNCE_INTERVAL = 1.67;    // seconds (~10s/6)
+    static const size_t DEQUE_SIZE = 48;                 // packet dedup window
+    static constexpr double DEQUE_TTL = 0.75;            // seconds
+    static const uint32_t BITRATE_GUESS = 10 * 1000 * 1000;
+    static const uint16_t HW_MTU = 1196;
+
+    // Discovery token is first 16 bytes of full_hash(group_id + link_local_address)
+    static const size_t TOKEN_SIZE = 16;
+
+public:
+    AutoInterface(const char* name = "AutoInterface");
+    virtual ~AutoInterface();
+
+    // Configuration (call before start())
+    void set_group_id(const std::string& group_id) { _group_id = group_id; }
+    void set_discovery_port(uint16_t port) { _discovery_port = port; }
+    void set_data_port(uint16_t port) { _data_port = port; }
+    void set_interface_name(const std::string& ifname) { _ifname = ifname; }
+
+    // InterfaceImpl overrides
+    virtual bool start() override;
+    virtual void stop() override;
+    virtual void loop() override;
+
+    virtual inline std::string toString() const override {
+        return "AutoInterface[" + _name + "/" + _group_id + "]";
+    }
+
+    // Getters for testing
+    const RNS::Bytes& get_discovery_token() const { return _discovery_token; }
+    const RNS::Bytes& get_multicast_address() const { return _multicast_address_bytes; }
+    size_t peer_count() const { return _peers.size(); }
+
+protected:
+    virtual void send_outgoing(const RNS::Bytes& data) override;
+
+private:
+    // Discovery and addressing
+    void calculate_multicast_address();
+    void calculate_discovery_token();
+    bool get_link_local_address();
+
+    // Socket operations
+    bool setup_discovery_socket();
+    bool setup_data_socket();
+    bool join_multicast_group();
+
+    // Main loop operations
+    void send_announce();
+    void process_discovery();
+    void process_data();
+
+    // Peer management
+    void add_or_refresh_peer(const struct in6_addr& addr, double timestamp);
+    void expire_stale_peers();
+
+    // Deduplication
+    bool is_duplicate(const RNS::Bytes& packet);
+    void add_to_deque(const RNS::Bytes& packet);
+    void expire_deque_entries();
+
+    // Configuration
+    std::string _group_id = DEFAULT_GROUP_ID;
+    uint16_t _discovery_port = DEFAULT_DISCOVERY_PORT;
+    uint16_t _data_port = DEFAULT_DATA_PORT;
+    std::string _ifname;  // Network interface name (e.g., "eth0", "wlan0")
+
+    // Computed values
+    RNS::Bytes _discovery_token;          // 16 bytes
+    RNS::Bytes _multicast_address_bytes;  // 16 bytes (IPv6)
+    struct in6_addr _multicast_address;
+    struct in6_addr _link_local_address;
+    std::string _link_local_address_str;
+
+    // Sockets
+#ifdef ARDUINO
+    WiFiUDP _discovery_udp;
+    WiFiUDP _data_udp;
+#else
+    int _discovery_socket = -1;
+    int _data_socket = -1;
+    unsigned int _if_index = 0;  // Interface index for multicast
+#endif
+
+    // Peers and state
+    std::vector<AutoInterfacePeer> _peers;
+    double _last_announce = 0;
+
+    // Deduplication: pairs of (packet_hash, timestamp)
+    struct DequeEntry {
+        RNS::Bytes hash;
+        double timestamp;
+    };
+    std::deque<DequeEntry> _packet_deque;
+
+    // Receive buffer
+    RNS::Bytes _buffer;
+};
