@@ -2917,13 +2917,78 @@ AutoInterface: Added new peer fe80::788b:7fff:fe9b:987d
 | Platform | Status | Notes |
 |----------|--------|-------|
 | Native Linux | ✅ Working | Full implementation |
-| ESP32 | 🚧 Pending | Requires WiFi/LwIP adaptation |
+| ESP32 | ✅ Working | IPv6 multicast via LwIP (2025-11-29) |
 | nRF52840 | ❌ N/A | No WiFi capability |
 
-### ESP32 Adaptation (TODO)
+---
 
-For ESP32 implementation:
-1. Replace POSIX socket calls with LwIP/Arduino equivalents
-2. Use `WiFi.localIPv6()` for link-local address
-3. Use `WiFiUDP` with IPv6 multicast support
-4. Handle WiFi connection/disconnection events
+## Transport Node Example (2025-11-29)
+
+### Overview
+
+Created a comprehensive transport node example for T-Beam Supreme that demonstrates full Reticulum functionality with Python RNS interoperability.
+
+### Example: `examples/transport_node_tbeam_supreme/`
+
+Full Reticulum transport node with:
+- **AutoInterface** (IPv6 multicast peer discovery) - MODE_FULL
+- **TCPClientInterface** (backup connection to Python RNS) - MODE_GATEWAY
+- **Probe support** - responds to `rnprobe` utility
+- **Display support** - shows destination hash and interface status
+- **Full stack** - Link/Resource/Channel/Buffer capability
+
+### Files Created
+
+| File | Description |
+|------|-------------|
+| `main.cpp` | Transport node implementation with dual interfaces |
+| `platformio.ini` | Build configuration for T-Beam Supreme |
+| `boards/lilygo_tbeam_supreme.json` | Custom board definition (8MB flash) |
+
+### Bug Fixes
+
+1. **`Transport::probe_destination_enabled()` returned wrong variable**
+   - Original: `return _path_table_maxpersist;`
+   - Fixed: Added local static `_probe_destination_enabled` member to Transport class
+
+2. **Flash size mismatch causing boot loop**
+   - T-Beam Supreme has 8MB flash, but default ESP32-S3 config assumes 16MB
+   - Fixed: Added `"flash_size": "8MB"` to board definition build section
+
+### Test Results
+
+```bash
+$ rnprobe -t 10 transport_node.node 0a23544415b6a3e8b704b79abd008f2b
+
+Path to <0a23544415b6a3e8b704b79abd008f2b> requested
+Sent probe 1 (16 bytes) to <0a23544415b6a3e8b704b79abd008f2b>
+Valid reply from <0a23544415b6a3e8b704b79abd008f2b>
+Round-trip time is 240.716 milliseconds over 1 hop
+
+Sent 1, received 1, packet loss 0.0%
+```
+
+### Key Implementation Details
+
+1. **Probe support requires two settings:**
+   ```cpp
+   RNS::Reticulum::probe_destination_enabled(true);
+   RNS::Transport::probe_destination_enabled(true);
+   ```
+
+2. **Destination must use PROVE_ALL for probe responses:**
+   ```cpp
+   node_destination.set_proof_strategy(RNS::Type::Destination::PROVE_ALL);
+   ```
+
+3. **Interface order matters:**
+   - TCPClientInterface started first (handles WiFi connection)
+   - AutoInterface started after WiFi is connected
+
+### Milestone 6 Completion Status
+
+- ✅ AutoInterface working on ESP32 (IPv6 multicast)
+- ✅ TCPClientInterface working on ESP32
+- ✅ Probe support working (rnprobe responds)
+- ✅ Display showing destination hash
+- ✅ Full Reticulum stack operational on T-Beam Supreme

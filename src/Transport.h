@@ -380,7 +380,8 @@ namespace RNS {
 		static inline const Identity& identity() { return _identity; }
 		inline static uint16_t path_table_maxsize() { return _path_table_maxsize; }
 		inline static void path_table_maxsize(uint16_t path_table_maxsize) { _path_table_maxsize = path_table_maxsize; }
-		inline static uint16_t probe_destination_enabled() { return _path_table_maxpersist; }
+		inline static bool probe_destination_enabled() { return _probe_destination_enabled; }
+		inline static void probe_destination_enabled(bool enabled) { _probe_destination_enabled = enabled; }
 		inline static void path_table_maxpersist(uint16_t path_table_maxpersist) { _path_table_maxpersist = path_table_maxpersist; }
 		// CBA TEST
 		static inline void identity(Identity& identity) { _identity = identity; }
@@ -470,6 +471,7 @@ namespace RNS {
 		// CBA
 		static uint16_t _path_table_maxsize;
 		static uint16_t _path_table_maxpersist;
+		static bool _probe_destination_enabled;
 		static double _last_saved;
 		static float _save_interval;
 		static uint32_t _destination_table_crc;
