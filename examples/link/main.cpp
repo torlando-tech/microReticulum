@@ -6,6 +6,10 @@
 */
 
 #include <UDPInterface.h>
+#include <TCPClientInterface.h>
+#ifdef ARDUINO
+#include "../common/tcp_interface/tcp_config.h"
+#endif
 #include <UniversalFileSystem.h>
 
 #include <Reticulum.h>
@@ -196,7 +200,7 @@ RNS::Link latest_client_link({RNS::Type::NONE});
 // Global destination for Arduino (used by setup/loop pattern)
 RNS::Destination arduino_server_destination({RNS::Type::NONE});
 // Global interface for Arduino (must persist beyond setup())
-RNS::Interface arduino_udp_interface({RNS::Type::NONE});
+RNS::Interface arduino_tcp_interface({RNS::Type::NONE});
 #endif
 
 void client_disconnected(RNS::Link& link) {
@@ -1237,15 +1241,14 @@ void setup() {
 	universal_filesystem.init();
 	RNS::Utilities::OS::register_filesystem(universal_filesystem);
 
-	// Initialize UDP interface with laptop communication settings
-	UDPInterface* udp_iface = new UDPInterface();
-	udp_iface->set_local_port(14242);
-	udp_iface->set_remote_host("192.168.1.100");  // Laptop IP on MyNetwork
-	udp_iface->set_remote_port(14243);
-	arduino_udp_interface = udp_iface;  // Use global so it persists beyond setup()
-	arduino_udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
-	RNS::Transport::register_interface(arduino_udp_interface);
-	arduino_udp_interface.start();
+	// Initialize TCP interface with server from tcp_config.h
+	TCPClientInterface* tcp_iface = new TCPClientInterface();
+	tcp_iface->set_target_host(TCP_SERVER_HOST);
+	tcp_iface->set_target_port(TCP_SERVER_PORT);
+	arduino_tcp_interface = tcp_iface;  // Use global so it persists beyond setup()
+	arduino_tcp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
+	RNS::Transport::register_interface(arduino_tcp_interface);
+	arduino_tcp_interface.start();
 
 	// Initialize and start Reticulum
 	reticulum.start();
@@ -1327,41 +1330,93 @@ int main(int argc, char *argv[]) {
 	universal_filesystem.init();
 	RNS::Utilities::OS::register_filesystem(universal_filesystem);
 
+	// Parse --tcp option for TCP interface (format: --tcp host:port)
+	std::string tcp_host;
+	int tcp_port = 0;
+	int arg_offset = 0;  // Offset for parsing remaining args after --tcp
+	for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "--tcp") == 0 && i + 1 < argc) {
+			std::string tcp_arg = argv[i + 1];
+			size_t colon = tcp_arg.find(':');
+			if (colon != std::string::npos) {
+				tcp_host = tcp_arg.substr(0, colon);
+				tcp_port = std::stoi(tcp_arg.substr(colon + 1));
+			} else {
+				tcp_host = tcp_arg;
+				tcp_port = 4965;  // Default Python RNS TCP port
+			}
+			arg_offset = 2;  // Skip --tcp and host:port
+			break;
+		}
+	}
+
 	// Initialize and register interface
-	UDPInterface* udp_iface = new UDPInterface();
-	// For interop testing with Python: C++ listens on 14242, sends to 127.0.0.1:14243
-	// Python listens on 127.0.0.1:14243, sends to 127.0.0.1:14242
-	udp_iface->set_local_port(14242);
-	udp_iface->set_remote_host("127.0.0.1");
-	udp_iface->set_remote_port(14243);
-	RNS::Interface udp_interface = udp_iface;
-	udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
-	RNS::Transport::register_interface(udp_interface);
-	udp_interface.start();
+	RNS::Interface active_interface(RNS::Type::NONE);
+	if (!tcp_host.empty()) {
+		// Use TCP interface
+		printf("Using TCP interface: %s:%d\n", tcp_host.c_str(), tcp_port);
+		TCPClientInterface* tcp_iface = new TCPClientInterface();
+		tcp_iface->set_target_host(tcp_host);
+		tcp_iface->set_target_port(tcp_port);
+		active_interface = tcp_iface;
+	} else {
+		// Use UDP interface (default)
+		printf("Using UDP interface\n");
+		UDPInterface* udp_iface = new UDPInterface();
+		// For interop testing with Python: C++ listens on 14242, sends to 127.0.0.1:14243
+		// Python listens on 127.0.0.1:14243, sends to 127.0.0.1:14242
+		udp_iface->set_local_port(14242);
+		udp_iface->set_remote_host("127.0.0.1");
+		udp_iface->set_remote_port(14243);
+		active_interface = udp_iface;
+	}
+	active_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
+	RNS::Transport::register_interface(active_interface);
+	active_interface.start();
 
 	// Initialize and start Reticulum
 	reticulum.start();
 
-	if (argc <= 1) {
+	// Adjust argc/argv to skip --tcp arguments
+	int effective_argc = argc - arg_offset;
+	char** effective_argv = argv;
+	if (arg_offset > 0) {
+		// Shift arguments after --tcp
+		static char* adjusted_argv[32];
+		adjusted_argv[0] = argv[0];
+		int j = 1;
+		for (int i = 1; i < argc; i++) {
+			if (strcmp(argv[i], "--tcp") == 0 && i + 1 < argc) {
+				i++;  // Skip --tcp and its argument
+				continue;
+			}
+			adjusted_argv[j++] = argv[i];
+		}
+		effective_argc = j;
+		effective_argv = adjusted_argv;
+	}
+
+	if (effective_argc <= 1) {
 		printf("\nMust specify a destination for client mode, or \"-s\" or \"--server\" for server mode.\n\n");
+		printf("Use \"--tcp host:port\" to use TCP instead of UDP.\n");
 		printf("Use \"--test-aes\" to run AES-256-CBC test.\n\n");
 		return -1;
 	}
 	// AES test mode
-	if (strcmp(argv[1], "--test-aes") == 0) {
+	if (strcmp(effective_argv[1], "--test-aes") == 0) {
 		bool result = test_aes_256_cbc();
 		return result ? 0 : 1;
 	}
-	if (strcmp(argv[1], "--server") == 0 || strcmp(argv[1], "-s") == 0) {
+	if (strcmp(effective_argv[1], "--server") == 0 || strcmp(effective_argv[1], "-s") == 0) {
 		server();
 	}
 	else {
 		// Check for optional second arg for auto-send size (e.g., "./program <hash> 1048576")
-		if (argc >= 3) {
-			auto_send_size = std::stoul(argv[2]);
+		if (effective_argc >= 3) {
+			auto_send_size = std::stoul(effective_argv[2]);
 			RNS::log("Auto-send mode: will send " + std::to_string(auto_send_size) + " bytes after link established");
 		}
-		client(argv[1]);
+		client(effective_argv[1]);
 	}
 
 	printf("\nLoop exited. Performing cleanup...\n");

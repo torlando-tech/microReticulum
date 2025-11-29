@@ -2575,10 +2575,96 @@ Despite all ESP32 code working correctly, UDP packets are not being received by 
 - [x] ESP32-S3 runtime stable (no crashes) - COMPLETED
 - [x] ESP32 connects to WiFi - COMPLETED
 - [x] ESP32 initializes Reticulum - COMPLETED
-- [ ] ESP32 ↔ Python RNS communication - BLOCKED by network issue
+- [x] ESP32 ↔ Python RNS communication - COMPLETED via TCP (see below)
 - [ ] Link establishment across platforms
 - [ ] Full interop test suite on hardware
 
+---
+
+## Milestone 6: TCPClientInterface Implementation (2024-11-28)
+
+### Problem: WiFi UDP Blocked by Router
+
+The MyNetwork WiFi router has AP/client isolation enabled, blocking UDP packets between wireless clients while allowing TCP connections. This prevented ESP32 ↔ Python communication via UDPInterface.
+
+### Solution: Implement TCPClientInterface
+
+Created a new `TCPClientInterface` that connects to Python RNS's `TCPServerInterface`, bypassing the UDP isolation issue.
+
+#### New Files Created
+
+| File | Description |
+|------|-------------|
+| `examples/common/tcp_interface/TCPClientInterface.h` | Header with class definition, constants, ESP32/native abstractions |
+| `examples/common/tcp_interface/TCPClientInterface.cpp` | Full implementation with HDLC framing, reconnection, socket options |
+| `examples/common/tcp_interface/HDLC.h` | HDLC framing/unframing for TCP stream (0x7E flags, escape sequences) |
+| `examples/common/tcp_interface/library.properties` | PlatformIO library metadata |
+
+#### Key Implementation Details
+
+1. **HDLC Framing**: TCP is stream-based, so packets are framed with `[FLAG][escaped_data][FLAG]` where FLAG=0x7E
+2. **Platform Abstraction**:
+   - ESP32: Uses `WiFiClient` + lwIP sockets (`lwip/sockets.h`)
+   - Native Linux: Uses POSIX sockets (`sys/socket.h`)
+3. **Automatic Reconnection**: 5-second retry interval if connection is lost
+4. **Socket Options**: TCP_NODELAY, SO_KEEPALIVE with tuned parameters
+5. **Connect Timeout**: 5-second connection timeout with non-blocking connect
+
+#### Files Modified
+
+| File | Changes |
+|------|---------|
+| `examples/link/main.cpp` | Added TCP interface support for Arduino (lines 1241-1248), `--tcp host:port` for native |
+| `examples/common/tcp_interface/TCPClientInterface.cpp` | Added `#include <lwip/sockets.h>` for ESP32 socket support |
+
+#### ESP32 Configuration
+
+```cpp
+// In main.cpp setup() for Arduino
+TCPClientInterface* tcp_iface = new TCPClientInterface();
+tcp_iface->set_target_host("192.168.1.100");  // Laptop IP
+tcp_iface->set_target_port(4965);          // Python RNS TCP port
+arduino_tcp_interface = tcp_iface;
+arduino_tcp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
+RNS::Transport::register_interface(arduino_tcp_interface);
+arduino_tcp_interface.start();
+```
+
+#### Python Server Setup
+
+```bash
+# Python RNS config with TCPServerInterface
+[interfaces]
+  [[TCP Server Interface]]
+    type = TCPServerInterface
+    enabled = Yes
+    listen_ip = 0.0.0.0
+    listen_port = 4965
+```
+
+### Verified Working
+
+1. **TCP Connection**: ESP32 (192.168.1.10) → Laptop (192.168.1.100:4965)
+2. **ESP32 → Python**: Announce packets sent from ESP32 are validated by Python RNS
+3. **Python → ESP32**: Python sends announces over TCP to ESP32
+4. **HDLC Framing**: Correct frame extraction and unescaping
+5. **Reconnection**: ESP32 automatically reconnects after server restart
+
+#### Test Results
+
+```
+# Python server log
+[Verbose]  Accepting incoming TCP connection
+[Verbose]  Spawned new TCPClient Interface: TCPInterface[Client on TCP Server Interface/192.168.1.10:51250]
+[Debug]    Destination <691b996819a95331046a9106cc185393> is now 1 hops away
+```
+
 ### Conclusion
 
-ESP32-S3 port is now **95% functional**. The device boots, connects to WiFi, initializes Reticulum, and runs the link server without crashing. The remaining issue is UDP packet delivery which appears to be a network configuration problem (router client isolation), not a code bug. Once the network issue is resolved, ESP32 ↔ Python communication should work.
+ESP32-S3 port is now **100% functional for basic communication**. The TCPClientInterface bypasses the WiFi router's UDP isolation and provides reliable bidirectional communication with Python RNS. The TCP interface also offers advantages over UDP:
+- Guaranteed delivery (TCP handles retransmission)
+- Proper stream handling with HDLC framing
+- Connection state awareness
+- Automatic reconnection
+
+Next steps: Test Link establishment and full protocol interop over TCP.

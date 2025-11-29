@@ -6,3 +6,6 @@
 
 # WiFi credentials (use wifi_credentials.h.example as template)
 examples/common/udp_interface/wifi_credentials.h
+
+# TCP server config (use tcp_config.h.example as template)
+examples/common/tcp_interface/tcp_config.h
