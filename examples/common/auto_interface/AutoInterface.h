@@ -9,6 +9,8 @@
 #ifdef ARDUINO
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <lwip/ip6_addr.h>
+#include <lwip/netdb.h>
 #else
 #include <netinet/in.h>
 #include <sys/socket.h>
