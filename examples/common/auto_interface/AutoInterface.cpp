@@ -407,24 +407,29 @@ void AutoInterface::calculate_multicast_address() {
     // 2 = link scope (SCOPE_LINK)
     // The remaining 112 bits come from the group hash
 
-    // Python format: "ff12:0:" + formatted hash segments
-    // Each segment is: g[n+1] + (g[n] << 8) for pairs starting at index 2
+    // Python format from AutoInterface.py lines 195-205:
+    //   gt  = "0"                                      # literal 0, NOT from hash!
+    //   gt += ":"+"{:02x}".format(g[3]+(g[2]<<8))      # hash bytes 2-3
+    //   gt += ":"+"{:02x}".format(g[5]+(g[4]<<8))      # hash bytes 4-5
+    //   gt += ":"+"{:02x}".format(g[7]+(g[6]<<8))      # hash bytes 6-7
+    //   gt += ":"+"{:02x}".format(g[9]+(g[8]<<8))      # hash bytes 8-9
+    //   gt += ":"+"{:02x}".format(g[11]+(g[10]<<8))    # hash bytes 10-11
+    //   gt += ":"+"{:02x}".format(g[13]+(g[12]<<8))    # hash bytes 12-13
+    //   mcast_discovery_address = "ff12:" + gt
+    //
+    // Result: ff12:0:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX (8 groups)
 
     uint8_t addr[16];
     addr[0] = 0xff;
     addr[1] = 0x12;  // 1=temporary, 2=link scope
 
-    // Python: gt = "ff12:" + ":".join(['{:02x}'.format(g[i+1]+(g[i]<<8)) for i in range(0,14,2)])
-    // This uses hash bytes 0-13 (14 bytes total) to fill the remaining 7 groups
-    // Each group is: high byte = g[i], low byte = g[i+1]
-
     const uint8_t* g = group_hash.data();
 
-    // Group 1: g[1]+(g[0]<<8) stored as [g[0], g[1]]
-    addr[2] = g[0];
-    addr[3] = g[1];
+    // Group 1: Python uses literal "0", NOT hash bytes 0-1!
+    addr[2] = 0x00;
+    addr[3] = 0x00;
 
-    // Group 2: g[3]+(g[2]<<8)
+    // Group 2: g[3]+(g[2]<<8) - starts at hash byte 2
     addr[4] = g[2];
     addr[5] = g[3];
 
@@ -467,14 +472,14 @@ void AutoInterface::calculate_multicast_address() {
 // ============================================================================
 
 void AutoInterface::calculate_discovery_token() {
-    // Python: discovery_token = RNS.Identity.full_hash(self.group_id+link_local_address.encode("utf-8"))[:16]
-    // Note: Python uses only the first 16 bytes (TOKEN_SIZE) of the hash
+    // Python: discovery_token = RNS.Identity.full_hash(self.group_id+link_local_address.encode("utf-8"))
+    // Python sends the FULL 32-byte hash (not truncated)
     Bytes combined;
     combined.append((const uint8_t*)_group_id.c_str(), _group_id.length());
     combined.append((const uint8_t*)_link_local_address_str.c_str(), _link_local_address_str.length());
 
     Bytes full_hash = Identity::full_hash(combined);
-    // Truncate to TOKEN_SIZE (16 bytes) as Python does
+    // Use full TOKEN_SIZE (32 bytes) to match Python RNS
     _discovery_token = Bytes(full_hash.data(), TOKEN_SIZE);
     TRACE("AutoInterface: Discovery token input: " + combined.toHex());
     TRACE("AutoInterface: Discovery token: " + _discovery_token.toHex());
@@ -518,12 +523,7 @@ bool AutoInterface::setup_discovery_socket() {
     int flags = fcntl(_discovery_socket, F_GETFL, 0);
     fcntl(_discovery_socket, F_SETFL, flags | O_NONBLOCK);
 
-    // Join the IPv6 multicast group using lwIP mld6 API
-    // (setsockopt IPV6_JOIN_GROUP not supported in ESP32 Arduino's lwIP build)
-    ip6_addr_t mcast_addr;
-    memcpy(&mcast_addr.addr, &_multicast_address, sizeof(_multicast_address));
-
-    // Find the station netif (WiFi interface)
+    // Find the station netif (WiFi interface) to get interface index
     struct netif* nif = netif_list;
     while (nif != NULL) {
         if (nif->name[0] == 's' && nif->name[1] == 't') {  // "st" = station
@@ -533,12 +533,39 @@ bool AutoInterface::setup_discovery_socket() {
     }
 
     if (nif != NULL) {
-        err_t err = mld6_joingroup_netif(nif, &mcast_addr);
-        if (err == ERR_OK) {
-            INFO("AutoInterface: Joined IPv6 multicast group via mld6 API: " + _multicast_address_str);
+        // Get interface index for multicast (needed for send and receive)
+        _if_index = netif_get_index(nif);
+        INFO("AutoInterface: Using interface index " + std::to_string(_if_index) + " for multicast");
+
+        // Join the IPv6 multicast group using standard socket API
+        // This properly links the socket to receive multicast packets
+        struct ipv6_mreq mreq;
+        memcpy(&mreq.ipv6mr_multiaddr, &_multicast_address, sizeof(_multicast_address));
+        mreq.ipv6mr_interface = _if_index;
+
+        if (setsockopt(_discovery_socket, IPPROTO_IPV6, IPV6_JOIN_GROUP, &mreq, sizeof(mreq)) < 0) {
+            WARNING("AutoInterface: Failed to join multicast group via setsockopt (errno=" +
+                    std::to_string(errno) + "), trying mld6 API");
+            // Fallback to lwIP mld6 API
+            ip6_addr_t mcast_addr;
+            memcpy(&mcast_addr.addr, &_multicast_address, sizeof(_multicast_address));
+            err_t err = mld6_joingroup_netif(nif, &mcast_addr);
+            if (err == ERR_OK) {
+                INFO("AutoInterface: Joined IPv6 multicast group via mld6 API: " + _multicast_address_str);
+            } else {
+                WARNING("AutoInterface: mld6_joingroup failed (err=" + std::to_string(err) +
+                        ") - discovery may not work");
+            }
         } else {
-            WARNING("AutoInterface: mld6_joingroup failed (err=" + std::to_string(err) +
-                    ") - discovery may not work");
+            INFO("AutoInterface: Joined IPv6 multicast group via setsockopt: " + _multicast_address_str);
+        }
+
+        // Set multicast interface for outgoing packets (critical for multicast to reach other hosts!)
+        if (setsockopt(_discovery_socket, IPPROTO_IPV6, IPV6_MULTICAST_IF,
+                       &_if_index, sizeof(_if_index)) < 0) {
+            WARNING("AutoInterface: Failed to set IPV6_MULTICAST_IF (errno=" + std::to_string(errno) + ")");
+        } else {
+            DEBUG("AutoInterface: Set IPV6_MULTICAST_IF to interface " + std::to_string(_if_index));
         }
     } else {
         WARNING("AutoInterface: Could not find station netif for multicast join");
@@ -560,16 +587,19 @@ bool AutoInterface::setup_data_socket() {
     int reuse = 1;
     setsockopt(_data_socket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
-    // Find the station netif and get its index
-    struct netif* nif = netif_list;
-    while (nif != NULL) {
-        if (nif->name[0] == 's' && nif->name[1] == 't') {  // "st" = station
-            break;
+    // Note: _if_index should already be set by setup_discovery_socket()
+    // Fallback in case discovery socket wasn't set up first
+    if (_if_index == 0) {
+        struct netif* nif = netif_list;
+        while (nif != NULL) {
+            if (nif->name[0] == 's' && nif->name[1] == 't') {  // "st" = station
+                _if_index = netif_get_index(nif);
+                break;
+            }
+            nif = nif->next;
         }
-        nif = nif->next;
+        INFO("AutoInterface: Using interface index " + std::to_string(_if_index) + " for data socket (fallback)");
     }
-    _if_index = nif ? netif_get_index(nif) : 0;
-    INFO("AutoInterface: Using interface index " + std::to_string(_if_index) + " for data socket");
 
     // Bind to our link-local address and data port (helps with routing)
     struct sockaddr_in6 bind_addr;
@@ -619,6 +649,7 @@ void AutoInterface::send_announce() {
     dest_addr.sin6_family = AF_INET6;
     dest_addr.sin6_port = htons(_discovery_port);
     memcpy(&dest_addr.sin6_addr, &_multicast_address, sizeof(_multicast_address));
+    dest_addr.sin6_scope_id = _if_index;  // Specify WiFi interface for link-local multicast
 
     ssize_t sent = sendto(_discovery_socket, _discovery_token.data(), _discovery_token.size(), 0,
                           (struct sockaddr*)&dest_addr, sizeof(dest_addr));
@@ -661,19 +692,19 @@ void AutoInterface::process_discovery() {
         INFO("AutoInterface: Received discovery packet from " + src_str +
               " (" + std::to_string(len) + " bytes)");
 
-        // Verify the peering hash (first TOKEN_SIZE bytes)
+        // Verify the peering hash (full TOKEN_SIZE = 32 bytes)
         Bytes combined;
         combined.append((const uint8_t*)_group_id.c_str(), _group_id.length());
         combined.append((const uint8_t*)src_str.c_str(), src_str.length());
         Bytes expected_hash = Identity::full_hash(combined);
 
-        // Debug: show received vs expected
-        Bytes received_token(recv_buffer, std::min((size_t)len, (size_t)16));
+        // Debug: show received vs expected (full 32 bytes)
+        Bytes received_token(recv_buffer, std::min((size_t)len, (size_t)TOKEN_SIZE));
         DEBUG("AutoInterface: Received token: " + received_token.toHex());
-        DEBUG("AutoInterface: Expected token: " + Bytes(expected_hash.data(), 16).toHex());
+        DEBUG("AutoInterface: Expected token: " + Bytes(expected_hash.data(), TOKEN_SIZE).toHex());
         DEBUG("AutoInterface: For input: " + _group_id + src_str);
 
-        // Compare received token with expected (first TOKEN_SIZE=16 bytes)
+        // Compare received token with expected (full TOKEN_SIZE = 32 bytes)
         if (len >= (ssize_t)TOKEN_SIZE && memcmp(recv_buffer, expected_hash.data(), TOKEN_SIZE) == 0) {
             // Valid peer - use IPv6Address (IPAddress is IPv4-only!)
             IPv6Address remoteIP((const uint8_t*)&src_addr.sin6_addr);

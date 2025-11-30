@@ -13,11 +13,37 @@
 
 #include <Arduino.h>
 #include <SPIFFS.h>
+#include <WiFi.h>
 
 // Interfaces
 #include <TCPClientInterface.h>
 #include <AutoInterface.h>
 #include "../common/tcp_interface/tcp_config.h"
+#include "../common/udp_interface/wifi_credentials.h"
+
+// WiFi connection utility (separate from TCPClientInterface)
+bool wifi_connect() {
+    RNS::log("Connecting to WiFi: " + std::string(WIFI_SSID));
+
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 40) {  // 20 second timeout
+        delay(500);
+        Serial.print(".");
+        attempts++;
+    }
+
+    if (WiFi.status() != WL_CONNECTED) {
+        RNS::error("WiFi connection FAILED!");
+        return false;
+    }
+
+    Serial.println();
+    RNS::log("WiFi connected: " + std::string(WiFi.localIP().toString().c_str()));
+    return true;
+}
 
 // Filesystem
 #include <UniversalFileSystem.h>
@@ -118,8 +144,15 @@ void setup() {
     RNS::Transport::probe_destination_enabled(true);
     RNS::log("Probe support enabled");
 
-    // Initialize TCPClientInterface FIRST - it handles WiFi connection
-    // This must be started before AutoInterface which needs WiFi
+    // Connect WiFi first (required for AutoInterface)
+    if (!wifi_connect()) {
+        RNS::error("Cannot start without WiFi!");
+        return;
+    }
+
+    // AUTOINTERFACE-ONLY TEST MODE
+    // TCPClientInterface disabled for isolated testing
+    #if 0
     TCPClientInterface* tcp_iface = new TCPClientInterface("TCP");
     tcp_iface->set_target_host(TCP_SERVER_HOST);
     tcp_iface->set_target_port(TCP_SERVER_PORT);
@@ -129,9 +162,10 @@ void setup() {
     tcp_interface.start();
     RNS::log("TCPClientInterface started (MODE_GATEWAY) -> " +
              std::string(TCP_SERVER_HOST) + ":" + std::to_string(TCP_SERVER_PORT));
+    #endif
+    RNS::log("*** AUTOINTERFACE-ONLY TEST MODE ***");
 
     // Initialize AutoInterface (primary - IPv6 multicast discovery)
-    // WiFi is now connected via TCPClientInterface above
     AutoInterface* auto_iface = new AutoInterface("Auto");
     auto_interface = auto_iface;
     auto_interface.mode(RNS::Type::Interface::MODE_FULL);
