@@ -40,8 +40,9 @@ public:
     static const uint32_t BITRATE_GUESS = 10 * 1000 * 1000;
     static const uint16_t HW_MTU = 1196;
 
-    // Discovery token is first 16 bytes of full_hash(group_id + link_local_address)
-    static const size_t TOKEN_SIZE = 16;
+    // Discovery token is full_hash(group_id + link_local_address) = 32 bytes
+    // Python RNS sends and expects the full 32-byte hash (HASHLENGTH//8 = 256//8 = 32)
+    static const size_t TOKEN_SIZE = 32;
 
 public:
     AutoInterface(const char* name = "AutoInterface");

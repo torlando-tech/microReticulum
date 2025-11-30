@@ -2992,3 +2992,250 @@ Sent 1, received 1, packet loss 0.0%
 - ✅ Probe support working (rnprobe responds)
 - ✅ Display showing destination hash
 - ✅ Full Reticulum stack operational on T-Beam Supreme
+
+---
+
+## AutoInterface ESP32 ↔ Python RNS Interoperability - COMPLETE (2025-11-29)
+
+### Problem Summary
+
+ESP32 AutoInterface multicast discovery announces were not being received by Python RNS nodes, even though Python-to-Python multicast discovery worked fine on the same network. The previous developer incorrectly attributed this to "network/router configuration issues."
+
+### Session Goals
+
+Fix bidirectional multicast discovery between ESP32 and Python RNS AutoInterface implementations.
+
+### Issues Discovered and Fixed
+
+#### Issue 1: Missing Multicast Interface Specification (Send Direction)
+
+**Symptom**: ESP32 was sending multicast packets, but Python RNS was not receiving them.
+
+**Root Cause**: The ESP32 code was missing two critical socket options that tell the kernel which network interface to use for sending multicast packets:
+1. No `setsockopt(IPV6_MULTICAST_IF)` on the discovery socket
+2. No `sin6_scope_id` set in the destination address when calling `sendto()`
+
+Without these, the kernel doesn't know which interface to use for outgoing multicast, and packets may go to the wrong interface or not be routed correctly.
+
+**Comparison**:
+
+| Setting | Python RNS | ESP32 C++ (Before) | POSIX C++ | ESP32 C++ (After) |
+|---------|-----------|-------------------|-----------|-------------------|
+| `IPV6_MULTICAST_IF` | Lines 254, 444 | ❌ Missing | Line 751 ✅ | ✅ Added |
+| `sin6_scope_id` on send | Via setsockopt | ❌ 0 (default) | Line 844 ✅ | ✅ Set to `_if_index` |
+
+**The Fix** (`examples/common/auto_interface/AutoInterface.cpp`):
+
+Added in `setup_discovery_socket()` after getting interface index:
+```cpp
+// Set multicast interface for outgoing packets (critical for multicast to reach other hosts!)
+if (setsockopt(_discovery_socket, IPPROTO_IPV6, IPV6_MULTICAST_IF,
+               &_if_index, sizeof(_if_index)) < 0) {
+    WARNING("AutoInterface: Failed to set IPV6_MULTICAST_IF (errno=" + std::to_string(errno) + ")");
+} else {
+    DEBUG("AutoInterface: Set IPV6_MULTICAST_IF to interface " + std::to_string(_if_index));
+}
+```
+
+Added in `send_announce()`:
+```cpp
+dest_addr.sin6_scope_id = _if_index;  // Specify WiFi interface for link-local multicast
+```
+
+Also moved `_if_index` extraction to `setup_discovery_socket()` so it's available before `send_announce()` can be called.
+
+**Files Modified**:
+- `examples/common/auto_interface/AutoInterface.cpp:537-569` - Get interface index early, add `IPV6_MULTICAST_IF` setsockopt
+- `examples/common/auto_interface/AutoInterface.cpp:634` - Set `sin6_scope_id` in send address
+- `examples/common/auto_interface/AutoInterface.cpp:575-587` - Simplified data socket setup (fallback only)
+
+#### Issue 2: Multicast Address Format Mismatch
+
+**Symptom**: tcpdump showed ESP32 sending to `ff12:eac4:d70b:...` while Python nodes sent to `ff12:0:d70b:...` (different addresses!).
+
+**Root Cause**: The C++ multicast address calculation used all hash bytes starting from byte 0, but Python RNS explicitly sets the first group (after `ff12:`) to literal `"0"` and starts using hash bytes from offset 2.
+
+**Python RNS Code** (`RNS/Interfaces/AutoInterface.py:195-205`):
+```python
+g = self.group_hash
+#gt  = "{:02x}".format(g[1]+(g[0]<<8))  # ← COMMENTED OUT!
+gt  = "0"                                # ← Literal "0" for first group
+gt += ":"+"{:02x}".format(g[3]+(g[2]<<8))  # hash bytes 2-3
+gt += ":"+"{:02x}".format(g[5]+(g[4]<<8))  # hash bytes 4-5
+# ... and so on, using bytes 2-13
+```
+
+**C++ Code (Before)**:
+```cpp
+addr[2] = g[0];  // Wrong - uses hash byte 0
+addr[3] = g[1];  // Wrong - uses hash byte 1
+addr[4] = g[2];  // Wrong offset...
+// ...
+```
+
+**The Fix** (`examples/common/auto_interface/AutoInterface.cpp:428-454`):
+```cpp
+// Group 1: Python uses literal "0", NOT hash bytes 0-1!
+addr[2] = 0x00;
+addr[3] = 0x00;
+
+// Group 2: g[3]+(g[2]<<8) - starts at hash byte 2
+addr[4] = g[2];
+addr[5] = g[3];
+
+// Group 3: g[5]+(g[4]<<8)
+addr[6] = g[4];
+addr[7] = g[5];
+// ... continues with bytes 6-13
+```
+
+**Result**: ESP32 now generates `ff12:0:d70b:fb1c:16e4:5e39:485e:31e1`, matching Python exactly.
+
+#### Issue 3: Discovery Token Size Mismatch
+
+**Symptom**: Python logged "authentication hash was incorrect" even though tokens matched when calculated manually.
+
+**Root Cause**: Python RNS expects the **full 32-byte SHA256 hash** (`HASHLENGTH//8 = 256//8 = 32`), but ESP32 was only sending 16 bytes.
+
+**Python RNS Code** (`RNS/Interfaces/AutoInterface.py:341-343,439,445`):
+```python
+# Sending:
+discovery_token = RNS.Identity.full_hash(...)  # Full 32 bytes
+announce_socket.sendto(discovery_token, ...)
+
+# Receiving:
+peering_hash = data[:RNS.Identity.HASHLENGTH//8]  # First 32 bytes
+expected_hash = RNS.Identity.full_hash(...)        # Full 32 bytes
+if peering_hash == expected_hash:
+```
+
+**C++ Code (Before)**:
+```cpp
+static const size_t TOKEN_SIZE = 16;  // Wrong!
+```
+
+**The Fix** (`examples/common/auto_interface/AutoInterface.h:43-45`):
+```cpp
+// Discovery token is full_hash(group_id + link_local_address) = 32 bytes
+// Python RNS sends and expects the full 32-byte hash (HASHLENGTH//8 = 256//8 = 32)
+static const size_t TOKEN_SIZE = 32;
+```
+
+Also updated comments in `AutoInterface.cpp` to reflect that Python uses the full hash, not truncated.
+
+#### Issue 4: Multicast Reception Not Working (Receive Direction)
+
+**Symptom**: ESP32 showed `peers=0` while Python successfully added ESP32 as a peer. ESP32 was sending correctly but not receiving Python's multicast packets.
+
+**Root Cause**: ESP32 code used `mld6_joingroup_netif()` (low-level lwIP API) which joins the multicast group at the network layer but doesn't properly link the **socket** to receive those packets. Standard BSD sockets require `setsockopt(IPV6_JOIN_GROUP)` to associate a socket with a multicast group.
+
+**Investigation**: Checked ESP32 lwIP headers and found that `IPV6_JOIN_GROUP` **is** supported, contrary to the code comment claiming it wasn't.
+
+```bash
+$ grep IPV6_JOIN_GROUP ~/.platformio/packages/framework-arduinoespressif32/.../lwip/sockets.h
+#define IPV6_JOIN_GROUP      12
+#define IPV6_ADD_MEMBERSHIP  IPV6_JOIN_GROUP
+```
+
+**The Fix** (`examples/common/auto_interface/AutoInterface.cpp:540-561`):
+
+Changed from low-level `mld6_joingroup_netif()` to standard socket API:
+```cpp
+// Join the IPv6 multicast group using standard socket API
+// This properly links the socket to receive multicast packets
+struct ipv6_mreq mreq;
+memcpy(&mreq.ipv6mr_multiaddr, &_multicast_address, sizeof(_multicast_address));
+mreq.ipv6mr_interface = _if_index;
+
+if (setsockopt(_discovery_socket, IPPROTO_IPV6, IPV6_JOIN_GROUP, &mreq, sizeof(mreq)) < 0) {
+    WARNING("AutoInterface: Failed to join multicast group via setsockopt...");
+    // Fallback to mld6 API if setsockopt fails
+    ip6_addr_t mcast_addr;
+    memcpy(&mcast_addr.addr, &_multicast_address, sizeof(_multicast_address));
+    err_t err = mld6_joingroup_netif(nif, &mcast_addr);
+    // ...
+} else {
+    INFO("AutoInterface: Joined IPv6 multicast group via setsockopt: " + _multicast_address_str);
+}
+```
+
+**Key Insight**: The socket API (`setsockopt(IPV6_JOIN_GROUP)`) not only joins the multicast group but also tells the kernel to deliver packets addressed to that group to **this specific socket**. The lwIP `mld6_joingroup_netif()` only sends MLD reports and configures the network interface, but doesn't connect the socket to the multicast reception path.
+
+### Test Results
+
+**Before fixes:**
+- ESP32 → Python: ❌ Python logs "authentication hash was incorrect"
+- Python → ESP32: ❌ ESP32 shows `peers=0`
+
+**After fixes:**
+- ESP32 → Python: ✅ Python logs "added peer fe80::4aca:43ff:fe5a:7dc4"
+- Python → ESP32: ✅ ESP32 logs "Valid peer discovered" for 3 Python nodes, `peers=3`
+
+**ESP32 Log Output** (showing all fixes working):
+```
+00:00:05.736 [INF] AutoInterface: Joined IPv6 multicast group via setsockopt: FF12:0:D70B:FB1C:16E4:5E39:485E:31E1
+00:00:05.739 [DBG] AutoInterface: Set IPV6_MULTICAST_IF to interface 2
+00:00:05.743 [INF] AutoInterface: Multicast address: FF12:0:D70B:FB1C:16E4:5E39:485E:31E1
+00:00:05.743 [INF] AutoInterface: Discovery token: de6a8272d3dae2afd80b9ff32cb1dbcb4bbf5f511e14123856ff71651f93491d
+00:00:06.301 [DBG] AutoInterface: Sent discovery announce (32 bytes) to FF12:0:D70B:FB1C:16E4:5E39:485E:31E1
+00:00:06.306 [INF] AutoInterface: Received discovery packet from fe80::788b:7fff:fe9b:987d (32 bytes)
+00:00:06.310 [INF] AutoInterface: Valid peer discovered: fe80::788b:7fff:fe9b:987d
+00:00:14.045 [DBG] AutoInterface: Discovery poll (peers=3, socket=48, errno=11)
+```
+
+**Python RNS Log Output**:
+```
+[2025-11-29 19:14:56] [Debug] AutoInterface[Default Interface] added peer fe80::4aca:43ff:fe5a:7dc4 on wlan0
+[2025-11-29 19:15:07] [Debug] Destination <d1e72c5e38c2c430bbb41fe5bcedc3e9> is now 3 hops away via <...> on AutoInterfacePeer[wlan0/fe80::4aca:43ff:fe5a:7dc4]
+```
+
+ESP32 is now both **sending and receiving** multicast discovery packets, establishing full mesh connectivity with Python RNS nodes.
+
+### Files Modified This Session
+
+| File | Changes Summary |
+|------|----------------|
+| `examples/common/auto_interface/AutoInterface.h:43-45` | Changed `TOKEN_SIZE` from 16 to 32 bytes |
+| `examples/common/auto_interface/AutoInterface.cpp:428-454` | Fixed multicast address calculation (literal 0, hash bytes 2-13) |
+| `examples/common/auto_interface/AutoInterface.cpp:475-483` | Updated token calculation comments (full 32 bytes) |
+| `examples/common/auto_interface/AutoInterface.cpp:537-569` | Get `_if_index` early, use `setsockopt(IPV6_JOIN_GROUP)`, add `IPV6_MULTICAST_IF` |
+| `examples/common/auto_interface/AutoInterface.cpp:634` | Set `sin6_scope_id` in send address |
+| `examples/common/auto_interface/AutoInterface.cpp:685-697` | Updated verification comments and debug output (32 bytes) |
+| `examples/common/auto_interface/AutoInterface.cpp:575-587` | Simplified data socket setup (fallback logic) |
+| `docs/AUTOINTERFACE_ESP32.md:92-109` | Updated "Remaining Issues" → "Fixed Issues (2025-11-29)" |
+
+### Summary of Root Causes
+
+All issues stemmed from incorrect assumptions about Python RNS's implementation:
+
+1. **Assumption**: "Python RNS doesn't need explicit interface specification for multicast" → **Reality**: Python sets `IPV6_MULTICAST_IF` on lines 254, 444
+2. **Assumption**: "First multicast group comes from hash bytes 0-1" → **Reality**: Python uses literal `"0"` (commented out hash calculation)
+3. **Assumption**: "Discovery token is 16 bytes (half of SHA256)" → **Reality**: Python uses full 32-byte hash
+4. **Assumption**: "`mld6_joingroup_netif()` is sufficient for receiving multicast" → **Reality**: Need `setsockopt(IPV6_JOIN_GROUP)` to link socket to group
+
+### Lessons Learned
+
+1. **Never assume - verify with source code**: The original developer's comments claimed things that weren't true ("Python uses 16 bytes", "IPV6_JOIN_GROUP not supported"). Always check the actual Python RNS source.
+
+2. **Multicast requires two directions of configuration**:
+   - **Send**: `IPV6_MULTICAST_IF` setsockopt + `sin6_scope_id` in destination
+   - **Receive**: `IPV6_JOIN_GROUP` setsockopt (or equivalent platform API that links the socket)
+
+3. **Platform APIs vs Socket APIs**: Low-level platform APIs like `mld6_joingroup_netif()` configure the network stack but don't necessarily configure socket delivery. Use standard socket APIs when available.
+
+4. **tcpdump is essential for multicast debugging**: Being able to see packets on the wire confirmed that ESP32 was sending, but to the wrong address, which led to discovering the multicast address calculation bug.
+
+### Milestone Status
+
+**AutoInterface ESP32 ↔ Python RNS Interoperability: ✅ COMPLETE**
+
+- ✅ Bidirectional multicast discovery working
+- ✅ ESP32 discovering multiple Python peers
+- ✅ Python discovering ESP32 as a peer
+- ✅ Announces propagating through the mesh
+- ✅ Wire protocol byte-compatible with Python RNS
+- ✅ No router configuration changes required
+
+The AutoInterface implementation is now production-ready for ESP32 deployment.
+
+---

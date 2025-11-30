@@ -89,36 +89,24 @@ sendto(_data_socket, data, len, 0, (struct sockaddr*)&peer_addr, sizeof(peer_add
 - Python sends discovery tokens to ESP32 (working)
 - ESP32 receives and processes them correctly
 
-## Remaining Issues
+## Fixed Issues (2025-11-29)
 
-### Multicast Reception on Python Side
+### Multicast Discovery Now Working
 
-Python RNS is not receiving ESP32's multicast discovery announces, even though:
-- tcpdump confirms ESP32 multicast packets reach the network
-- ESP32's discovery token is correct (`de6a8272d3dae2afd80b9ff32cb1dbcb`)
+Previous issue: Python RNS was not receiving ESP32's multicast discovery announces.
 
-This appears to be a network/multicast configuration issue, not an ESP32 code issue. Possible causes:
-- Router not forwarding multicast between wireless clients
-- Python's multicast group membership not working for this address
-- WiFi isolation between clients
+**Root cause**: The ESP32 code was missing the interface specification for multicast sends:
+1. Missing `setsockopt(IPV6_MULTICAST_IF)` on discovery socket
+2. Missing `sin6_scope_id` in destination address for `sendto()`
 
-### Workaround
+Without these, the kernel doesn't know which interface to use for multicast packets.
 
-For testing, manually send discovery tokens to the ESP32 via unicast:
+**Fix applied**:
+- Added `IPV6_MULTICAST_IF` setsockopt in `setup_discovery_socket()`
+- Set `dest_addr.sin6_scope_id = _if_index` in `send_announce()`
+- Get `_if_index` earlier (in discovery socket setup, not just data socket)
 
-```python
-import socket
-import RNS
-
-my_addr = 'fe80::YOUR:ADDR:HERE'
-token = RNS.Identity.full_hash(('reticulum' + my_addr).encode('utf-8'))[:16]
-
-sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-ifindex = socket.if_nametoindex('wlan0')
-esp32_addr = 'fe80::ESP32:ADDR:HERE'
-
-sock.sendto(token, (esp32_addr, 29716, 0, ifindex))
-```
+This matches Python RNS behavior which sets `IPV6_MULTICAST_IF` (lines 254, 444 in AutoInterface.py).
 
 ## Files Modified
 
