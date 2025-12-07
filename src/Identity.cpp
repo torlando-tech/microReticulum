@@ -481,7 +481,9 @@ Recall last heard app_data for a destination hash.
 }
 
 /*static*/ void Identity::persist_data() {
-	if (!Transport::reticulum() || !Transport::reticulum().is_connected_to_shared_instance()) {
+	// Only save if Reticulum is not connected to a shared instance (which handles persistence itself)
+	Reticulum reticulum = Transport::reticulum();
+	if (!reticulum || !reticulum.is_connected_to_shared_instance()) {
 		save_known_destinations();
 	}
 }

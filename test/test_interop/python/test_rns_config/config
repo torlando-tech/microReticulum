@@ -6,10 +6,12 @@
   loglevel = 5
 
 [interfaces]
-  [[UDP Interface]]
-    type = UDPInterface
+  [[TCP Server Interface]]
+    type = TCPServerInterface
     enabled = True
-    listen_ip = 192.168.1.100
-    listen_port = 14243
-    forward_ip = 192.168.1.10
-    forward_port = 14242
+    listen_ip = 127.0.0.1
+    listen_port = 4242
+
+  [[Default Interface]]
+    type = AutoInterface
+    enabled = False

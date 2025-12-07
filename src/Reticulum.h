@@ -143,7 +143,7 @@ namespace RNS {
 		inline static void probe_destination_enabled(bool allow_probes) { __allow_probes = allow_probes; }
 
 		// getters/setters
-		inline bool is_connected_to_shared_instance() const { assert(_object); return _object->_is_connected_to_shared_instance; }
+		inline bool is_connected_to_shared_instance() const { return _object ? _object->_is_connected_to_shared_instance : false; }
 
 	private:
 		class Object {
