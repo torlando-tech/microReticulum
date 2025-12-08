@@ -4,6 +4,7 @@
 #                                                        #
 # Full Reticulum transport node with:                    #
 # - AutoInterface (IPv6 multicast peer discovery)        #
+# - BLEInterface (BLE mesh networking)                   #
 # - TCPClientInterface (backup to Python RNS)            #
 # - Probe support (responds to rnprobe)                  #
 # - Display support                                      #
@@ -18,6 +19,7 @@
 // Interfaces
 #include <TCPClientInterface.h>
 #include <AutoInterface.h>
+#include <BLEInterface.h>
 #include "../common/tcp_interface/tcp_config.h"
 #include "../common/udp_interface/wifi_credentials.h"
 
@@ -78,6 +80,8 @@ RNS::Identity node_identity({RNS::Type::NONE});
 RNS::Destination node_destination({RNS::Type::NONE});
 RNS::Interface auto_interface({RNS::Type::NONE});
 RNS::Interface tcp_interface({RNS::Type::NONE});
+RNS::Interface ble_interface({RNS::Type::NONE});
+BLEInterface* ble_iface = nullptr;  // Keep pointer for identity setup
 RNS::Link active_link({RNS::Type::NONE});
 
 // Link callbacks
@@ -173,6 +177,16 @@ void setup() {
     auto_interface.start();
     RNS::log("AutoInterface started (MODE_FULL)");
 
+    // Initialize BLEInterface (BLE mesh networking)
+    ble_iface = new BLEInterface("BLE");
+    ble_iface->setDeviceName("TBS-Node");
+    ble_iface->setRole(RNS::BLE::Role::DUAL);
+    ble_interface = ble_iface;
+    ble_interface.mode(RNS::Type::Interface::MODE_FULL);
+    RNS::Transport::register_interface(ble_interface);
+    ble_interface.start();
+    RNS::log("BLEInterface started (MODE_FULL, dual-mode)");
+
     // Start Reticulum
     reticulum.start();
     RNS::log("Reticulum started");
@@ -188,6 +202,13 @@ void setup() {
     );
     node_destination.set_link_established_callback(on_link_established);
     node_destination.set_proof_strategy(RNS::Type::Destination::PROVE_ALL);
+
+    // Set BLE local identity (first 16 bytes of identity hash for handshake)
+    if (ble_iface) {
+        RNS::Bytes ble_id = node_identity.hash();
+        ble_id.resize(16);
+        ble_iface->setLocalIdentity(ble_id);
+    }
 
     RNS::log("Transport Node ready");
     RNS::log("  Destination: " + node_destination.hash().toHex());
