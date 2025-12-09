@@ -183,7 +183,10 @@ Link::Link(const Destination& destination /*= {Type::NONE}*/, Callbacks::establi
 }
 
 /*static*/ Link Link::validate_request( const Destination& owner, const Bytes& data, const Packet& packet) {
-	if (data.size() == ECPUBSIZE) {
+	// Support both old format (64 bytes) and new format (67 bytes with MTU/mode signalling)
+	DEBUGF("Link::validate_request: data size = %zu, ECPUBSIZE = %d, ECPUBSIZE+LINK_MTU_SIZE = %d",
+		   data.size(), ECPUBSIZE, ECPUBSIZE + LINK_MTU_SIZE);
+	if (data.size() == ECPUBSIZE || data.size() == ECPUBSIZE + LINK_MTU_SIZE) {
 		try {
 			Link link({Type::NONE}, nullptr, nullptr, owner, data.left(ECPUBSIZE/2), data.mid(ECPUBSIZE/2, ECPUBSIZE/2));
 			link.set_link_id(packet);
