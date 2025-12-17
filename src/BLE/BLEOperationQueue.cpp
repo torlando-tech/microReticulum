@@ -26,7 +26,7 @@ void BLEOperationQueue::enqueue(GATTOperation op) {
 
 bool BLEOperationQueue::process() {
     // Check for timeout on current operation
-    if (_current_op.has_value()) {
+    if (_has_current_op) {
         checkTimeout();
         return false;  // Still busy
     }
@@ -38,9 +38,10 @@ bool BLEOperationQueue::process() {
 
     // Dequeue next operation
     _current_op = std::move(_queue.front());
+    _has_current_op = true;
     _queue.pop();
 
-    GATTOperation& op = _current_op.value();
+    GATTOperation& op = _current_op;
     op.started_at = Utilities::OS::time();
 
     TRACE("BLEOperationQueue: Starting operation type " +
@@ -54,7 +55,7 @@ bool BLEOperationQueue::process() {
         if (op.callback) {
             op.callback(OperationResult::ERROR, Bytes());
         }
-        _current_op.reset();
+        _has_current_op = false;
         return false;
     }
 
@@ -62,12 +63,12 @@ bool BLEOperationQueue::process() {
 }
 
 void BLEOperationQueue::complete(OperationResult result, const Bytes& response_data) {
-    if (!_current_op.has_value()) {
+    if (!_has_current_op) {
         WARNING("BLEOperationQueue: complete() called with no current operation");
         return;
     }
 
-    GATTOperation& op = _current_op.value();
+    GATTOperation& op = _current_op;
 
     double duration = Utilities::OS::time() - op.started_at;
     TRACE("BLEOperationQueue: Operation completed in " +
@@ -80,7 +81,7 @@ void BLEOperationQueue::complete(OperationResult result, const Bytes& response_d
     }
 
     // Clear current operation
-    _current_op.reset();
+    _has_current_op = false;
 }
 
 void BLEOperationQueue::clearForConnection(uint16_t conn_handle) {
@@ -104,11 +105,11 @@ void BLEOperationQueue::clearForConnection(uint16_t conn_handle) {
     _queue = std::move(remaining);
 
     // Also cancel current operation if it matches
-    if (_current_op.has_value() && _current_op->conn_handle == conn_handle) {
-        if (_current_op->callback) {
-            _current_op->callback(OperationResult::DISCONNECTED, Bytes());
+    if (_has_current_op && _current_op.conn_handle == conn_handle) {
+        if (_current_op.callback) {
+            _current_op.callback(OperationResult::DISCONNECTED, Bytes());
         }
-        _current_op.reset();
+        _has_current_op = false;
     }
 
     TRACE("BLEOperationQueue: Cleared operations for connection " +
@@ -127,22 +128,22 @@ void BLEOperationQueue::clear() {
     }
 
     // Cancel current operation
-    if (_current_op.has_value()) {
-        if (_current_op->callback) {
-            _current_op->callback(OperationResult::DISCONNECTED, Bytes());
+    if (_has_current_op) {
+        if (_current_op.callback) {
+            _current_op.callback(OperationResult::DISCONNECTED, Bytes());
         }
-        _current_op.reset();
+        _has_current_op = false;
     }
 
     TRACE("BLEOperationQueue: Cleared all operations");
 }
 
 void BLEOperationQueue::checkTimeout() {
-    if (!_current_op.has_value()) {
+    if (!_has_current_op) {
         return;
     }
 
-    GATTOperation& op = _current_op.value();
+    GATTOperation& op = _current_op;
     double elapsed = Utilities::OS::time() - op.started_at;
     double timeout_sec = op.timeout_ms / 1000.0;
 

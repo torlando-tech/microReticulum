@@ -17,7 +17,6 @@
 #include "../Utilities/OS.h"
 
 #include <queue>
-#include <optional>
 #include <functional>
 
 namespace RNS { namespace BLE {
@@ -62,14 +61,14 @@ public:
     /**
      * @brief Check if operation is in progress
      */
-    bool isBusy() const { return _current_op.has_value(); }
+    bool isBusy() const { return _has_current_op; }
 
     /**
      * @brief Get current operation (if any)
      * @return Pointer to current operation, or nullptr if none
      */
     const GATTOperation* currentOperation() const {
-        return _current_op.has_value() ? &_current_op.value() : nullptr;
+        return _has_current_op ? &_current_op : nullptr;
     }
 
     /**
@@ -117,7 +116,8 @@ private:
     void checkTimeout();
 
     std::queue<GATTOperation> _queue;
-    std::optional<GATTOperation> _current_op;
+    GATTOperation _current_op;
+    bool _has_current_op = false;
     uint32_t _default_timeout_ms = 5000;
 };
 
