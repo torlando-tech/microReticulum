@@ -177,10 +177,17 @@ void setup() {
     auto_interface.start();
     RNS::log("AutoInterface started (MODE_FULL)");
 
+    // Create node identity early (needed for BLE handshake)
+    node_identity = RNS::Identity();
+
     // Initialize BLEInterface (BLE mesh networking)
     ble_iface = new BLEInterface("BLE");
     ble_iface->setDeviceName("TBS-Node");
     ble_iface->setRole(RNS::BLE::Role::DUAL);
+    // Set BLE local identity BEFORE start (required for handshake)
+    RNS::Bytes ble_id = node_identity.hash();
+    ble_id.resize(16);
+    ble_iface->setLocalIdentity(ble_id);
     ble_interface = ble_iface;
     ble_interface.mode(RNS::Type::Interface::MODE_FULL);
     RNS::Transport::register_interface(ble_interface);
@@ -191,8 +198,7 @@ void setup() {
     reticulum.start();
     RNS::log("Reticulum started");
 
-    // Create node identity and destination
-    node_identity = RNS::Identity();
+    // Create node destination
     node_destination = RNS::Destination(
         node_identity,
         RNS::Type::Destination::IN,
@@ -202,13 +208,6 @@ void setup() {
     );
     node_destination.set_link_established_callback(on_link_established);
     node_destination.set_proof_strategy(RNS::Type::Destination::PROVE_ALL);
-
-    // Set BLE local identity (first 16 bytes of identity hash for handshake)
-    if (ble_iface) {
-        RNS::Bytes ble_id = node_identity.hash();
-        ble_id.resize(16);
-        ble_iface->setLocalIdentity(ble_id);
-    }
 
     RNS::log("Transport Node ready");
     RNS::log("  Destination: " + node_destination.hash().toHex());
