@@ -200,5 +200,8 @@ private:
     double _last_maintenance = 0;
 
     // Thread safety for callbacks from BLE stack
-    mutable std::mutex _mutex;
+    // Using recursive_mutex because handleIncomingData holds the lock while
+    // calling processReceivedData, which can trigger onHandshakeComplete callback
+    // that also needs the lock
+    mutable std::recursive_mutex _mutex;
 };
