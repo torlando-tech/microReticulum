@@ -159,7 +159,7 @@ void BLEInterface::send_outgoing(const Bytes& data) {
         return;
     }
 
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
     // Get all connected peers
     auto connected_peers = _peer_manager.getConnectedPeers();
@@ -227,7 +227,7 @@ bool BLEInterface::sendToPeer(const Bytes& peer_identity, const Bytes& data) {
 //=============================================================================
 
 size_t BLEInterface::peerCount() const {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     return _peer_manager.connectedCount();
 }
 
@@ -296,7 +296,7 @@ void BLEInterface::setupCallbacks() {
 }
 
 void BLEInterface::onScanResult(const ScanResult& result) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
     if (!result.has_reticulum_service) {
         return;
@@ -310,7 +310,7 @@ void BLEInterface::onScanResult(const ScanResult& result) {
 }
 
 void BLEInterface::onConnected(const ConnectionHandle& conn) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
     Bytes mac = conn.peer_address.toBytes();
 
@@ -326,7 +326,7 @@ void BLEInterface::onConnected(const ConnectionHandle& conn) {
 }
 
 void BLEInterface::onDisconnected(const ConnectionHandle& conn, uint8_t reason) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
     Bytes identity = _identity_manager.getIdentityForMac(conn.peer_address.toBytes());
 
@@ -344,7 +344,7 @@ void BLEInterface::onDisconnected(const ConnectionHandle& conn, uint8_t reason) 
 }
 
 void BLEInterface::onMTUChanged(const ConnectionHandle& conn, uint16_t mtu) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
     Bytes mac = conn.peer_address.toBytes();
     _peer_manager.setPeerMTU(mac, mtu);
@@ -363,7 +363,7 @@ void BLEInterface::onMTUChanged(const ConnectionHandle& conn, uint16_t mtu) {
 }
 
 void BLEInterface::onServicesDiscovered(const ConnectionHandle& conn, bool success) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
     if (!success) {
         WARNING("BLEInterface: Service discovery failed for " + conn.peer_address.toString());
@@ -386,7 +386,7 @@ void BLEInterface::onDataReceived(const ConnectionHandle& conn, const Bytes& dat
 }
 
 void BLEInterface::onCentralConnected(const ConnectionHandle& conn) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
     Bytes mac = conn.peer_address.toBytes();
 
@@ -419,7 +419,7 @@ void BLEInterface::onWriteReceived(const ConnectionHandle& conn, const Bytes& da
 //=============================================================================
 
 void BLEInterface::onHandshakeComplete(const Bytes& mac, const Bytes& identity, bool is_central) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
     // Update peer manager with identity
     _peer_manager.setPeerIdentity(mac, identity);
@@ -435,7 +435,7 @@ void BLEInterface::onHandshakeComplete(const Bytes& mac, const Bytes& identity, 
 }
 
 void BLEInterface::onHandshakeFailed(const Bytes& mac, const std::string& reason) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
     WARNING("BLEInterface: Handshake failed with " +
             BLEAddress(mac.data()).toString() + ": " + reason);
@@ -507,7 +507,7 @@ void BLEInterface::sendKeepalives() {
 }
 
 void BLEInterface::performMaintenance() {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
     // Check reassembly timeouts
     _reassembler.checkTimeouts();
@@ -529,7 +529,7 @@ void BLEInterface::performMaintenance() {
 }
 
 void BLEInterface::handleIncomingData(const ConnectionHandle& conn, const Bytes& data) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
     Bytes mac = conn.peer_address.toBytes();
 
