@@ -280,6 +280,12 @@ void TCPClientInterface::handle_disconnect() {
 }
 
 /*virtual*/ void TCPClientInterface::loop() {
+    static int loop_count = 0;
+    loop_count++;
+    if (loop_count % 100 == 1) {
+        DEBUG("TCPClientInterface::loop() #" + std::to_string(loop_count) + ", online=" + std::to_string(_online) + ", socket=" + std::to_string(_socket));
+    }
+
     // Handle reconnection if not connected
     if (!_online) {
         if (_initiator) {
@@ -314,16 +320,22 @@ void TCPClientInterface::handle_disconnect() {
     uint8_t buf[4096];
     ssize_t len = recv(_socket, buf, sizeof(buf), MSG_DONTWAIT);
     if (len > 0) {
+        DEBUG("TCPClientInterface: Received " + std::to_string(len) + " bytes");
         _frame_buffer.append(buf, len);
     } else if (len == 0) {
         // Connection closed by peer
+        DEBUG("TCPClientInterface: recv returned 0 - connection closed");
         handle_disconnect();
         return;
-    } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
-        // Socket error
-        ERROR("TCPClientInterface: recv error " + std::to_string(errno));
-        handle_disconnect();
-        return;
+    } else {
+        int err = errno;
+        if (err != EAGAIN && err != EWOULDBLOCK) {
+            // Socket error
+            ERROR("TCPClientInterface: recv error " + std::to_string(err));
+            handle_disconnect();
+            return;
+        }
+        // EAGAIN/EWOULDBLOCK - normal for non-blocking, just no data yet
     }
 #endif
 

@@ -827,14 +827,23 @@ bool NimBLEPlatform::setupAdvertising() {
         return false;
     }
 
-    _advertising_obj->addServiceUUID(UUID::SERVICE);
     _advertising_obj->setMinInterval(_config.adv_interval_min_ms * 1000 / 625);  // Convert to 0.625ms units
     _advertising_obj->setMaxInterval(_config.adv_interval_max_ms * 1000 / 625);
 
-    // NimBLE 2.x: Set scan response data with device name
+    // NimBLE 2.x: Explicitly build advertising data with service UUID
+    // This ensures the UUID appears in the main advertising packet (not just scan response)
+    // Required for Android ScanFilter.setServiceUuid() to detect the device
+    NimBLEAdvertisementData advertiseData;
+    advertiseData.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
+    advertiseData.setCompleteServices(BLEUUID(UUID::SERVICE));
+    _advertising_obj->setAdvertisementData(advertiseData);
+
+    // Set scan response data with device name (separate 31-byte payload)
     NimBLEAdvertisementData scanResponseData;
     scanResponseData.setName(_config.device_name);
     _advertising_obj->setScanResponseData(scanResponseData);
+
+    DEBUG("NimBLEPlatform: Advertising configured with service UUID in main packet");
 
     return true;
 }

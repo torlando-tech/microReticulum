@@ -73,12 +73,21 @@ namespace RNS { namespace Cryptography {
 */
 		X25519PrivateKey(const Bytes& privateKey) {
 			if (privateKey) {
-				// use specified private key
-				_privateKey = privateKey;
-				// similar to derive public key from private key
-				// second param "f" is secret
-				//eval(uint8_t result[32], const uint8_t s[32], const uint8_t x[32])
-				// derive public key from private key
+				// Copy the private key and apply X25519 scalar clamping
+				// This is required for Python interop - Python's cryptography
+				// library applies clamping automatically
+				if (privateKey.size() >= 32) {
+					// Copy bytes with clamping applied
+					uint8_t clamped[32];
+					memcpy(clamped, privateKey.data(), 32);
+					clamped[0] &= 0xF8;   // Clear bottom 3 bits
+					clamped[31] &= 0x7F; // Clear top bit
+					clamped[31] |= 0x40; // Set second-to-top bit
+					_privateKey.assign(clamped, 32);
+				} else {
+					_privateKey = privateKey;
+				}
+				// derive public key from clamped private key
 				Curve25519::eval(_publicKey.writable(32), _privateKey.data(), 0);
 			}
 			else {
