@@ -1,0 +1,252 @@
+// Copyright (c) 2024 microReticulum contributors
+// SPDX-License-Identifier: MIT
+
+#include "Keyboard.h"
+
+#ifdef ARDUINO
+
+#include "../../Log.h"
+
+using namespace RNS;
+
+namespace Hardware {
+namespace TDeck {
+
+TwoWire* Keyboard::_wire = nullptr;
+bool Keyboard::_initialized = false;
+char Keyboard::_key_buffer[Kbd::MAX_KEYS_BUFFERED];
+uint8_t Keyboard::_buffer_head = 0;
+uint8_t Keyboard::_buffer_tail = 0;
+uint8_t Keyboard::_buffer_count = 0;
+uint32_t Keyboard::_last_poll_time = 0;
+
+bool Keyboard::init(TwoWire& wire) {
+    if (_initialized) {
+        return true;
+    }
+
+    INFO("Initializing T-Deck keyboard");
+
+    // Initialize hardware first
+    if (!init_hardware_only(wire)) {
+        return false;
+    }
+
+    // Register LVGL input device
+    static lv_indev_drv_t indev_drv;
+    lv_indev_drv_init(&indev_drv);
+    indev_drv.type = LV_INDEV_TYPE_KEYPAD;
+    indev_drv.read_cb = lvgl_read_cb;
+
+    lv_indev_t* indev = lv_indev_drv_register(&indev_drv);
+    if (!indev) {
+        ERROR("Failed to register keyboard with LVGL");
+        return false;
+    }
+
+    INFO("Keyboard initialized successfully");
+    return true;
+}
+
+bool Keyboard::init_hardware_only(TwoWire& wire) {
+    if (_initialized) {
+        return true;
+    }
+
+    INFO("Initializing keyboard hardware");
+
+    _wire = &wire;
+
+    // I2C should already be initialized by caller
+    // Try to read firmware version to verify communication
+    uint8_t version = get_firmware_version();
+    if (version == 0) {
+        WARNING("  Could not read keyboard firmware version (may not be critical)");
+    } else {
+        INFO(("  Keyboard firmware version: " + String(version)).c_str());
+    }
+
+    // Clear any pending keys
+    clear_buffer();
+
+    _initialized = true;
+    INFO("  Keyboard hardware ready");
+    return true;
+}
+
+uint8_t Keyboard::poll() {
+    if (!_initialized) {
+        return 0;
+    }
+
+    uint32_t now = millis();
+    if (now - _last_poll_time < Kbd::POLL_INTERVAL_MS) {
+        return 0;  // Don't poll too frequently
+    }
+    _last_poll_time = now;
+
+    // Read key count
+    uint8_t key_count = 0;
+    if (!read_register(Register::REG_KEY_COUNT, &key_count)) {
+        return 0;
+    }
+
+    if (key_count == 0) {
+        return 0;
+    }
+
+    // Read keys from device
+    uint8_t keys[Kbd::MAX_KEYS_BUFFERED];
+    if (!read_registers(Register::REG_KEY_DATA, keys, key_count)) {
+        return 0;
+    }
+
+    // Add keys to buffer
+    uint8_t added = 0;
+    for (uint8_t i = 0; i < key_count; i++) {
+        if (keys[i] != KEY_NONE) {
+            buffer_push((char)keys[i]);
+            added++;
+        }
+    }
+
+    return added;
+}
+
+char Keyboard::read_key() {
+    if (_buffer_count == 0) {
+        return 0;
+    }
+    return buffer_pop();
+}
+
+bool Keyboard::available() {
+    return _buffer_count > 0;
+}
+
+uint8_t Keyboard::get_key_count() {
+    return _buffer_count;
+}
+
+void Keyboard::clear_buffer() {
+    _buffer_head = 0;
+    _buffer_tail = 0;
+    _buffer_count = 0;
+}
+
+uint8_t Keyboard::get_firmware_version() {
+    uint8_t version = 0;
+    if (!read_register(Register::REG_VERSION, &version)) {
+        return 0;
+    }
+    return version;
+}
+
+void Keyboard::lvgl_read_cb(lv_indev_drv_t* drv, lv_indev_data_t* data) {
+    // Poll for new keys
+    poll();
+
+    // Read next key from buffer
+    char key = read_key();
+
+    if (key != 0) {
+        data->state = LV_INDEV_STATE_PRESSED;
+        data->key = key;
+    } else {
+        data->state = LV_INDEV_STATE_RELEASED;
+        data->key = 0;
+    }
+
+    // Continue reading is set automatically by LVGL based on state
+    data->continue_reading = (available() > 0);
+}
+
+bool Keyboard::write_register(uint8_t reg, uint8_t value) {
+    if (!_wire) {
+        return false;
+    }
+
+    _wire->beginTransmission(I2C::KEYBOARD_ADDR);
+    _wire->write(reg);
+    _wire->write(value);
+    uint8_t result = _wire->endTransmission();
+
+    return (result == 0);
+}
+
+bool Keyboard::read_register(uint8_t reg, uint8_t* value) {
+    if (!_wire) {
+        return false;
+    }
+
+    // Write register address
+    _wire->beginTransmission(I2C::KEYBOARD_ADDR);
+    _wire->write(reg);
+    uint8_t result = _wire->endTransmission(false);  // Send repeated start
+
+    if (result != 0) {
+        return false;
+    }
+
+    // Read register value
+    if (_wire->requestFrom(I2C::KEYBOARD_ADDR, (uint8_t)1) != 1) {
+        return false;
+    }
+
+    *value = _wire->read();
+    return true;
+}
+
+bool Keyboard::read_registers(uint8_t reg, uint8_t* buffer, size_t len) {
+    if (!_wire) {
+        return false;
+    }
+
+    // Write register address
+    _wire->beginTransmission(I2C::KEYBOARD_ADDR);
+    _wire->write(reg);
+    uint8_t result = _wire->endTransmission(false);  // Send repeated start
+
+    if (result != 0) {
+        return false;
+    }
+
+    // Read register values
+    if (_wire->requestFrom(I2C::KEYBOARD_ADDR, (uint8_t)len) != len) {
+        return false;
+    }
+
+    for (size_t i = 0; i < len; i++) {
+        buffer[i] = _wire->read();
+    }
+
+    return true;
+}
+
+void Keyboard::buffer_push(char key) {
+    if (_buffer_count >= Kbd::MAX_KEYS_BUFFERED) {
+        // Buffer full, drop oldest key
+        buffer_pop();
+    }
+
+    _key_buffer[_buffer_tail] = key;
+    _buffer_tail = (_buffer_tail + 1) % Kbd::MAX_KEYS_BUFFERED;
+    _buffer_count++;
+}
+
+char Keyboard::buffer_pop() {
+    if (_buffer_count == 0) {
+        return 0;
+    }
+
+    char key = _key_buffer[_buffer_head];
+    _buffer_head = (_buffer_head + 1) % Kbd::MAX_KEYS_BUFFERED;
+    _buffer_count--;
+
+    return key;
+}
+
+} // namespace TDeck
+} // namespace Hardware
+
+#endif // ARDUINO

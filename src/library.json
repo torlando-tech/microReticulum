@@ -1,0 +1,41 @@
+{
+    "name": "microReticulum",
+    "version": "0.1.0",
+    "description": "Lightweight C++ implementation of Reticulum Network Stack",
+    "keywords": "reticulum, mesh, network, lora, ble",
+    "authors": [
+        {
+            "name": "microReticulum contributors"
+        }
+    ],
+    "license": "MIT",
+    "frameworks": ["arduino"],
+    "platforms": "*",
+    "dependencies": [
+        {
+            "name": "ArduinoJson",
+            "version": "^7.4.2"
+        },
+        {
+            "name": "MsgPack",
+            "version": "^0.4.2"
+        },
+        {
+            "name": "Crypto",
+            "version": "^0.4.0"
+        }
+    ],
+    "build": {
+        "flags": "-std=gnu++11",
+        "srcFilter": [
+            "+<*.cpp>",
+            "+<*/*.cpp>",
+            "+<*/*/*.cpp>",
+            "-<BLE/*.cpp>",
+            "-<Hardware/TDeck/*.cpp>",
+            "-<UI/*.cpp>",
+            "-<UI/*/*.cpp>",
+            "-<UI/*/*/*.cpp>"
+        ]
+    }
+}

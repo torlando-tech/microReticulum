@@ -268,7 +268,7 @@ using namespace RNS::Utilities;
 							// If we are connected to a shared instance, it will take
 							// care of sending out a new path request. If not, we will
 							// send one directly.
-							if (!_owner.is_connected_to_shared_instance()) {
+							if (_owner && !_owner.is_connected_to_shared_instance()) {
 								double last_path_request = 0;
 								auto iter = _path_requests.find(link.destination().hash());
 								if (iter != _path_requests.end()) {
@@ -752,7 +752,7 @@ using namespace RNS::Utilities;
 		// are "behind" a shared instance, we need to get that instance
 		// to transport it onto the network.
         //elif Transport.destination_table[packet.destination_hash][2] == 1 and Transport.owner.is_connected_to_shared_instance:
-		else if (destination_entry._hops == 1 && _owner.is_connected_to_shared_instance()) {
+		else if (destination_entry._hops == 1 && _owner && _owner.is_connected_to_shared_instance()) {
 			TRACE("Transport::outbound: Sending packet for directly connected interface to shared instance...");
 			if (packet.header_type() == Type::Packet::HEADER_1) {
 				// Insert packet into transport
@@ -3405,7 +3405,7 @@ will announce it.
 #if defined(RNS_USE_FS) && defined(RNS_PERSIST_PATHS)
 	char destination_table_path[Type::Reticulum::FILEPATH_MAXSIZE];
 	snprintf(destination_table_path, Type::Reticulum::FILEPATH_MAXSIZE, "%s/destination_table", Reticulum::_storagepath);
-	if (!_owner.is_connected_to_shared_instance() && OS::file_exists(destination_table_path)) {
+	if (_owner && !_owner.is_connected_to_shared_instance() && OS::file_exists(destination_table_path)) {
 /*p
 		serialised_destinations = []
 		try:
@@ -3518,7 +3518,8 @@ TRACEF("Transport::start: buffer size %d bytes", Persistence::_buffer.size());
 /*static*/ bool Transport::write_path_table() {
 	DEBUG("Transport::write_path_table");
 
-	if (Transport::_owner.is_connected_to_shared_instance()) {
+	// Check if owner is valid before accessing its methods
+	if (!Transport::_owner || Transport::_owner.is_connected_to_shared_instance()) {
 		return true;
 	}
 
@@ -3900,7 +3901,7 @@ TRACE("Transport::write_path_table: buffer size " + std::to_string(Persistence::
 
 /*static*/ void Transport::exit_handler() {
 	TRACE("Transport::exit_handler()");
-	if (!_owner.is_connected_to_shared_instance()) {
+	if (_owner && !_owner.is_connected_to_shared_instance()) {
 		persist_data();
 	}
 }

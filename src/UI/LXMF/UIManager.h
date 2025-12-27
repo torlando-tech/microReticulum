@@ -1,0 +1,139 @@
+// Copyright (c) 2024 microReticulum contributors
+// SPDX-License-Identifier: MIT
+
+#ifndef UI_LXMF_UIMANAGER_H
+#define UI_LXMF_UIMANAGER_H
+
+#ifdef ARDUINO
+#include <Arduino.h>
+#include <lvgl.h>
+#include "ConversationListScreen.h"
+#include "ChatScreen.h"
+#include "ComposeScreen.h"
+#include "../../LXMF/LXMRouter.h"
+#include "../../LXMF/MessageStore.h"
+#include "../../Reticulum.h"
+
+namespace UI {
+namespace LXMF {
+
+/**
+ * UI Manager
+ *
+ * Manages all LXMF UI screens and coordinates between:
+ * - UI screens (ConversationList, Chat, Compose)
+ * - LXMF router (message sending/receiving)
+ * - Message store (persistence)
+ * - Reticulum (network layer)
+ *
+ * Responsibilities:
+ * - Screen navigation
+ * - Message delivery callbacks
+ * - UI updates on message events
+ * - Integration with LXMF router
+ */
+class UIManager {
+public:
+    /**
+     * Create UI manager
+     * @param reticulum Reticulum instance
+     * @param router LXMF router instance
+     * @param store Message store instance
+     */
+    UIManager(RNS::Reticulum& reticulum, ::LXMF::LXMRouter& router, ::LXMF::MessageStore& store);
+
+    /**
+     * Destructor
+     */
+    ~UIManager();
+
+    /**
+     * Initialize UI and show conversation list
+     * @return true if initialization successful
+     */
+    bool init();
+
+    /**
+     * Update UI (call periodically from main loop)
+     * Processes pending LXMF messages and updates UI
+     */
+    void update();
+
+    /**
+     * Show conversation list screen
+     */
+    void show_conversation_list();
+
+    /**
+     * Show chat screen for a specific peer
+     * @param peer_hash Peer destination hash
+     */
+    void show_chat(const RNS::Bytes& peer_hash);
+
+    /**
+     * Show compose new message screen
+     */
+    void show_compose();
+
+    /**
+     * Handle incoming LXMF message
+     * Called by LXMF router delivery callback
+     * @param message Received message
+     */
+    void on_message_received(::LXMF::LXMessage& message);
+
+    /**
+     * Handle message delivery confirmation
+     * @param message Message that was delivered
+     */
+    void on_message_delivered(::LXMF::LXMessage& message);
+
+    /**
+     * Handle message delivery failure
+     * @param message Message that failed to deliver
+     */
+    void on_message_failed(::LXMF::LXMessage& message);
+
+private:
+    enum Screen {
+        SCREEN_CONVERSATION_LIST,
+        SCREEN_CHAT,
+        SCREEN_COMPOSE
+    };
+
+    RNS::Reticulum& _reticulum;
+    ::LXMF::LXMRouter& _router;
+    ::LXMF::MessageStore& _store;
+
+    Screen _current_screen;
+    RNS::Bytes _current_peer_hash;
+
+    ConversationListScreen* _conversation_list_screen;
+    ChatScreen* _chat_screen;
+    ComposeScreen* _compose_screen;
+
+    bool _initialized;
+
+    // Screen navigation handlers
+    void on_conversation_selected(const RNS::Bytes& peer_hash);
+    void on_new_message();
+    void on_settings();
+    static void settings_msgbox_cb(lv_event_t* event);
+    void on_back_to_conversation_list();
+    void on_send_message_from_chat(const String& content);
+    void on_send_message_from_compose(const RNS::Bytes& dest_hash, const String& message);
+    void on_cancel_compose();
+    void on_info(const RNS::Bytes& peer_hash);
+
+    // LXMF message handling
+    void send_message(const RNS::Bytes& dest_hash, const String& content);
+
+    // UI updates
+    void refresh_current_screen();
+};
+
+} // namespace LXMF
+} // namespace UI
+
+#endif // ARDUINO
+#endif // UI_LXMF_UIMANAGER_H

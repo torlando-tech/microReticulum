@@ -6,6 +6,7 @@
 #include "Identity.h"
 #include "Bytes.h"
 #include "Type.h"
+#include "Cryptography/Ratchet.h"
 
 #include <memory>
 #include <string>
@@ -178,6 +179,13 @@ namespace RNS {
 		virtual const Bytes decrypt(const Bytes& data);
 		virtual const Bytes sign(const Bytes& message);
 
+		// Ratchet support for forward secrecy
+		void enable_ratchets(const char* ratchets_path);
+		void disable_ratchets();
+		void rotate_ratchets(bool force = false);
+		Bytes get_latest_ratchet_id() const;
+		Bytes get_ratchet_public_bytes() const;
+
 		// CBA
 		bool has_link(const Link& link);
 		void remove_link(const Link& link);
@@ -249,6 +257,15 @@ namespace RNS {
 			//double _last_outbound = 0.0;
 			//uint16_t _tx = 0;
 			//uint32_t _txbytes = 0;
+
+			// Ratchet support for forward secrecy
+			std::vector<Cryptography::Ratchet> _ratchets;  // Circular buffer, max 128
+			Bytes _latest_ratchet_id;
+			double _latest_ratchet_time = 0.0;
+			double _ratchet_interval = Cryptography::Ratchet::DEFAULT_RATCHET_INTERVAL;
+			std::string _ratchets_path;
+			bool _ratchets_enabled = false;
+			bool _enforce_ratchets = false;
 
 		friend class Destination;
 		};

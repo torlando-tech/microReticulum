@@ -43,6 +43,10 @@ namespace RNS {
 		// CBA
 		static uint16_t _known_destinations_maxsize;
 
+		// Ratchet cache for forward secrecy
+		static std::map<Bytes, Bytes> _known_ratchets;  // dest_hash -> ratchet_public_key
+		static bool _saving_known_ratchets;
+
 	public:
 		Identity(bool create_keys = true);
 		Identity(Type::NoneConstructor none) {
@@ -115,6 +119,12 @@ namespace RNS {
 		static void load_known_destinations();
 		// CBA
 		static void cull_known_destinations();
+
+		// Ratchet management
+		static void remember_ratchet(const Bytes& destination_hash, const Bytes& ratchet_public_key);
+		static Bytes recall_ratchet(const Bytes& destination_hash);
+		static bool save_known_ratchets();
+		static void load_known_ratchets();
 
 		/*
 		Get a SHA-256 hash of passed data.

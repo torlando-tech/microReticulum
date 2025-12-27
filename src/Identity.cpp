@@ -26,6 +26,10 @@ using namespace RNS::Utilities;
 /*static*/ //uint16_t Identity::_known_destinations_maxsize = 100;
 /*static*/ uint16_t Identity::_known_destinations_maxsize = 100;
 
+// Ratchet cache static members
+/*static*/ std::map<Bytes, Bytes> Identity::_known_ratchets;
+/*static*/ bool Identity::_saving_known_ratchets = false;
+
 Identity::Identity(bool create_keys /*= true*/) : _object(new Object()) {
 	if (create_keys) {
 		createKeys();
@@ -394,20 +398,54 @@ Recall last heard app_data for a destination hash.
 			//TRACE("Identity::validate_announce: random_hash:      " + random_hash.toHex());
 			Bytes signature = packet.data().mid(KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8, SIGLENGTH/8);
 			//TRACE("Identity::validate_announce: signature:        " + signature.toHex());
+
+			// Extract ratchet public key if present (after signature, before app_data)
+			// Ratchet is 32 bytes (Cryptography::Ratchet::RATCHET_LENGTH)
+			Bytes ratchet_public_key;
 			Bytes app_data;
-			if (packet.data().size() > (KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8 + SIGLENGTH/8)) {
-				app_data = packet.data().mid(KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8 + SIGLENGTH/8);
+			size_t base_announce_size = KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8 + SIGLENGTH/8;
+			size_t ratchet_size = Cryptography::Ratchet::RATCHET_LENGTH;
+
+			if (packet.data().size() >= base_announce_size + ratchet_size) {
+				// There's enough data for a ratchet - extract it
+				Bytes potential_ratchet = packet.data().mid(base_announce_size, ratchet_size);
+
+				// Check if this looks like a ratchet (not all zeros)
+				// This is a heuristic - ratchets are random X25519 public keys
+				bool has_ratchet = false;
+				for (size_t i = 0; i < potential_ratchet.size(); ++i) {
+					if (potential_ratchet.data()[i] != 0) {
+						has_ratchet = true;
+						break;
+					}
+				}
+
+				if (has_ratchet) {
+					ratchet_public_key = potential_ratchet;
+					DEBUG("Extracted ratchet from announce for " + packet.destination_hash().toHex());
+					DEBUG("  Ratchet public key: " + ratchet_public_key.toHex());
+
+					// App data comes after ratchet
+					if (packet.data().size() > base_announce_size + ratchet_size) {
+						app_data = packet.data().mid(base_announce_size + ratchet_size);
+					}
+				}
+				else {
+					// No ratchet - treat everything after signature as app_data
+					app_data = packet.data().mid(base_announce_size);
+				}
 			}
+			else if (packet.data().size() > base_announce_size) {
+				// Not enough for ratchet - treat as app_data
+				app_data = packet.data().mid(base_announce_size);
+			}
+
 			//TRACE("Identity::validate_announce: app_data:         " + app_data.toHex());
 			//TRACE("Identity::validate_announce: app_data text:    " + app_data.toString());
 
 			Bytes signed_data;
 			signed_data << packet.destination_hash() << public_key << name_hash << random_hash+app_data;
 			//TRACE("Identity::validate_announce: signed_data:      " + signed_data.toHex());
-
-			if (packet.data().size() <= KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8 + SIGLENGTH/8) {
-				app_data.clear();
-			}
 
 			Identity announced_identity(false);
 			announced_identity.load_public_key(public_key);
@@ -434,6 +472,12 @@ Recall last heard app_data for a destination hash.
 					}
 
 					remember(packet.get_hash(), packet.destination_hash(), public_key, app_data);
+
+					// Remember ratchet if one was included in the announce
+					if (ratchet_public_key) {
+						remember_ratchet(packet.destination_hash(), ratchet_public_key);
+					}
+
 					//p del announced_identity
 
 					std::string signal_str;
@@ -658,4 +702,57 @@ void Identity::prove(const Packet& packet, const Destination& destination /*= {T
 
 void Identity::prove(const Packet& packet) const {
 	prove(packet, {Type::NONE});
+}
+
+// Ratchet management for forward secrecy
+
+/*static*/ void Identity::remember_ratchet(const Bytes& destination_hash, const Bytes& ratchet_public_key) {
+	if (ratchet_public_key.size() != Cryptography::Ratchet::RATCHET_LENGTH) {
+		WARNING("Cannot remember ratchet for " + destination_hash.toHex() +
+		        ": invalid ratchet key size " + std::to_string(ratchet_public_key.size()));
+		return;
+	}
+
+	DEBUG("Remembering ratchet for destination " + destination_hash.toHex());
+	DEBUG("  Ratchet public key: " + ratchet_public_key.toHex());
+
+	// Store or update ratchet in cache
+	_known_ratchets[destination_hash] = ratchet_public_key;
+
+	// TODO: Persist to storage
+	// save_known_ratchets();
+}
+
+/*
+Recall ratchet public key for a destination hash.
+
+:param destination_hash: Destination hash as *bytes*.
+:returns: Ratchet public key as *bytes* (32 bytes), or empty Bytes if unknown.
+*/
+/*static*/ Bytes Identity::recall_ratchet(const Bytes& destination_hash) {
+	auto iter = _known_ratchets.find(destination_hash);
+	if (iter != _known_ratchets.end()) {
+		DEBUG("Recalled ratchet for destination " + destination_hash.toHex());
+		DEBUG("  Ratchet public key: " + (*iter).second.toHex());
+		return (*iter).second;
+	}
+	else {
+		DEBUG("No ratchet found for destination " + destination_hash.toHex());
+		return {Bytes::NONE};
+	}
+}
+
+/*static*/ bool Identity::save_known_ratchets() {
+	// TODO: Implement persistence to JSON file
+	// Similar to save_known_destinations()
+	// File format: ~/.reticulum/storage/known_ratchets
+	// JSON structure: { "dest_hash_hex": { "ratchet": "ratchet_hex", "received": timestamp } }
+	DEBUG("Saving known ratchets (persistence not yet implemented)");
+	return true;
+}
+
+/*static*/ void Identity::load_known_ratchets() {
+	// TODO: Implement loading from JSON file
+	// Similar to load_known_destinations()
+	DEBUG("Loading known ratchets (persistence not yet implemented)");
 }

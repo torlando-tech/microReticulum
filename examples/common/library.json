@@ -1,0 +1,16 @@
+{
+    "name": "microReticulum-examples-common",
+    "version": "0.1.0",
+    "description": "Common code for microReticulum examples",
+    "keywords": "reticulum",
+    "license": "MIT",
+    "frameworks": ["arduino"],
+    "platforms": "*",
+    "build": {
+        "flags": "-std=c++11",
+        "srcFilter": [
+            "+<*/*.cpp>",
+            "+<*/*/*.cpp>"
+        ]
+    }
+}

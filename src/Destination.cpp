@@ -279,6 +279,16 @@ Packet Destination::announce(const Bytes& app_data, bool path_response, const In
 
 		announce_data << _object->_identity.get_public_key() << _object->_name_hash << random_hash << signature;
 
+		// Include ratchet public key if ratchets are enabled
+		if (_object->_ratchets_enabled && !_object->_ratchets.empty()) {
+			Bytes ratchet_pub = get_ratchet_public_bytes();
+			if (ratchet_pub) {
+				DEBUG("Including ratchet in announce for " + _object->_hexhash);
+				DEBUG("  Ratchet public key: " + ratchet_pub.toHex());
+				announce_data << ratchet_pub;
+			}
+		}
+
 		if (new_app_data) {
 			announce_data << new_app_data;
 		}
@@ -483,4 +493,142 @@ bool Destination::has_link(const Link& link) {
 void Destination::remove_link(const Link& link) {
 	assert(_object);
 	_object->_links.erase(link);
+}
+
+// Ratchet support for forward secrecy
+
+/*
+Enable ratchets for this destination to provide forward secrecy.
+
+Ratchets rotate X25519 keys at regular intervals (default 30 minutes).
+When enabled, the destination will encrypt packets using ratchets instead
+of the long-term identity key.
+
+:param ratchets_path: Path to directory where ratchets will be persisted
+*/
+void Destination::enable_ratchets(const char* ratchets_path) {
+	assert(_object);
+
+	if (_object->_ratchets_enabled) {
+		WARNING("Ratchets already enabled for destination " + _object->_hexhash);
+		return;
+	}
+
+	_object->_ratchets_path = ratchets_path;
+	_object->_ratchets_enabled = true;
+
+	INFO("Enabling ratchets for destination " + _object->_hexhash);
+	DEBUG("  Ratchets path: " + _object->_ratchets_path);
+
+	// Try to load existing ratchets from storage
+	// TODO: Implement _load_ratchets() to load from JSON file
+
+	// If no ratchets exist, create the first one
+	if (_object->_ratchets.empty()) {
+		rotate_ratchets();
+	}
+}
+
+/*
+Disable ratchets for this destination.
+
+After disabling, the destination will fall back to identity-based encryption.
+*/
+void Destination::disable_ratchets() {
+	assert(_object);
+
+	if (!_object->_ratchets_enabled) {
+		return;
+	}
+
+	INFO("Disabling ratchets for destination " + _object->_hexhash);
+
+	_object->_ratchets_enabled = false;
+	_object->_ratchets.clear();
+	_object->_latest_ratchet_id = {Bytes::NONE};
+	_object->_latest_ratchet_time = 0.0;
+}
+
+/*
+Rotate ratchets for this destination.
+
+Creates a new ratchet and adds it to the front of the ratchets vector.
+Maintains a maximum of 128 ratchets (oldest are discarded).
+
+Ratchets are automatically rotated based on _ratchet_interval (default 30 minutes).
+*/
+void Destination::rotate_ratchets(bool force) {
+	assert(_object);
+
+	if (!_object->_ratchets_enabled) {
+		WARNING("Cannot rotate ratchets - ratchets not enabled for destination " + _object->_hexhash);
+		return;
+	}
+
+	double current_time = Utilities::OS::time();
+
+	// Check if enough time has elapsed since last rotation (unless forced)
+	if (!force && !_object->_ratchets.empty() &&
+	    (current_time - _object->_latest_ratchet_time) < _object->_ratchet_interval) {
+		DEBUG("Skipping ratchet rotation - interval not elapsed");
+		DEBUG("  Time since last: " + std::to_string(current_time - _object->_latest_ratchet_time) + "s");
+		DEBUG("  Interval: " + std::to_string(_object->_ratchet_interval) + "s");
+		return;
+	}
+
+	INFO("Rotating ratchets for destination " + _object->_hexhash);
+
+	// Generate new ratchet
+	Cryptography::Ratchet new_ratchet = Cryptography::Ratchet::generate();
+
+	// Add to front of vector (most recent first)
+	_object->_ratchets.insert(_object->_ratchets.begin(), new_ratchet);
+
+	// Update latest ratchet tracking
+	_object->_latest_ratchet_id = new_ratchet.get_id();
+	_object->_latest_ratchet_time = current_time;
+
+	// Trim to maximum ratchets (128)
+	if (_object->_ratchets.size() > Cryptography::Ratchet::MAX_RATCHETS) {
+		INFO("Trimming ratchets from " + std::to_string(_object->_ratchets.size()) +
+		     " to " + std::to_string(Cryptography::Ratchet::MAX_RATCHETS));
+		_object->_ratchets.resize(Cryptography::Ratchet::MAX_RATCHETS);
+	}
+
+	DEBUG("  Total ratchets: " + std::to_string(_object->_ratchets.size()));
+	DEBUG("  Latest ratchet ID: " + _object->_latest_ratchet_id.toHex());
+
+	// Persist ratchets to storage
+	// TODO: Implement _persist_ratchets() to save to JSON file
+}
+
+/*
+Get the latest ratchet ID for this destination.
+
+:returns: Ratchet ID (10 bytes), or empty Bytes if ratchets not enabled
+*/
+Bytes Destination::get_latest_ratchet_id() const {
+	assert(_object);
+
+	if (!_object->_ratchets_enabled || _object->_ratchets.empty()) {
+		return {Bytes::NONE};
+	}
+
+	return _object->_latest_ratchet_id;
+}
+
+/*
+Get the latest ratchet public bytes for inclusion in announces.
+
+:returns: Ratchet public key (32 bytes), or empty Bytes if ratchets not enabled
+*/
+Bytes Destination::get_ratchet_public_bytes() const {
+	assert(_object);
+
+	if (!_object->_ratchets_enabled || _object->_ratchets.empty()) {
+		return {Bytes::NONE};
+	}
+
+	// Return public key of latest (first) ratchet
+	return _object->_ratchets[0].public_bytes();
 }
