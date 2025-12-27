@@ -48,99 +48,119 @@ ComposeScreen::~ComposeScreen() {
 
 void ComposeScreen::create_header() {
     _header = lv_obj_create(_screen);
-    lv_obj_set_size(_header, LV_PCT(100), 32);
+    lv_obj_set_size(_header, LV_PCT(100), 36);
     lv_obj_align(_header, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(_header, lv_color_hex(0x1E88E5), 0);
+    lv_obj_set_style_bg_color(_header, lv_color_hex(0x1a1a1a), 0);  // Dark header
+    lv_obj_set_style_border_width(_header, 0, 0);
+    lv_obj_set_style_radius(_header, 0, 0);
 
     // Back button
     _btn_back = lv_btn_create(_header);
-    lv_obj_set_size(_btn_back, 40, 24);
+    lv_obj_set_size(_btn_back, 50, 28);
     lv_obj_align(_btn_back, LV_ALIGN_LEFT_MID, 5, 0);
-    lv_obj_set_style_bg_color(_btn_back, lv_color_hex(0x1565C0), 0);  // Darker blue
+    lv_obj_set_style_bg_color(_btn_back, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_bg_color(_btn_back, lv_color_hex(0x444444), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_back, on_back_clicked, LV_EVENT_CLICKED, this);
 
     lv_obj_t* label_back = lv_label_create(_btn_back);
     lv_label_set_text(label_back, LV_SYMBOL_LEFT);
     lv_obj_center(label_back);
-    lv_obj_set_style_text_color(label_back, lv_color_white(), 0);
+    lv_obj_set_style_text_color(label_back, lv_color_hex(0xe0e0e0), 0);
 
     // Title
     lv_obj_t* title = lv_label_create(_header);
     lv_label_set_text(title, "New Message");
-    lv_obj_align(title, LV_ALIGN_LEFT_MID, 50, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_align(title, LV_ALIGN_LEFT_MID, 60, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
 }
 
 void ComposeScreen::create_content_area() {
     _content_area = lv_obj_create(_screen);
-    lv_obj_set_size(_content_area, LV_PCT(100), 156);  // 240 - 32 (header) - 52 (buttons) = 156
-    lv_obj_align(_content_area, LV_ALIGN_TOP_MID, 0, 32);
-    lv_obj_set_style_pad_all(_content_area, 10, 0);
+    lv_obj_set_size(_content_area, LV_PCT(100), 152);
+    lv_obj_align(_content_area, LV_ALIGN_TOP_MID, 0, 36);
+    lv_obj_set_style_pad_all(_content_area, 12, 0);
+    lv_obj_set_style_bg_color(_content_area, lv_color_hex(0x121212), 0);  // Match screen bg
+    lv_obj_set_style_border_width(_content_area, 0, 0);
     lv_obj_clear_flag(_content_area, LV_OBJ_FLAG_SCROLLABLE);
 
     // "To:" label
     lv_obj_t* label_to = lv_label_create(_content_area);
     lv_label_set_text(label_to, "To:");
     lv_obj_align(label_to, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_text_color(label_to, lv_color_hex(0xb0b0b0), 0);
 
     // Destination hash input
     _text_area_dest = lv_textarea_create(_content_area);
-    lv_obj_set_size(_text_area_dest, LV_PCT(100), 40);
-    lv_obj_align(_text_area_dest, LV_ALIGN_TOP_LEFT, 0, 20);
-    lv_textarea_set_placeholder_text(_text_area_dest, "Paste destination hash (32 hex chars)");
+    lv_obj_set_size(_text_area_dest, LV_PCT(100), 36);
+    lv_obj_align(_text_area_dest, LV_ALIGN_TOP_LEFT, 0, 18);
+    lv_textarea_set_placeholder_text(_text_area_dest, "Destination hash (32 hex)");
     lv_textarea_set_one_line(_text_area_dest, true);
     lv_textarea_set_max_length(_text_area_dest, 32);
     lv_textarea_set_accepted_chars(_text_area_dest, "0123456789abcdefABCDEF");
+    // Dark text area styling
+    lv_obj_set_style_bg_color(_text_area_dest, lv_color_hex(0x2a2a2a), 0);
+    lv_obj_set_style_text_color(_text_area_dest, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_border_color(_text_area_dest, lv_color_hex(0x404040), 0);
 
     // "Message:" label
     lv_obj_t* label_message = lv_label_create(_content_area);
     lv_label_set_text(label_message, "Message:");
-    lv_obj_align(label_message, LV_ALIGN_TOP_LEFT, 0, 70);
+    lv_obj_align(label_message, LV_ALIGN_TOP_LEFT, 0, 60);
+    lv_obj_set_style_text_color(label_message, lv_color_hex(0xb0b0b0), 0);
 
     // Message input
     _text_area_message = lv_textarea_create(_content_area);
     lv_obj_set_size(_text_area_message, LV_PCT(100), 70);
-    lv_obj_align(_text_area_message, LV_ALIGN_TOP_LEFT, 0, 90);
-    lv_textarea_set_placeholder_text(_text_area_message, "Type your message here...");
+    lv_obj_align(_text_area_message, LV_ALIGN_TOP_LEFT, 0, 78);
+    lv_textarea_set_placeholder_text(_text_area_message, "Type your message...");
     lv_textarea_set_one_line(_text_area_message, false);
     lv_textarea_set_max_length(_text_area_message, 500);
+    // Dark text area styling
+    lv_obj_set_style_bg_color(_text_area_message, lv_color_hex(0x2a2a2a), 0);
+    lv_obj_set_style_text_color(_text_area_message, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_border_color(_text_area_message, lv_color_hex(0x404040), 0);
 }
 
 void ComposeScreen::create_button_area() {
     _button_area = lv_obj_create(_screen);
     lv_obj_set_size(_button_area, LV_PCT(100), 52);
     lv_obj_align(_button_area, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(_button_area, lv_color_hex(0x212121), 0);
+    lv_obj_set_style_bg_color(_button_area, lv_color_hex(0x1a1a1a), 0);  // Dark
+    lv_obj_set_style_border_width(_button_area, 0, 0);
+    lv_obj_set_style_radius(_button_area, 0, 0);
     lv_obj_set_flex_flow(_button_area, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(_button_area, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     // Cancel button
     _btn_cancel = lv_btn_create(_button_area);
-    lv_obj_set_size(_btn_cancel, 100, 40);
-    lv_obj_set_style_bg_color(_btn_cancel, lv_color_hex(0x757575), 0);  // Gray
+    lv_obj_set_size(_btn_cancel, 110, 36);
+    lv_obj_set_style_bg_color(_btn_cancel, lv_color_hex(0x3a3a3a), 0);
+    lv_obj_set_style_bg_color(_btn_cancel, lv_color_hex(0x4a4a4a), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_cancel, on_cancel_clicked, LV_EVENT_CLICKED, this);
 
     lv_obj_t* label_cancel = lv_label_create(_btn_cancel);
     lv_label_set_text(label_cancel, "Cancel");
     lv_obj_center(label_cancel);
-    lv_obj_set_style_text_color(label_cancel, lv_color_white(), 0);
+    lv_obj_set_style_text_color(label_cancel, lv_color_hex(0xe0e0e0), 0);
 
     // Spacer
     lv_obj_t* spacer = lv_obj_create(_button_area);
-    lv_obj_set_size(spacer, 20, 1);
+    lv_obj_set_size(spacer, 30, 1);
     lv_obj_set_style_bg_opa(spacer, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(spacer, 0, 0);
 
     // Send button
     _btn_send = lv_btn_create(_button_area);
-    lv_obj_set_size(_btn_send, 100, 40);
+    lv_obj_set_size(_btn_send, 110, 36);
     lv_obj_add_event_cb(_btn_send, on_send_clicked, LV_EVENT_CLICKED, this);
-    lv_obj_set_style_bg_color(_btn_send, lv_color_hex(0x4CAF50), 0);  // Green
+    lv_obj_set_style_bg_color(_btn_send, lv_color_hex(0x2e7d32), 0);  // Dark green
+    lv_obj_set_style_bg_color(_btn_send, lv_color_hex(0x388e3c), LV_STATE_PRESSED);
 
     lv_obj_t* label_send = lv_label_create(_btn_send);
     lv_label_set_text(label_send, "Send");
     lv_obj_center(label_send);
-    lv_obj_set_style_text_color(label_send, lv_color_white(), 0);
+    lv_obj_set_style_text_color(label_send, lv_color_hex(0xffffff), 0);
 }
 
 void ComposeScreen::clear() {

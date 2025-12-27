@@ -25,6 +25,8 @@ ConversationListScreen::ConversationListScreen(lv_obj_t* parent)
 
     lv_obj_set_size(_screen, LV_PCT(100), LV_PCT(100));
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(_screen, lv_color_hex(0x121212), 0);
+    lv_obj_set_style_bg_opa(_screen, LV_OPA_COVER, 0);
 
     // Create UI components
     create_header();
@@ -42,51 +44,64 @@ ConversationListScreen::~ConversationListScreen() {
 
 void ConversationListScreen::create_header() {
     _header = lv_obj_create(_screen);
-    lv_obj_set_size(_header, LV_PCT(100), 32);
+    lv_obj_set_size(_header, LV_PCT(100), 36);
     lv_obj_align(_header, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(_header, lv_color_hex(0x1E88E5), 0);
+    lv_obj_set_style_bg_color(_header, lv_color_hex(0x1a1a1a), 0);
+    lv_obj_set_style_border_width(_header, 0, 0);
+    lv_obj_set_style_radius(_header, 0, 0);
 
     // Title
     lv_obj_t* title = lv_label_create(_header);
-    lv_label_set_text(title, "LXMF Messages");
-    lv_obj_align(title, LV_ALIGN_LEFT_MID, 10, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_label_set_text(title, "Messages");
+    lv_obj_align(title, LV_ALIGN_LEFT_MID, 12, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
 
     // New message button
     _btn_new = lv_btn_create(_header);
-    lv_obj_set_size(_btn_new, 50, 24);
-    lv_obj_align(_btn_new, LV_ALIGN_RIGHT_MID, -60, 0);
+    lv_obj_set_size(_btn_new, 55, 28);
+    lv_obj_align(_btn_new, LV_ALIGN_RIGHT_MID, -55, 0);
+    lv_obj_set_style_bg_color(_btn_new, lv_color_hex(0x2e7d32), 0);
+    lv_obj_set_style_bg_color(_btn_new, lv_color_hex(0x388e3c), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_new, on_new_message_clicked, LV_EVENT_CLICKED, this);
 
     lv_obj_t* label_new = lv_label_create(_btn_new);
     lv_label_set_text(label_new, "New");
     lv_obj_center(label_new);
+    lv_obj_set_style_text_color(label_new, lv_color_hex(0xffffff), 0);
 
     // Settings button
     _btn_settings = lv_btn_create(_header);
-    lv_obj_set_size(_btn_settings, 40, 24);
-    lv_obj_align(_btn_settings, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_size(_btn_settings, 40, 28);
+    lv_obj_align(_btn_settings, LV_ALIGN_RIGHT_MID, -8, 0);
+    lv_obj_set_style_bg_color(_btn_settings, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_bg_color(_btn_settings, lv_color_hex(0x444444), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_settings, on_settings_clicked, LV_EVENT_CLICKED, this);
 
     lv_obj_t* label_settings = lv_label_create(_btn_settings);
     lv_label_set_text(label_settings, LV_SYMBOL_SETTINGS);
     lv_obj_center(label_settings);
+    lv_obj_set_style_text_color(label_settings, lv_color_hex(0xe0e0e0), 0);
 }
 
 void ConversationListScreen::create_list() {
     _list = lv_obj_create(_screen);
-    lv_obj_set_size(_list, LV_PCT(100), 176);  // 240 - 32 (header) - 32 (bottom nav) = 176
-    lv_obj_align(_list, LV_ALIGN_TOP_MID, 0, 32);
-    lv_obj_set_style_pad_all(_list, 5, 0);
+    lv_obj_set_size(_list, LV_PCT(100), 168);  // 240 - 36 (header) - 36 (bottom nav)
+    lv_obj_align(_list, LV_ALIGN_TOP_MID, 0, 36);
+    lv_obj_set_style_pad_all(_list, 8, 0);
+    lv_obj_set_style_bg_color(_list, lv_color_hex(0x121212), 0);
+    lv_obj_set_style_border_width(_list, 0, 0);
     lv_obj_set_flex_flow(_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 }
 
 void ConversationListScreen::create_bottom_nav() {
     _bottom_nav = lv_obj_create(_screen);
-    lv_obj_set_size(_bottom_nav, LV_PCT(100), 32);
+    lv_obj_set_size(_bottom_nav, LV_PCT(100), 36);
     lv_obj_align(_bottom_nav, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(_bottom_nav, lv_color_hex(0x212121), 0);
+    lv_obj_set_style_bg_color(_bottom_nav, lv_color_hex(0x1a1a1a), 0);
+    lv_obj_set_style_border_width(_bottom_nav, 0, 0);
+    lv_obj_set_style_radius(_bottom_nav, 0, 0);
     lv_obj_set_flex_flow(_bottom_nav, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(_bottom_nav, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
@@ -95,13 +110,16 @@ void ConversationListScreen::create_bottom_nav() {
 
     for (int i = 0; i < 4; i++) {
         lv_obj_t* btn = lv_btn_create(_bottom_nav);
-        lv_obj_set_size(btn, 60, 24);
-        lv_obj_set_user_data(btn, (void*)(intptr_t)i);  // Store button index
+        lv_obj_set_size(btn, 65, 28);
+        lv_obj_set_user_data(btn, (void*)(intptr_t)i);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x2a2a2a), 0);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x3a3a3a), LV_STATE_PRESSED);
         lv_obj_add_event_cb(btn, on_bottom_nav_clicked, LV_EVENT_CLICKED, this);
 
         lv_obj_t* label = lv_label_create(btn);
         lv_label_set_text(label, icons[i]);
         lv_obj_center(label);
+        lv_obj_set_style_text_color(label, lv_color_hex(0xb0b0b0), 0);
     }
 }
 

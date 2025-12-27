@@ -119,7 +119,7 @@ void Display::init_registers() {
     }
     write_data(madctl);
 
-    // Inversion on (required for some ST7789V panels)
+    // Inversion on (required for ST7789V panels)
     write_command(Command::INVON);
     delay(10);
 
