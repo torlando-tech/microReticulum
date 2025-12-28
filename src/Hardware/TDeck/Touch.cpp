@@ -205,11 +205,12 @@ void Touch::lvgl_read_cb(lv_indev_drv_t* drv, lv_indev_data_t* data) {
 
         // Transform touch coordinates for landscape display rotation
         // Display uses MADCTL with MX|MV for landscape (rotation=1)
-        // GT911 reports in native portrait orientation, so we need to transform:
-        // - Swap X and Y
-        // - Invert the new Y axis
+        // GT911 reports in native portrait orientation:
+        //   - raw X: 0-239 (portrait width, maps to screen Y after rotation)
+        //   - raw Y: 0-319 (portrait height, maps to screen X after rotation)
+        // Transform: swap X/Y and invert the new Y axis
         data->point.x = point.y;
-        data->point.y = Tch::RAW_HEIGHT - 1 - point.x;
+        data->point.y = Disp::HEIGHT - 1 - point.x;  // Use display height (240), not raw height
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
     }

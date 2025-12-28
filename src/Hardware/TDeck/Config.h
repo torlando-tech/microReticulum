@@ -106,9 +106,10 @@ namespace Tch {
     // Polling interval (MUST use polling mode - interrupts cause crashes)
     constexpr uint32_t POLL_INTERVAL_MS = 10;
 
-    // Touch calibration (raw coordinates to display coordinates)
-    constexpr uint16_t RAW_WIDTH = 320;
-    constexpr uint16_t RAW_HEIGHT = 240;
+    // Touch calibration (raw coordinates in GT911's native portrait orientation)
+    // GT911 reports X for short edge (240) and Y for long edge (320)
+    constexpr uint16_t RAW_WIDTH = 240;   // Portrait width (short edge)
+    constexpr uint16_t RAW_HEIGHT = 320;  // Portrait height (long edge)
 }
 
 namespace Trk {
