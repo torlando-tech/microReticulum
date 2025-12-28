@@ -10,6 +10,8 @@
 #include "ConversationListScreen.h"
 #include "ChatScreen.h"
 #include "ComposeScreen.h"
+#include "AnnounceListScreen.h"
+#include "StatusScreen.h"
 #include "../../LXMF/LXMRouter.h"
 #include "../../LXMF/MessageStore.h"
 #include "../../Reticulum.h"
@@ -76,6 +78,23 @@ public:
     void show_compose();
 
     /**
+     * Show announce list screen
+     */
+    void show_announces();
+
+    /**
+     * Show status screen
+     */
+    void show_status();
+
+    /**
+     * Update RNS connection status displayed on status screen
+     * @param connected Whether connected to RNS server
+     * @param server_name Server hostname (optional)
+     */
+    void set_rns_status(bool connected, const String& server_name = "");
+
+    /**
      * Handle incoming LXMF message
      * Called by LXMF router delivery callback
      * @param message Received message
@@ -98,7 +117,9 @@ private:
     enum Screen {
         SCREEN_CONVERSATION_LIST,
         SCREEN_CHAT,
-        SCREEN_COMPOSE
+        SCREEN_COMPOSE,
+        SCREEN_ANNOUNCES,
+        SCREEN_STATUS
     };
 
     RNS::Reticulum& _reticulum;
@@ -111,6 +132,8 @@ private:
     ConversationListScreen* _conversation_list_screen;
     ChatScreen* _chat_screen;
     ComposeScreen* _compose_screen;
+    AnnounceListScreen* _announce_list_screen;
+    StatusScreen* _status_screen;
 
     bool _initialized;
 
@@ -124,6 +147,9 @@ private:
     void on_send_message_from_compose(const RNS::Bytes& dest_hash, const String& message);
     void on_cancel_compose();
     void on_info(const RNS::Bytes& peer_hash);
+    void on_announce_selected(const RNS::Bytes& dest_hash);
+    void on_back_from_announces();
+    void on_back_from_status();
 
     // LXMF message handling
     void send_message(const RNS::Bytes& dest_hash, const String& content);

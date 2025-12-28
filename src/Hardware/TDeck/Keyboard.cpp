@@ -14,6 +14,7 @@ namespace TDeck {
 
 TwoWire* Keyboard::_wire = nullptr;
 bool Keyboard::_initialized = false;
+lv_indev_t* Keyboard::_indev = nullptr;
 char Keyboard::_key_buffer[Kbd::MAX_KEYS_BUFFERED];
 uint8_t Keyboard::_buffer_head = 0;
 uint8_t Keyboard::_buffer_tail = 0;
@@ -38,14 +39,18 @@ bool Keyboard::init(TwoWire& wire) {
     indev_drv.type = LV_INDEV_TYPE_KEYPAD;
     indev_drv.read_cb = lvgl_read_cb;
 
-    lv_indev_t* indev = lv_indev_drv_register(&indev_drv);
-    if (!indev) {
+    _indev = lv_indev_drv_register(&indev_drv);
+    if (!_indev) {
         ERROR("Failed to register keyboard with LVGL");
         return false;
     }
 
     INFO("Keyboard initialized successfully");
     return true;
+}
+
+lv_indev_t* Keyboard::get_indev() {
+    return _indev;
 }
 
 bool Keyboard::init_hardware_only(TwoWire& wire) {
@@ -143,6 +148,11 @@ uint8_t Keyboard::get_firmware_version() {
 }
 
 void Keyboard::lvgl_read_cb(lv_indev_drv_t* drv, lv_indev_data_t* data) {
+    // Safety check - LVGL should never pass null but be defensive
+    if (!data) {
+        return;
+    }
+
     // Poll for new keys
     poll();
 

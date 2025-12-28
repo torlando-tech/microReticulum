@@ -22,6 +22,7 @@ lv_disp_t* LVGLInit::_display = nullptr;
 lv_indev_t* LVGLInit::_keyboard = nullptr;
 lv_indev_t* LVGLInit::_touch = nullptr;
 lv_indev_t* LVGLInit::_trackball = nullptr;
+lv_group_t* LVGLInit::_default_group = nullptr;
 
 bool LVGLInit::init() {
     if (_initialized) {
@@ -45,13 +46,31 @@ bool LVGLInit::init() {
 
     INFO("  Display initialized");
 
+    // Create default input group for keyboard navigation
+    _default_group = lv_group_create();
+    if (!_default_group) {
+        ERROR("Failed to create input group");
+        return false;
+    }
+    lv_group_set_default(_default_group);
+
     // Initialize keyboard input
+    // TEMPORARILY DISABLED - keyboard causing crashes, needs debugging
+    // TODO: Fix I2C bus contention between keyboard and touch
+    #if 0
     if (Keyboard::init()) {
-        _keyboard = lv_indev_get_next(nullptr);
-        INFO("  Keyboard registered");
+        _keyboard = Keyboard::get_indev();
+        // Associate keyboard with input group
+        if (_keyboard) {
+            lv_indev_set_group(_keyboard, _default_group);
+            INFO("  Keyboard registered with input group");
+        }
     } else {
         WARNING("  Keyboard initialization failed");
     }
+    #else
+    WARNING("  Keyboard disabled for debugging");
+    #endif
 
     // Initialize touch input
     if (Touch::init()) {
@@ -169,6 +188,23 @@ lv_indev_t* LVGLInit::get_touch() {
 
 lv_indev_t* LVGLInit::get_trackball() {
     return _trackball;
+}
+
+lv_group_t* LVGLInit::get_default_group() {
+    return _default_group;
+}
+
+void LVGLInit::focus_widget(lv_obj_t* obj) {
+    if (!_default_group || !obj) {
+        return;
+    }
+
+    // Remove from group first if already there (to avoid duplicates)
+    lv_group_remove_obj(obj);
+
+    // Add to group and focus
+    lv_group_add_obj(_default_group, obj);
+    lv_group_focus_obj(obj);
 }
 
 void LVGLInit::log_print(const char* buf) {

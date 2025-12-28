@@ -85,6 +85,12 @@ public:
      */
     static uint8_t get_firmware_version();
 
+    /**
+     * Get the LVGL input device for the keyboard
+     * @return LVGL input device, or nullptr if not initialized
+     */
+    static lv_indev_t* get_indev();
+
 private:
     // Special key codes
     enum SpecialKey : uint8_t {
@@ -113,6 +119,7 @@ private:
 
     static TwoWire* _wire;
     static bool _initialized;
+    static lv_indev_t* _indev;
     static char _key_buffer[Kbd::MAX_KEYS_BUFFERED];
     static uint8_t _buffer_head;
     static uint8_t _buffer_tail;

@@ -61,6 +61,8 @@ public:
     using ConversationSelectedCallback = std::function<void(const RNS::Bytes& peer_hash)>;
     using NewMessageCallback = std::function<void()>;
     using SettingsCallback = std::function<void()>;
+    using AnnouncesCallback = std::function<void()>;
+    using StatusCallback = std::function<void()>;
 
     /**
      * Create conversation list screen
@@ -110,6 +112,18 @@ public:
     void set_settings_callback(SettingsCallback callback);
 
     /**
+     * Set callback for announces button
+     * @param callback Function to call when announces button is pressed
+     */
+    void set_announces_callback(AnnouncesCallback callback);
+
+    /**
+     * Set callback for status button
+     * @param callback Function to call when status button is pressed
+     */
+    void set_status_callback(StatusCallback callback);
+
+    /**
      * Show the screen
      */
     void show();
@@ -139,6 +153,8 @@ private:
     ConversationSelectedCallback _conversation_selected_callback;
     NewMessageCallback _new_message_callback;
     SettingsCallback _settings_callback;
+    AnnouncesCallback _announces_callback;
+    StatusCallback _status_callback;
 
     // UI construction
     void create_header();

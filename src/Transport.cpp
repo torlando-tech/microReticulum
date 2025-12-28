@@ -624,7 +624,7 @@ using namespace RNS::Utilities;
 }
 
 /*static*/ void Transport::transmit(Interface& interface, const Bytes& raw) {
-	TRACE("Transport::transmit()");
+	DEBUG("Transport::transmit() on " + interface.toString() + " (" + std::to_string(raw.size()) + " bytes)");
 	// CBA
 	if (_callbacks._transmit_packet) {
 		try {
@@ -2052,9 +2052,9 @@ using namespace RNS::Utilities;
 
 		// Handling for link requests to local destinations
 		else if (packet.packet_type() == Type::Packet::LINKREQUEST) {
-			TRACE("Transport::inbound: Packet is LINKREQUEST");
+			INFO(">>> Transport::inbound: Received LINKREQUEST packet");
 			if (!packet.transport_id() || packet.transport_id() == _identity.hash()) {
-				TRACE("Transport::inbound: Checking if LINKREQUEST is for local destination");
+				INFO(">>> Transport::inbound: LINKREQUEST is for us, searching destinations");
 #if defined(DESTINATIONS_SET)
 				for (auto& destination : _destinations) {
 					if (destination.hash() == packet.destination_hash() && destination.type() == packet.destination_type()) {
@@ -2064,7 +2064,7 @@ using namespace RNS::Utilities;
 					auto& destination = (*iter).second;
 					if (destination.type() == packet.destination_type()) {
 #endif
-						TRACE("Transport::inbound: Found local destination for LINKREQUEST");
+						INFO(">>> Transport::inbound: Found destination, calling destination.receive()");
 						packet.destination(destination);
 						// CBA iterator over std::set is always const so need to make temporarily mutable
 						//destination.receive(packet);
@@ -2073,6 +2073,7 @@ using namespace RNS::Utilities;
 #else
 						destination.receive(packet);
 #endif
+						INFO(">>> Transport::inbound: destination.receive() returned");
 					}
 				}
 			}
@@ -2080,8 +2081,8 @@ using namespace RNS::Utilities;
 		
 		// Handling for data packets to local destinations
 		else if (packet.packet_type() == Type::Packet::DATA) {
-			TRACE("Transport::inbound: Packet is DATA");
-			DEBUGF("Transport::inbound: DATA packet, dest_type=%d, context=%d, dest_hash=%s",
+			INFO("Transport::inbound: Received DATA packet");
+			INFOF("  dest_type=%d, context=%d, dest_hash=%s",
 				packet.destination_type(), packet.context(), packet.destination_hash().toHex().c_str());
 			if (packet.destination_type() == Type::Destination::LINK) {
 				// Data is destined for a link
@@ -2107,7 +2108,7 @@ using namespace RNS::Utilities;
 				auto iter = _destinations.find(packet.destination_hash());
 				if (iter != _destinations.end()) {
 					// Data is for a local destination
-					DEBUG("Packet destination " + packet.destination_hash().toHex() + " found, destination is local");
+					INFO("Transport::inbound: Found local destination for DATA packet");
 					auto& destination = (*iter).second;
 					if (destination.type() == packet.destination_type()) {
 						TRACE("Transport::inbound: Packet destination type " + std::to_string(packet.destination_type()) + " matched, processing");
@@ -2140,7 +2141,8 @@ using namespace RNS::Utilities;
 					}
 				}
 				else {
-					DEBUG("Transport::inbound: Local destination " + packet.destination_hash().toHex() + " not found, not handling packet locally");
+					INFO("Transport::inbound: Local destination " + packet.destination_hash().toHex() + " NOT FOUND");
+					INFOF("  Registered destinations count: %zu", _destinations.size());
 				}
 			}
 		}

@@ -188,25 +188,33 @@ Link::Link(const Destination& destination /*= {Type::NONE}*/, Callbacks::establi
 		   data.size(), ECPUBSIZE, ECPUBSIZE + LINK_MTU_SIZE);
 	if (data.size() == ECPUBSIZE || data.size() == ECPUBSIZE + LINK_MTU_SIZE) {
 		try {
+			INFO(">>> Link::validate_request step 1: constructing Link object");
 			Link link({Type::NONE}, nullptr, nullptr, owner, data.left(ECPUBSIZE/2), data.mid(ECPUBSIZE/2, ECPUBSIZE/2));
+			INFO(">>> Link::validate_request step 2: setting link_id");
 			link.set_link_id(packet);
 			link.destination(packet.destination());
 			link.establishment_timeout(ESTABLISHMENT_TIMEOUT_PER_HOP * std::max((uint8_t)1, packet.hops()) + KEEPALIVE);
 			link.establishment_cost(link.establishment_cost() + packet.raw().size());
 			VERBOSEF("Validating link request %s", link.link_id().toHex().c_str());
 			TRACEF("Establishment timeout is %f for incoming link request %s", link.establishment_timeout(), link.link_id().toHex().c_str());
+			INFO(">>> Link::validate_request step 3: calling handshake()");
 			link.handshake();
+			INFO(">>> Link::validate_request step 4: handshake complete, setting interface");
 			link.attached_interface(packet.receiving_interface());
+			INFO(">>> Link::validate_request step 5: calling prove()");
 			link.prove();
+			INFO(">>> Link::validate_request step 6: prove complete, registering link");
 			link.request_time(OS::time());
 			Transport::register_link(link);
 			link.last_inbound(OS::time());
 			link.start_watchdog();
-			
+
+			INFO(">>> Link::validate_request step 7: COMPLETE - link accepted");
 			DEBUGF("Incoming link request %s accepted", link.toString().c_str());
 			return link;
 		}
 		catch (std::exception& e) {
+			ERRORF(">>> Link::validate_request EXCEPTION: %s", e.what());
 			VERBOSEF("Validating link request failed, exception: %s", e.what());
 			return {Type::NONE};
 		}
@@ -242,9 +250,12 @@ void Link::set_link_id(const Packet& packet) {
 
 void Link::handshake() {
 	assert(_object);
+	INFO(">>> handshake(): entry");
 	if (_object->_status == Type::Link::PENDING && _object->_prv) {
+		INFO(">>> handshake(): status is PENDING, starting X25519 exchange");
 		_object->_status = Type::Link::HANDSHAKE;
 		_object->_shared_key = _object->_prv->exchange(_object->_peer_pub_bytes);
+		INFO(">>> handshake(): X25519 exchange complete, deriving key");
 
 		uint16_t derived_key_length;
 		if (_object->_mode == RNS::Type::Link::MODE_AES128_CBC) derived_key_length = 32;
@@ -257,6 +268,7 @@ void Link::handshake() {
 			get_salt(),
 			get_context()
 		);
+		INFO(">>> handshake(): HKDF complete");
 	}
 	else {
 		ERRORF("Handshake attempt on %s with invalid state %d", toString().c_str(), _object->_status);
@@ -265,15 +277,22 @@ void Link::handshake() {
 
 void Link::prove() {
 	assert(_object);
+	INFO(">>> prove(): entry");
 	DEBUGF("Link %s requesting proof", link_id().toHex().c_str());
+	INFO(">>> prove(): preparing signed_data");
 	Bytes signed_data =_object->_link_id + _object->_pub_bytes + _object->_sig_pub_bytes;
+	INFO(">>> prove(): calling identity.sign()");
 	const Bytes signature(_object->_owner.identity().sign(signed_data));
+	INFO(">>> prove(): signature complete, building proof packet");
 
 	Bytes proof_data = signature + _object->_pub_bytes;
 	// CBA LINK
 	// CBA TODO: Determine which approach is better, passing liunk to packet or passing _link_destination
+	INFO(">>> prove(): creating Packet");
 	Packet proof(*this, proof_data, Type::Packet::PROOF, Type::Packet::LRPROOF);
+	INFO(">>> prove(): sending proof packet");
 	proof.send();
+	INFO(">>> prove(): proof sent");
 	_object->_establishment_cost += proof.raw().size();
 	had_outbound();
 }

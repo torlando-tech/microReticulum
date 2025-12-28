@@ -105,8 +105,8 @@ void ConversationListScreen::create_bottom_nav() {
     lv_obj_set_flex_flow(_bottom_nav, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(_bottom_nav, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // Bottom navigation buttons
-    const char* icons[] = {LV_SYMBOL_HOME, LV_SYMBOL_USB, LV_SYMBOL_WIFI, LV_SYMBOL_SETTINGS};
+    // Bottom navigation buttons: Messages, Announces, Status, Settings
+    const char* icons[] = {LV_SYMBOL_ENVELOPE, LV_SYMBOL_LIST, LV_SYMBOL_WIFI, LV_SYMBOL_SETTINGS};
 
     for (int i = 0; i < 4; i++) {
         lv_obj_t* btn = lv_btn_create(_bottom_nav);
@@ -249,6 +249,14 @@ void ConversationListScreen::set_settings_callback(SettingsCallback callback) {
     _settings_callback = callback;
 }
 
+void ConversationListScreen::set_announces_callback(AnnouncesCallback callback) {
+    _announces_callback = callback;
+}
+
+void ConversationListScreen::set_status_callback(StatusCallback callback) {
+    _status_callback = callback;
+}
+
 void ConversationListScreen::show() {
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);  // Bring to front for touch events
@@ -290,17 +298,34 @@ void ConversationListScreen::on_settings_clicked(lv_event_t* event) {
 }
 
 void ConversationListScreen::on_bottom_nav_clicked(lv_event_t* event) {
+    ConversationListScreen* screen = (ConversationListScreen*)lv_event_get_user_data(event);
     lv_obj_t* target = lv_event_get_target(event);
     int btn_index = (int)(intptr_t)lv_obj_get_user_data(target);
 
-    const char* btn_names[] = {"Home", "USB", "WiFi", "Settings"};
-
-    // Show a message box indicating the button was pressed
-    static const char* close_btn[] = {"OK", ""};
-    lv_obj_t* mbox = lv_msgbox_create(NULL, btn_names[btn_index],
-        "Not implemented yet", close_btn, false);
-    lv_obj_center(mbox);
-    lv_obj_add_event_cb(mbox, msgbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    switch (btn_index) {
+        case 0: // Messages - already here
+            break;
+        case 1: // Announces
+            if (screen->_announces_callback) {
+                screen->_announces_callback();
+            }
+            break;
+        case 2: // Status
+            if (screen->_status_callback) {
+                screen->_status_callback();
+            }
+            break;
+        case 3: // Settings - not implemented
+        default: {
+            const char* btn_names[] = {"Messages", "Announces", "Status", "Settings"};
+            static const char* close_btn[] = {"OK", ""};
+            lv_obj_t* mbox = lv_msgbox_create(NULL, btn_names[btn_index],
+                "Not implemented yet", close_btn, false);
+            lv_obj_center(mbox);
+            lv_obj_add_event_cb(mbox, msgbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
+            break;
+        }
+    }
 }
 
 void ConversationListScreen::msgbox_close_cb(lv_event_t* event) {

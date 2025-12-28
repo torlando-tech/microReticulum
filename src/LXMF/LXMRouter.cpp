@@ -116,6 +116,14 @@ void LXMRouter::handle_outbound(LXMessage& message) {
 	// Pack the message
 	message.pack();
 
+	// Check if message fits in a single packet - use OPPORTUNISTIC if so
+	// OPPORTUNISTIC is simpler (no link needed) and works when identity is known
+	if (message.packed_size() <= Type::Constants::ENCRYPTED_PACKET_MDU) {
+		INFO("  Message fits in single packet, will use OPPORTUNISTIC delivery");
+	} else {
+		INFO("  Message too large for single packet, will use DIRECT (link) delivery");
+	}
+
 	// Set state to outbound
 	message.state(Type::Message::OUTBOUND);
 
@@ -131,33 +139,91 @@ void LXMRouter::process_outbound() {
 		return;
 	}
 
+	// Check backoff timer - don't process if we're in retry delay
+	double now = Utilities::OS::time();
+	if (now < _next_outbound_process_time) {
+		return;  // Wait until retry delay expires
+	}
+
 	// Process one message per call to avoid blocking
 	LXMessage& message = _pending_outbound.front();
 
 	DEBUG("Processing outbound message to " + message.destination_hash().toHex());
 
 	try {
-		// For DIRECT delivery, we need a link
-		if (message.method() == Type::Message::DIRECT) {
+		// Determine delivery method based on message size
+		bool use_opportunistic = (message.packed_size() <= Type::Constants::ENCRYPTED_PACKET_MDU);
+
+		if (use_opportunistic) {
+			// OPPORTUNISTIC delivery - send as single encrypted packet
+			DEBUG("  Using OPPORTUNISTIC delivery (single packet)");
+
+			// Check if we have a path to the destination
+			if (!Transport::has_path(message.destination_hash())) {
+				// Request path from network
+				INFO("  No path to destination, requesting...");
+				Transport::request_path(message.destination_hash());
+				_next_outbound_process_time = now + PATH_REQUEST_WAIT;
+				return;
+			}
+
+			// Try to recall the destination identity
+			Identity dest_identity = Identity::recall(message.destination_hash());
+			if (!dest_identity) {
+				// Path exists but identity not cached yet - wait for announce
+				INFO("  Path exists but identity not known, waiting for announce...");
+				_next_outbound_process_time = now + OUTBOUND_RETRY_DELAY;
+				return;
+			}
+
+			// Create destination and send packet
+			if (send_opportunistic(message, dest_identity)) {
+				INFO("Message sent via OPPORTUNISTIC delivery");
+
+				// Call sent callback if registered
+				if (_sent_callback) {
+					_sent_callback(message);
+				}
+
+				// Remove from pending queue
+				_pending_outbound.erase(_pending_outbound.begin());
+			} else {
+				ERROR("Failed to send OPPORTUNISTIC message");
+				message.state(Type::Message::FAILED);
+
+				if (_failed_callback) {
+					_failed_callback(message);
+				}
+
+				_failed_outbound.push_back(message);
+				_pending_outbound.erase(_pending_outbound.begin());
+			}
+		} else {
+			// DIRECT delivery - need a link for large messages
+			DEBUG("  Using DIRECT delivery (via link)");
+
 			// Get or establish link
 			Link link = get_link_for_destination(message.destination_hash());
 
 			if (!link) {
 				WARNING("Failed to establish link for message delivery");
-				// Keep in queue, will retry next time
+				// Set backoff timer to avoid tight loop
+				_next_outbound_process_time = now + OUTBOUND_RETRY_DELAY;
+				INFO("  Will retry in " + std::to_string((int)OUTBOUND_RETRY_DELAY) + " seconds");
 				return;
 			}
 
 			// Check link status
 			if (link.status() != RNS::Type::Link::ACTIVE) {
 				DEBUG("Link not yet active, waiting...");
-				// Keep in queue, will retry when link is active
+				// Set shorter backoff for pending links
+				_next_outbound_process_time = now + 1.0;  // Check again in 1 second
 				return;
 			}
 
 			// Send via link
 			if (send_via_link(message, link)) {
-				INFO("Message sent successfully");
+				INFO("Message sent successfully via link");
 
 				// Call sent callback if registered
 				if (_sent_callback) {
@@ -179,18 +245,6 @@ void LXMRouter::process_outbound() {
 				_failed_outbound.push_back(message);
 				_pending_outbound.erase(_pending_outbound.begin());
 			}
-		} else {
-			WARNING("Only DIRECT delivery method is supported in Phase 1 MVP");
-			message.state(Type::Message::FAILED);
-
-			// Call failed callback
-			if (_failed_callback) {
-				_failed_callback(message);
-			}
-
-			// Move to failed queue
-			_failed_outbound.push_back(message);
-			_pending_outbound.erase(_pending_outbound.begin());
 		}
 
 	} catch (const std::exception& e) {
@@ -410,8 +464,8 @@ Link LXMRouter::get_link_for_destination(const Bytes& destination_hash) {
 		link.set_link_established_callback(static_link_established_callback);
 		link.set_link_closed_callback(static_link_closed_callback);
 
-		// Store link
-		_direct_links[destination_hash] = link;
+		// Store link (use insert to avoid default-constructing Link which crashes)
+		_direct_links.insert({destination_hash, link});
 
 		INFO("  Link establishment initiated");
 		return link;
@@ -440,6 +494,49 @@ bool LXMRouter::send_via_link(LXMessage& message, Link& link) {
 
 	} catch (const std::exception& e) {
 		ERROR("Failed to send message: " + std::string(e.what()));
+		return false;
+	}
+}
+
+// Send message via OPPORTUNISTIC delivery (single encrypted packet)
+bool LXMRouter::send_opportunistic(LXMessage& message, const Identity& dest_identity) {
+	INFO("Sending LXMF message via OPPORTUNISTIC delivery");
+	DEBUG("  Message size: " + std::to_string(message.packed_size()) + " bytes");
+
+	try {
+		// Create destination object for the remote peer's LXMF delivery
+		Destination destination(
+			dest_identity,
+			RNS::Type::Destination::OUT,
+			RNS::Type::Destination::SINGLE,
+			"lxmf",
+			"delivery"
+		);
+
+		// Verify destination hash matches
+		if (destination.hash() != message.destination_hash()) {
+			ERROR("Destination hash mismatch!");
+			DEBUG("  Expected: " + message.destination_hash().toHex());
+			DEBUG("  Got: " + destination.hash().toHex());
+			return false;
+		}
+
+		// For OPPORTUNISTIC, we strip the destination hash from the packed data
+		// since it's already in the packet header
+		Bytes packet_data = message.packed().mid(Type::Constants::DESTINATION_LENGTH);
+		DEBUG("  Packet data size: " + std::to_string(packet_data.size()) + " bytes");
+
+		// Create and send packet
+		Packet packet(destination, packet_data, RNS::Type::Packet::DATA);
+		packet.send();
+
+		message.state(Type::Message::SENT);
+		INFO("  OPPORTUNISTIC packet sent");
+
+		return true;
+
+	} catch (const std::exception& e) {
+		ERROR("Failed to send OPPORTUNISTIC message: " + std::string(e.what()));
 		return false;
 	}
 }

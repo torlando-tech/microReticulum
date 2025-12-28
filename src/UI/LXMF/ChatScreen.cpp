@@ -6,6 +6,7 @@
 #ifdef ARDUINO
 
 #include "../../Log.h"
+#include "../LVGL/LVGLInit.h"
 
 using namespace RNS;
 
@@ -15,7 +16,7 @@ namespace LXMF {
 ChatScreen::ChatScreen(lv_obj_t* parent)
     : _screen(nullptr), _header(nullptr), _message_list(nullptr), _input_area(nullptr),
       _text_area(nullptr), _btn_send(nullptr), _btn_back(nullptr), _btn_info(nullptr),
-      _message_store(nullptr) {
+      _keyboard(nullptr), _message_store(nullptr) {
 
     // Create screen object
     if (parent) {
@@ -33,6 +34,7 @@ ChatScreen::ChatScreen(lv_obj_t* parent)
     create_header();
     create_message_list();
     create_input_area();
+    create_keyboard();
 
     // Hide by default
     hide();
@@ -131,6 +133,71 @@ void ChatScreen::create_input_area() {
     lv_label_set_text(label_send, "Send");
     lv_obj_center(label_send);
     lv_obj_set_style_text_color(label_send, lv_color_hex(0xffffff), 0);
+
+    // Add focus event to show keyboard when text area is tapped
+    lv_obj_add_event_cb(_text_area, on_textarea_focused, LV_EVENT_FOCUSED, this);
+}
+
+void ChatScreen::create_keyboard() {
+    // Create on-screen keyboard (hidden by default)
+    _keyboard = lv_keyboard_create(_screen);
+    lv_obj_set_size(_keyboard, LV_PCT(100), 120);  // Reduced height for small screen
+    lv_obj_align(_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+
+    // Style the keyboard for dark theme
+    lv_obj_set_style_bg_color(_keyboard, lv_color_hex(0x2a2a2a), 0);
+    lv_obj_set_style_bg_color(_keyboard, lv_color_hex(0x404040), LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(_keyboard, lv_color_hex(0x505050), LV_PART_ITEMS | LV_STATE_PRESSED);
+    lv_obj_set_style_text_color(_keyboard, lv_color_hex(0xffffff), LV_PART_ITEMS);
+
+    // Hide keyboard initially
+    lv_obj_add_flag(_keyboard, LV_OBJ_FLAG_HIDDEN);
+
+    // Add ready event to handle Enter key
+    lv_obj_add_event_cb(_keyboard, on_keyboard_ready, LV_EVENT_READY, this);
+
+    // Add cancel event to hide keyboard when X button is pressed
+    lv_obj_add_event_cb(_keyboard, [](lv_event_t* event) {
+        ChatScreen* screen = (ChatScreen*)lv_event_get_user_data(event);
+        if (screen->_keyboard) {
+            lv_obj_add_flag(screen->_keyboard, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_height(screen->_message_list, 152);
+        }
+    }, LV_EVENT_CANCEL, this);
+}
+
+void ChatScreen::on_textarea_focused(lv_event_t* event) {
+    ChatScreen* screen = (ChatScreen*)lv_event_get_user_data(event);
+
+    if (screen->_keyboard) {
+        // Show keyboard and associate with text area
+        lv_keyboard_set_textarea(screen->_keyboard, screen->_text_area);
+        lv_obj_clear_flag(screen->_keyboard, LV_OBJ_FLAG_HIDDEN);
+
+        // Shrink message list to make room for keyboard
+        lv_obj_set_height(screen->_message_list, 32);  // Minimal height when keyboard shown
+    }
+}
+
+void ChatScreen::on_keyboard_ready(lv_event_t* event) {
+    ChatScreen* screen = (ChatScreen*)lv_event_get_user_data(event);
+
+    // Enter key was pressed - hide keyboard and send message
+    if (screen->_keyboard) {
+        lv_obj_add_flag(screen->_keyboard, LV_OBJ_FLAG_HIDDEN);
+
+        // Restore message list height
+        lv_obj_set_height(screen->_message_list, 152);
+    }
+
+    // Also trigger send
+    const char* text = lv_textarea_get_text(screen->_text_area);
+    String message(text);
+
+    if (message.length() > 0 && screen->_send_message_callback) {
+        screen->_send_message_callback(message);
+        lv_textarea_set_text(screen->_text_area, "");
+    }
 }
 
 void ChatScreen::load_conversation(const Bytes& peer_hash, ::LXMF::MessageStore& store) {
@@ -274,6 +341,12 @@ void ChatScreen::set_info_callback(InfoCallback callback) {
 void ChatScreen::show() {
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);  // Bring to front for touch events
+
+    // Add text area to default group so keyboard works when tapped
+    lv_group_t* group = LVGL::LVGLInit::get_default_group();
+    if (group && _text_area) {
+        lv_group_add_obj(group, _text_area);
+    }
 }
 
 void ChatScreen::hide() {

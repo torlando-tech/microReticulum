@@ -169,6 +169,11 @@ namespace LXMF {
 		inline const RNS::Bytes& destination_hash() const { return _destination_hash; }
 
 		/**
+		 * @brief Set destination hash (for when identity is not known)
+		 */
+		inline void destination_hash(const RNS::Bytes& hash) { _destination_hash = hash; _packed_valid = false; }
+
+		/**
 		 * @brief Get source hash
 		 */
 		inline const RNS::Bytes& source_hash() const { return _source_hash; }

@@ -80,16 +80,26 @@ const Bytes& LXMessage::pack() {
 	}
 
 	// 2. Create payload array: [timestamp, title, content, fields] - matches Python LXMF exactly
+	// Python: msgpack.packb([self.timestamp, self.title, self.content, self.fields])
 	MsgPack::Packer packer;
-	packer.serialize(_timestamp);
-	packer.serialize(_title);
-	packer.serialize(_content);
 
-	// Serialize fields as msgpack map
-	packer.serialize((uint32_t)_fields.size());
+	// Pack as array with 4 elements
+	packer.packArraySize(4);
+
+	// Element 0: timestamp (float64)
+	packer.pack(_timestamp);
+
+	// Element 1: title (binary)
+	packer.packBinary(_title.data(), _title.size());
+
+	// Element 2: content (binary)
+	packer.packBinary(_content.data(), _content.size());
+
+	// Element 3: fields (map) - pack empty map for now since fields are rarely used
+	packer.packMapSize(_fields.size());
 	for (const auto& field : _fields) {
-		packer.serialize(field.first);
-		packer.serialize(field.second);
+		packer.packBinary(field.first.data(), field.first.size());
+		packer.packBinary(field.second.data(), field.second.size());
 	}
 
 	Bytes packed_payload(packer.data(), packer.size());

@@ -391,13 +391,19 @@ void Destination::receive(const Packet& packet) {
 
 void Destination::incoming_link_request(const Bytes& data, const Packet& packet) {
 	assert(_object);
+	INFO(">>> Destination::incoming_link_request: entry, accept_link_requests=" + std::to_string(_object->_accept_link_requests));
 	if (_object->_accept_link_requests) {
-TRACE("***** Accepting link request");
+		INFO(">>> Destination::incoming_link_request: calling Link::validate_request");
 		RNS::Link link = Link::validate_request(*this, data, packet);
 		if (link) {
+			INFO(">>> Destination::incoming_link_request: link validated, inserting into links set");
 			_object->_links.insert(link);
+			INFO(">>> Destination::incoming_link_request: link inserted, now have " + std::to_string(_object->_links.size()) + " links");
+		} else {
+			INFO(">>> Destination::incoming_link_request: link validation failed");
 		}
 	}
+	INFO(">>> Destination::incoming_link_request: exit");
 }
 
 /*

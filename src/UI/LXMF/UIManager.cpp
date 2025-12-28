@@ -19,6 +19,8 @@ UIManager::UIManager(Reticulum& reticulum, ::LXMF::LXMRouter& router, ::LXMF::Me
       _conversation_list_screen(nullptr),
       _chat_screen(nullptr),
       _compose_screen(nullptr),
+      _announce_list_screen(nullptr),
+      _status_screen(nullptr),
       _initialized(false) {
 }
 
@@ -31,6 +33,12 @@ UIManager::~UIManager() {
     }
     if (_compose_screen) {
         delete _compose_screen;
+    }
+    if (_announce_list_screen) {
+        delete _announce_list_screen;
+    }
+    if (_status_screen) {
+        delete _status_screen;
     }
 }
 
@@ -45,6 +53,8 @@ bool UIManager::init() {
     _conversation_list_screen = new ConversationListScreen();
     _chat_screen = new ChatScreen();
     _compose_screen = new ComposeScreen();
+    _announce_list_screen = new AnnounceListScreen();
+    _status_screen = new StatusScreen();
 
     // Set up callbacks for conversation list screen
     _conversation_list_screen->set_conversation_selected_callback(
@@ -57,6 +67,10 @@ bool UIManager::init() {
 
     _conversation_list_screen->set_settings_callback(
         [this]() { on_settings(); }
+    );
+
+    _conversation_list_screen->set_announces_callback(
+        [this]() { show_announces(); }
     );
 
     // Set up callbacks for chat screen
@@ -82,6 +96,29 @@ bool UIManager::init() {
             on_send_message_from_compose(dest_hash, message);
         }
     );
+
+    // Set up callbacks for announce list screen
+    _announce_list_screen->set_announce_selected_callback(
+        [this](const Bytes& dest_hash) { on_announce_selected(dest_hash); }
+    );
+
+    _announce_list_screen->set_back_callback(
+        [this]() { on_back_from_announces(); }
+    );
+
+    // Set up callbacks for status screen
+    _status_screen->set_back_callback(
+        [this]() { on_back_from_status(); }
+    );
+
+    // Set up callback for status button in conversation list
+    _conversation_list_screen->set_status_callback(
+        [this]() { show_status(); }
+    );
+
+    // Set identity and LXMF address on status screen
+    _status_screen->set_identity(_router.identity());
+    _status_screen->set_lxmf_address(_router.delivery_destination().hash());
 
     // Register LXMF delivery callback
     _router.register_delivery_callback(
@@ -113,6 +150,8 @@ void UIManager::show_conversation_list() {
     _conversation_list_screen->show();
     _chat_screen->hide();
     _compose_screen->hide();
+    _announce_list_screen->hide();
+    _status_screen->hide();
 
     _current_screen = SCREEN_CONVERSATION_LIST;
 }
@@ -128,6 +167,8 @@ void UIManager::show_chat(const Bytes& peer_hash) {
     _chat_screen->show();
     _conversation_list_screen->hide();
     _compose_screen->hide();
+    _announce_list_screen->hide();
+    _status_screen->hide();
 
     _current_screen = SCREEN_CHAT;
 }
@@ -139,8 +180,36 @@ void UIManager::show_compose() {
     _compose_screen->show();
     _conversation_list_screen->hide();
     _chat_screen->hide();
+    _announce_list_screen->hide();
+    _status_screen->hide();
 
     _current_screen = SCREEN_COMPOSE;
+}
+
+void UIManager::show_announces() {
+    INFO("Showing announces screen");
+
+    _announce_list_screen->refresh();
+    _announce_list_screen->show();
+    _conversation_list_screen->hide();
+    _chat_screen->hide();
+    _compose_screen->hide();
+    _status_screen->hide();
+
+    _current_screen = SCREEN_ANNOUNCES;
+}
+
+void UIManager::show_status() {
+    INFO("Showing status screen");
+
+    _status_screen->refresh();
+    _status_screen->show();
+    _conversation_list_screen->hide();
+    _chat_screen->hide();
+    _compose_screen->hide();
+    _announce_list_screen->hide();
+
+    _current_screen = SCREEN_STATUS;
 }
 
 void UIManager::on_conversation_selected(const Bytes& peer_hash) {
@@ -193,32 +262,64 @@ void UIManager::on_info(const Bytes& peer_hash) {
     // TODO: Implement peer info screen
 }
 
+void UIManager::on_announce_selected(const Bytes& dest_hash) {
+    std::string hash_hex = dest_hash.toHex().substr(0, 8);
+    std::string msg = "Announce selected: " + hash_hex + "...";
+    INFO(msg.c_str());
+
+    // Open compose screen with destination pre-filled
+    _compose_screen->clear();
+    _compose_screen->set_destination(dest_hash);
+    show_compose();
+}
+
+void UIManager::on_back_from_announces() {
+    show_conversation_list();
+}
+
+void UIManager::on_back_from_status() {
+    show_conversation_list();
+}
+
+void UIManager::set_rns_status(bool connected, const String& server_name) {
+    if (_status_screen) {
+        _status_screen->set_rns_status(connected, server_name);
+    }
+}
+
 void UIManager::send_message(const Bytes& dest_hash, const String& content) {
     std::string hash_hex = dest_hash.toHex().substr(0, 8);
     std::string msg = "Sending message to " + hash_hex + "...";
     INFO(msg.c_str());
 
-    // Look up destination (or create placeholder)
-    // In a real implementation, we'd need to recall the destination identity
-    Identity dest_identity = Identity::recall(dest_hash);
-
-    Destination destination(Type::NONE);
-    if (dest_identity) {
-        destination = Destination(dest_identity, Type::Destination::OUT, Type::Destination::SINGLE, "lxmf", "delivery");
-    } else {
-        WARNING("  Destination identity not known, message may fail");
-        // Create a placeholder destination with just the hash
-        // This will work if the peer announces later
-    }
-
-    // Get our source destination
+    // Get our source destination (needed for signing)
     Destination source = _router.delivery_destination();
 
-    // Create message
+    // Create message content
     Bytes content_bytes((const uint8_t*)content.c_str(), content.length());
     Bytes title;  // Empty title
 
+    // Look up destination identity
+    Identity dest_identity = Identity::recall(dest_hash);
+
+    // Create destination object - either real or placeholder
+    Destination destination(Type::NONE);
+    if (dest_identity) {
+        destination = Destination(dest_identity, Type::Destination::OUT, Type::Destination::SINGLE, "lxmf", "delivery");
+        INFO("  Destination identity known");
+    } else {
+        WARNING("  Destination identity not known, message may fail until peer announces");
+    }
+
+    // Create message with destination and source objects
+    // Source is needed for signing
     ::LXMF::LXMessage message(destination, source, content_bytes, title);
+
+    // If destination identity was unknown, manually set the destination hash
+    if (!dest_identity) {
+        message.destination_hash(dest_hash);
+        DEBUG("  Set destination hash manually");
+    }
 
     // Add to UI immediately (optimistic update)
     if (_current_screen == SCREEN_CHAT && _current_peer_hash == dest_hash) {
@@ -286,6 +387,12 @@ void UIManager::refresh_current_screen() {
             break;
         case SCREEN_COMPOSE:
             // No refresh needed
+            break;
+        case SCREEN_ANNOUNCES:
+            _announce_list_screen->refresh();
+            break;
+        case SCREEN_STATUS:
+            _status_screen->refresh();
             break;
     }
 }

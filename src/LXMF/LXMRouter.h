@@ -264,6 +264,15 @@ namespace LXMF {
 		 */
 		bool send_via_link(LXMessage& message, RNS::Link& link);
 
+		/**
+		 * @brief Send message via OPPORTUNISTIC delivery (single packet)
+		 *
+		 * @param message Message to send
+		 * @param dest_identity Destination identity (for encryption)
+		 * @return True if send initiated successfully
+		 */
+		bool send_opportunistic(LXMessage& message, const RNS::Identity& dest_identity);
+
 	private:
 		// Core components
 		RNS::Identity _identity;                   // Local identity
@@ -291,6 +300,11 @@ namespace LXMF {
 
 		// Internal state
 		bool _initialized = false;
+
+		// Retry backoff
+		double _next_outbound_process_time = 0.0;  // Next time to process outbound queue
+		static constexpr double OUTBOUND_RETRY_DELAY = 5.0;  // Seconds between retries
+		static constexpr double PATH_REQUEST_WAIT = 3.0;     // Seconds to wait after path request
 	};
 
 }  // namespace LXMF

@@ -86,12 +86,25 @@ public:
      */
     static lv_indev_t* get_trackball();
 
+    /**
+     * Get the default input group for keyboard/encoder navigation
+     * @return LVGL group object
+     */
+    static lv_group_t* get_default_group();
+
+    /**
+     * Focus a widget (add to group and set as focused)
+     * @param obj Widget to focus
+     */
+    static void focus_widget(lv_obj_t* obj);
+
 private:
     static bool _initialized;
     static lv_disp_t* _display;
     static lv_indev_t* _keyboard;
     static lv_indev_t* _touch;
     static lv_indev_t* _trackball;
+    static lv_group_t* _default_group;
 
     // LVGL logging callback
     static void log_print(const char* buf);

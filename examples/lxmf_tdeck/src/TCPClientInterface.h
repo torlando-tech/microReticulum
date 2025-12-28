@@ -89,6 +89,21 @@ private:
     // Connection state
     bool _initiator = true;
     uint32_t _last_connect_attempt = 0;
+    bool _reconnected = false;  // Set when connection re-established after being offline
+    uint32_t _last_data_received = 0;  // Track last data receipt for stale connection detection
+    static const uint32_t STALE_CONNECTION_MS = 120000;  // Consider connection stale after 2 min no data
+
+public:
+    // Check and clear reconnection flag (for announcing after reconnect)
+    bool check_reconnected() {
+        if (_reconnected) {
+            _reconnected = false;
+            return true;
+        }
+        return false;
+    }
+
+private:
 
     // HDLC frame buffer for partial frame reassembly
     RNS::Bytes _frame_buffer;
