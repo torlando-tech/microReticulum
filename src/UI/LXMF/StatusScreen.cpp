@@ -30,6 +30,9 @@ StatusScreen::StatusScreen(lv_obj_t* parent)
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(_screen, lv_color_hex(0x121212), 0);
     lv_obj_set_style_bg_opa(_screen, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(_screen, 0, 0);
+    lv_obj_set_style_border_width(_screen, 0, 0);
+    lv_obj_set_style_radius(_screen, 0, 0);
 
     // Create UI components
     create_header();
@@ -54,11 +57,12 @@ void StatusScreen::create_header() {
     lv_obj_set_style_bg_color(_header, lv_color_hex(0x1a1a1a), 0);
     lv_obj_set_style_border_width(_header, 0, 0);
     lv_obj_set_style_radius(_header, 0, 0);
+    lv_obj_set_style_pad_all(_header, 0, 0);
 
     // Back button
     _btn_back = lv_btn_create(_header);
     lv_obj_set_size(_btn_back, 50, 28);
-    lv_obj_align(_btn_back, LV_ALIGN_LEFT_MID, 5, 0);
+    lv_obj_align(_btn_back, LV_ALIGN_LEFT_MID, 2, 0);
     lv_obj_set_style_bg_color(_btn_back, lv_color_hex(0x333333), 0);
     lv_obj_set_style_bg_color(_btn_back, lv_color_hex(0x444444), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_back, on_back_clicked, LV_EVENT_CLICKED, this);
@@ -80,9 +84,10 @@ void StatusScreen::create_content() {
     _content = lv_obj_create(_screen);
     lv_obj_set_size(_content, LV_PCT(100), 204);  // 240 - 36 header
     lv_obj_align(_content, LV_ALIGN_TOP_MID, 0, 36);
-    lv_obj_set_style_pad_all(_content, 12, 0);
+    lv_obj_set_style_pad_all(_content, 6, 0);
     lv_obj_set_style_bg_color(_content, lv_color_hex(0x121212), 0);
     lv_obj_set_style_border_width(_content, 0, 0);
+    lv_obj_set_style_radius(_content, 0, 0);
 
     // Enable vertical scrolling
     lv_obj_set_scroll_dir(_content, LV_DIR_VER);

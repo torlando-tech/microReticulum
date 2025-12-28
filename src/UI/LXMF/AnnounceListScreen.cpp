@@ -30,6 +30,9 @@ AnnounceListScreen::AnnounceListScreen(lv_obj_t* parent)
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(_screen, lv_color_hex(0x121212), 0);
     lv_obj_set_style_bg_opa(_screen, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(_screen, 0, 0);
+    lv_obj_set_style_border_width(_screen, 0, 0);
+    lv_obj_set_style_radius(_screen, 0, 0);
 
     // Create UI components
     create_header();
@@ -54,11 +57,12 @@ void AnnounceListScreen::create_header() {
     lv_obj_set_style_bg_color(_header, lv_color_hex(0x1a1a1a), 0);
     lv_obj_set_style_border_width(_header, 0, 0);
     lv_obj_set_style_radius(_header, 0, 0);
+    lv_obj_set_style_pad_all(_header, 0, 0);
 
     // Back button
     _btn_back = lv_btn_create(_header);
     lv_obj_set_size(_btn_back, 50, 28);
-    lv_obj_align(_btn_back, LV_ALIGN_LEFT_MID, 5, 0);
+    lv_obj_align(_btn_back, LV_ALIGN_LEFT_MID, 2, 0);
     lv_obj_set_style_bg_color(_btn_back, lv_color_hex(0x333333), 0);
     lv_obj_set_style_bg_color(_btn_back, lv_color_hex(0x444444), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_back, on_back_clicked, LV_EVENT_CLICKED, this);
@@ -78,7 +82,7 @@ void AnnounceListScreen::create_header() {
     // Refresh button
     _btn_refresh = lv_btn_create(_header);
     lv_obj_set_size(_btn_refresh, 65, 28);
-    lv_obj_align(_btn_refresh, LV_ALIGN_RIGHT_MID, -5, 0);
+    lv_obj_align(_btn_refresh, LV_ALIGN_RIGHT_MID, -2, 0);
     lv_obj_set_style_bg_color(_btn_refresh, lv_color_hex(0x1976D2), 0);
     lv_obj_set_style_bg_color(_btn_refresh, lv_color_hex(0x2196F3), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_refresh, on_refresh_clicked, LV_EVENT_CLICKED, this);
@@ -93,9 +97,11 @@ void AnnounceListScreen::create_list() {
     _list = lv_obj_create(_screen);
     lv_obj_set_size(_list, LV_PCT(100), 204);  // 240 - 36 (header)
     lv_obj_align(_list, LV_ALIGN_TOP_MID, 0, 36);
-    lv_obj_set_style_pad_all(_list, 8, 0);
+    lv_obj_set_style_pad_all(_list, 4, 0);
+    lv_obj_set_style_pad_gap(_list, 4, 0);
     lv_obj_set_style_bg_color(_list, lv_color_hex(0x121212), 0);
     lv_obj_set_style_border_width(_list, 0, 0);
+    lv_obj_set_style_radius(_list, 0, 0);
     lv_obj_set_flex_flow(_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 }

@@ -29,6 +29,9 @@ ChatScreen::ChatScreen(lv_obj_t* parent)
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(_screen, lv_color_hex(0x121212), 0);
     lv_obj_set_style_bg_opa(_screen, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(_screen, 0, 0);
+    lv_obj_set_style_border_width(_screen, 0, 0);
+    lv_obj_set_style_radius(_screen, 0, 0);
 
     // Create UI components
     create_header();
@@ -55,11 +58,12 @@ void ChatScreen::create_header() {
     lv_obj_set_style_bg_color(_header, lv_color_hex(0x1a1a1a), 0);
     lv_obj_set_style_border_width(_header, 0, 0);
     lv_obj_set_style_radius(_header, 0, 0);
+    lv_obj_set_style_pad_all(_header, 0, 0);
 
     // Back button
     _btn_back = lv_btn_create(_header);
     lv_obj_set_size(_btn_back, 50, 28);
-    lv_obj_align(_btn_back, LV_ALIGN_LEFT_MID, 5, 0);
+    lv_obj_align(_btn_back, LV_ALIGN_LEFT_MID, 2, 0);
     lv_obj_set_style_bg_color(_btn_back, lv_color_hex(0x333333), 0);
     lv_obj_set_style_bg_color(_btn_back, lv_color_hex(0x444444), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_back, on_back_clicked, LV_EVENT_CLICKED, this);
@@ -79,7 +83,7 @@ void ChatScreen::create_header() {
     // Info button
     _btn_info = lv_btn_create(_header);
     lv_obj_set_size(_btn_info, 40, 28);
-    lv_obj_align(_btn_info, LV_ALIGN_RIGHT_MID, -5, 0);
+    lv_obj_align(_btn_info, LV_ALIGN_RIGHT_MID, -2, 0);
     lv_obj_set_style_bg_color(_btn_info, lv_color_hex(0x333333), 0);
     lv_obj_set_style_bg_color(_btn_info, lv_color_hex(0x444444), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_info, on_info_clicked, LV_EVENT_CLICKED, this);
@@ -94,9 +98,11 @@ void ChatScreen::create_message_list() {
     _message_list = lv_obj_create(_screen);
     lv_obj_set_size(_message_list, LV_PCT(100), 152);  // 240 - 36 (header) - 52 (input)
     lv_obj_align(_message_list, LV_ALIGN_TOP_MID, 0, 36);
-    lv_obj_set_style_pad_all(_message_list, 8, 0);
+    lv_obj_set_style_pad_all(_message_list, 4, 0);
+    lv_obj_set_style_pad_gap(_message_list, 4, 0);
     lv_obj_set_style_bg_color(_message_list, lv_color_hex(0x0d0d0d), 0);  // Slightly darker
     lv_obj_set_style_border_width(_message_list, 0, 0);
+    lv_obj_set_style_radius(_message_list, 0, 0);
     lv_obj_set_flex_flow(_message_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(_message_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 }
@@ -108,12 +114,13 @@ void ChatScreen::create_input_area() {
     lv_obj_set_style_bg_color(_input_area, lv_color_hex(0x1a1a1a), 0);
     lv_obj_set_style_border_width(_input_area, 0, 0);
     lv_obj_set_style_radius(_input_area, 0, 0);
+    lv_obj_set_style_pad_all(_input_area, 0, 0);
     lv_obj_clear_flag(_input_area, LV_OBJ_FLAG_SCROLLABLE);
 
     // Text area for message input
     _text_area = lv_textarea_create(_input_area);
-    lv_obj_set_size(_text_area, 235, 40);
-    lv_obj_align(_text_area, LV_ALIGN_LEFT_MID, 8, 0);
+    lv_obj_set_size(_text_area, 245, 40);
+    lv_obj_align(_text_area, LV_ALIGN_LEFT_MID, 4, 0);
     lv_textarea_set_placeholder_text(_text_area, "Type message...");
     lv_textarea_set_one_line(_text_area, false);
     lv_textarea_set_max_length(_text_area, 500);
@@ -124,7 +131,7 @@ void ChatScreen::create_input_area() {
     // Send button
     _btn_send = lv_btn_create(_input_area);
     lv_obj_set_size(_btn_send, 65, 40);
-    lv_obj_align(_btn_send, LV_ALIGN_RIGHT_MID, -8, 0);
+    lv_obj_align(_btn_send, LV_ALIGN_RIGHT_MID, -4, 0);
     lv_obj_set_style_bg_color(_btn_send, lv_color_hex(0x2e7d32), 0);
     lv_obj_set_style_bg_color(_btn_send, lv_color_hex(0x388e3c), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_send, on_send_clicked, LV_EVENT_CLICKED, this);
