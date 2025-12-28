@@ -321,15 +321,18 @@ void UIManager::send_message(const Bytes& dest_hash, const String& content) {
         DEBUG("  Set destination hash manually");
     }
 
+    // Pack the message to generate hash and signature before saving
+    message.pack();
+
     // Add to UI immediately (optimistic update)
     if (_current_screen == SCREEN_CHAT && _current_peer_hash == dest_hash) {
         _chat_screen->add_message(message, true);
     }
 
-    // Save to store
+    // Save to store (now has valid hash from pack())
     _store.save_message(message);
 
-    // Queue for sending
+    // Queue for sending (pack already called, will use cached packed data)
     _router.handle_outbound(message);
 
     INFO("  Message queued for delivery");
