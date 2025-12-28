@@ -399,6 +399,12 @@ void LXMRouter::on_packet(const Bytes& data, const Packet& packet) {
 			}
 		}
 
+		// Send delivery proof back to sender (matches Python LXMF packet.prove())
+		// Make a non-const copy to call prove() since Packet uses shared_ptr internally
+		Packet proof_packet = packet;
+		INFO("  Sending delivery proof");
+		proof_packet.prove();
+
 		// Add to inbound queue
 		_pending_inbound.push_back(message);
 
