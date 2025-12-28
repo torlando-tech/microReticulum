@@ -214,6 +214,11 @@ namespace LXMF {
 		inline bool incoming() const { return _incoming; }
 
 		/**
+		 * @brief Set incoming flag (for loading from storage)
+		 */
+		inline void incoming(bool incoming) { _incoming = incoming; }
+
+		/**
 		 * @brief String representation of message
 		 */
 		std::string toString() const;

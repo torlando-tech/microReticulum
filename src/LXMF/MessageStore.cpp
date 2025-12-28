@@ -270,6 +270,11 @@ LXMessage MessageStore::load_message(const Bytes& message_hash) {
 
 		LXMessage message = LXMessage::unpack_from_bytes(packed);
 
+		// Restore incoming flag from storage (unpack_from_bytes defaults to true)
+		if (doc.containsKey("incoming")) {
+			message.incoming(doc["incoming"].as<bool>());
+		}
+
 		DEBUG("Loaded message: " + message_hash.toHex());
 		return message;
 
