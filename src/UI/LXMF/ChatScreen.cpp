@@ -63,7 +63,7 @@ void ChatScreen::create_header() {
     // Back button
     _btn_back = lv_btn_create(_header);
     lv_obj_set_size(_btn_back, 50, 28);
-    lv_obj_align(_btn_back, LV_ALIGN_LEFT_MID, 2, 0);
+    lv_obj_align(_btn_back, LV_ALIGN_LEFT_MID, 4, 0);
     lv_obj_set_style_bg_color(_btn_back, lv_color_hex(0x333333), 0);
     lv_obj_set_style_bg_color(_btn_back, lv_color_hex(0x444444), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_back, on_back_clicked, LV_EVENT_CLICKED, this);
@@ -83,7 +83,7 @@ void ChatScreen::create_header() {
     // Info button
     _btn_info = lv_btn_create(_header);
     lv_obj_set_size(_btn_info, 40, 28);
-    lv_obj_align(_btn_info, LV_ALIGN_RIGHT_MID, -2, 0);
+    lv_obj_align(_btn_info, LV_ALIGN_RIGHT_MID, -4, 0);
     lv_obj_set_style_bg_color(_btn_info, lv_color_hex(0x333333), 0);
     lv_obj_set_style_bg_color(_btn_info, lv_color_hex(0x444444), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_info, on_info_clicked, LV_EVENT_CLICKED, this);
@@ -119,7 +119,7 @@ void ChatScreen::create_input_area() {
 
     // Text area for message input
     _text_area = lv_textarea_create(_input_area);
-    lv_obj_set_size(_text_area, 245, 40);
+    lv_obj_set_size(_text_area, 241, 40);
     lv_obj_align(_text_area, LV_ALIGN_LEFT_MID, 4, 0);
     lv_textarea_set_placeholder_text(_text_area, "Type message...");
     lv_textarea_set_one_line(_text_area, false);
@@ -130,7 +130,7 @@ void ChatScreen::create_input_area() {
 
     // Send button
     _btn_send = lv_btn_create(_input_area);
-    lv_obj_set_size(_btn_send, 65, 40);
+    lv_obj_set_size(_btn_send, 67, 40);
     lv_obj_align(_btn_send, LV_ALIGN_RIGHT_MID, -4, 0);
     lv_obj_set_style_bg_color(_btn_send, lv_color_hex(0x2e7d32), 0);
     lv_obj_set_style_bg_color(_btn_send, lv_color_hex(0x388e3c), LV_STATE_PRESSED);
