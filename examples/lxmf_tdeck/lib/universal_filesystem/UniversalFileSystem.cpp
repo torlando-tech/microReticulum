@@ -59,7 +59,7 @@ void UniversalFileSystem::listDir(const char* dir) {
 #ifdef BOARD_ESP32
 	// Setup FileSystem
 	INFO("SPIFFS mounting FileSystem");
-	if (!SPIFFS.begin(true, "")){
+	if (!SPIFFS.begin(true)){
 		ERROR("SPIFFS FileSystem mount failed");
 		return false;
 	}
@@ -73,12 +73,15 @@ void UniversalFileSystem::listDir(const char* dir) {
 	Serial.println(" MB");
 	// ensure FileSystem is writable and format if not
 	RNS::Bytes test("test");
-	if (write_file("/test", test) < 4) {
-		INFO("SPIFFS FileSystem is being formatted, please wait...");
+	size_t wrote = write_file("/test", test);
+	INFO("SPIFFS write test: wrote " + std::to_string(wrote) + " bytes");
+	if (wrote < 4) {
+		WARNING("SPIFFS FileSystem is being formatted, please wait...");
 		SPIFFS.format();
 	}
 	else {
 		remove_file("/test");
+		INFO("SPIFFS FileSystem write test passed");
 	}
 	DEBUG("SPIFFS FileSystem is ready");
 #elif BOARD_NRF52
@@ -381,10 +384,11 @@ void UniversalFileSystem::listDir(const char* dir) {
 /*virtual*/ bool UniversalFileSystem::create_directory(const char* directory_path) {
 #ifdef ARDUINO
 #ifdef BOARD_ESP32
-	if (!SPIFFS.mkdir(directory_path)) {
-		ERROR("create_directory: failed to create directorty " + std::string(directory_path));
-		return false;
-	}
+	// SPIFFS is a flat filesystem - directories are just part of the file path.
+	// mkdir() may fail or be a no-op, but files can still be written with the full path.
+	// Try to create but don't fail if it doesn't work.
+	SPIFFS.mkdir(directory_path);
+	DEBUG("create_directory: SPIFFS mkdir attempted for " + std::string(directory_path));
 	return true;
 #elif BOARD_NRF52
 	if (!InternalFS.mkdir(directory_path)) {

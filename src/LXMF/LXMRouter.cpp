@@ -67,6 +67,8 @@ LXMRouter::LXMRouter(
 	_delivery_destination.set_packet_callback(static_packet_callback);
 
 	INFO("  Delivery destination: " + _delivery_destination.hash().toHex());
+	INFO("  Destination type: " + std::to_string((uint8_t)_delivery_destination.type()));
+	INFO("  Destination direction: " + std::to_string((uint8_t)_delivery_destination.direction()));
 
 	// Announce at start if enabled
 	if (_announce_at_start) {
@@ -238,9 +240,10 @@ void LXMRouter::process_inbound() {
 
 // Announce delivery destination
 void LXMRouter::announce(const Bytes& app_data, bool path_response) {
-	INFO("Announcing LXMF delivery destination");
+	INFO("Announcing LXMF delivery destination: " + _delivery_destination.hash().toHex());
 
 	try {
+		DEBUG("  Calling _delivery_destination.announce()...");
 		_delivery_destination.announce(app_data, path_response);
 		_last_announce_time = Utilities::OS::time();
 		INFO("Announce sent successfully");
@@ -294,10 +297,30 @@ void LXMRouter::retry_failed_outbound() {
 void LXMRouter::on_packet(const Bytes& data, const Packet& packet) {
 	INFO("Received LXMF message packet (" + std::to_string(data.size()) + " bytes)");
 	DEBUG("  From: " + packet.destination_hash().toHex());
+	DEBUG("  Destination type: " + std::to_string((uint8_t)packet.destination_type()));
 
 	try {
+		// Build LXMF data based on delivery method (matches Python LXMF exactly)
+		Bytes lxmf_data;
+		Type::Message::Method method;
+
+		if (packet.destination_type() != RNS::Type::Destination::LINK) {
+			// OPPORTUNISTIC delivery: destination hash is NOT in the encrypted data
+			// We need to prepend it from the packet destination
+			method = Type::Message::OPPORTUNISTIC;
+			INFO("  Delivery method: OPPORTUNISTIC (prepending destination hash)");
+			lxmf_data = _delivery_destination.hash() + data;
+		} else {
+			// DIRECT delivery via Link: data already contains everything
+			method = Type::Message::DIRECT;
+			INFO("  Delivery method: DIRECT (data complete)");
+			lxmf_data = data;
+		}
+
+		DEBUG("  LXMF data size after processing: " + std::to_string(lxmf_data.size()) + " bytes");
+
 		// Unpack LXMF message from packet data
-		LXMessage message = LXMessage::unpack_from_bytes(data);
+		LXMessage message = LXMessage::unpack_from_bytes(lxmf_data, method);
 
 		DEBUG("  Message hash: " + message.hash().toHex());
 		DEBUG("  Source: " + message.source_hash().toHex());

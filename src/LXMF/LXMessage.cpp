@@ -184,7 +184,20 @@ LXMessage LXMessage::unpack_from_bytes(const Bytes& lxmf_bytes, Type::Message::M
 	DEBUG("  Signature: " + std::to_string(signature.size()) + " bytes");
 	DEBUG("  Payload: " + std::to_string(packed_payload.size()) + " bytes");
 
+	// Check for empty payload - this would cause msgpack to crash
+	if (packed_payload.size() == 0) {
+		ERROR("LXMF message has empty payload - cannot unpack");
+		ERROR("  Raw bytes (" + std::to_string(lxmf_bytes.size()) + "): " + lxmf_bytes.toHex());
+		throw std::runtime_error("LXMF message has empty payload");
+	}
+
+	// Log first few bytes of payload for debugging
+	if (packed_payload.size() > 0) {
+		DEBUG("  Payload first bytes: " + packed_payload.left(std::min((size_t)16, packed_payload.size())).toHex());
+	}
+
 	// 2. Unpack payload: [timestamp, title, content, fields] - matches Python LXMF exactly
+	// The payload is msgpack array: [float64_timestamp, bin_title, bin_content, map_fields]
 	MsgPack::Unpacker unpacker;
 	unpacker.feed(packed_payload.data(), packed_payload.size());
 
@@ -196,24 +209,37 @@ LXMessage LXMessage::unpack_from_bytes(const Bytes& lxmf_bytes, Type::Message::M
 	try {
 		MsgPack::bin_t<uint8_t> title_bin;
 		MsgPack::bin_t<uint8_t> content_bin;
-		uint32_t num_fields = 0;
 
-		// Unpack timestamp
+		// First, read the array header (should be 4 elements)
+		MsgPack::arr_size_t arr_size;
+		unpacker.deserialize(arr_size);
+		DEBUG("  Msgpack array size: " + std::to_string(arr_size.size()));
+
+		if (arr_size.size() < 4) {
+			throw std::runtime_error("LXMF payload array too short: " + std::to_string(arr_size.size()));
+		}
+
+		// Unpack timestamp (element 0)
 		unpacker.deserialize(timestamp);
+		DEBUG("  Parsed timestamp: " + std::to_string(timestamp));
 
-		// Unpack title (as binary) - Python's 2nd field
+		// Unpack title (element 1) - as binary
 		unpacker.deserialize(title_bin);
 		title = Bytes(title_bin);
+		DEBUG("  Parsed title: " + std::to_string(title.size()) + " bytes");
 
-		// Unpack content (as binary) - Python's 3rd field
+		// Unpack content (element 2) - as binary
 		unpacker.deserialize(content_bin);
 		content = Bytes(content_bin);
+		DEBUG("  Parsed content: " + std::to_string(content.size()) + " bytes");
 
-		// Unpack number of fields
-		unpacker.deserialize(num_fields);
+		// Unpack fields map (element 3)
+		MsgPack::map_size_t map_size;
+		unpacker.deserialize(map_size);
+		DEBUG("  Msgpack map size: " + std::to_string(map_size.size()));
 
 		// Unpack each field (key-value pairs)
-		for (uint32_t i = 0; i < num_fields; ++i) {
+		for (size_t i = 0; i < map_size.size(); ++i) {
 			MsgPack::bin_t<uint8_t> key_bin;
 			MsgPack::bin_t<uint8_t> value_bin;
 

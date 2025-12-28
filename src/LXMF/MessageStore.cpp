@@ -3,8 +3,8 @@
 #include "../Utilities/OS.h"
 
 #include <ArduinoJson.h>
-#include <fstream>
 #include <algorithm>
+#include <sstream>
 
 using namespace LXMF;
 using namespace RNS;
@@ -34,25 +34,10 @@ MessageStore::~MessageStore() {
 
 // Initialize storage directories
 bool MessageStore::initialize_storage() {
-	// Create base directory
-	if (!Utilities::OS::create_directory(_base_path.c_str())) {
-		ERROR("Failed to create base directory: " + _base_path);
-		return false;
-	}
-
-	// Create messages subdirectory
-	std::string messages_dir = _base_path + "/messages";
-	if (!Utilities::OS::create_directory(messages_dir.c_str())) {
-		ERROR("Failed to create messages directory: " + messages_dir);
-		return false;
-	}
-
-	// Create conversations subdirectory
-	std::string conversations_dir = _base_path + "/conversations";
-	if (!Utilities::OS::create_directory(conversations_dir.c_str())) {
-		ERROR("Failed to create conversations directory: " + conversations_dir);
-		return false;
-	}
+	// Create short directories for SPIFFS compatibility
+	// SPIFFS is flat so these are mostly no-ops, but we try anyway
+	Utilities::OS::create_directory("/m");  // messages
+	Utilities::OS::create_directory("/c");  // conversations
 
 	DEBUG("Storage directories initialized");
 	return true;
@@ -60,7 +45,7 @@ bool MessageStore::initialize_storage() {
 
 // Load conversation index from disk
 void MessageStore::load_index() {
-	std::string index_path = _base_path + "/conversations.json";
+	std::string index_path = "/conv.json";  // Short path for SPIFFS
 
 	if (!Utilities::OS::file_exists(index_path.c_str())) {
 		DEBUG("No existing conversation index found");
@@ -68,17 +53,16 @@ void MessageStore::load_index() {
 	}
 
 	try {
-		// Read JSON file
-		std::ifstream file(index_path);
-		if (!file.is_open()) {
-			WARNING("Failed to open index file: " + index_path);
+		// Read JSON file via OS abstraction (SPIFFS compatible)
+		Bytes data;
+		if (Utilities::OS::read_file(index_path.c_str(), data) == 0) {
+			WARNING("Failed to read index file or empty: " + index_path);
 			return;
 		}
 
-		// Parse JSON
+		// Parse JSON from bytes
 		JsonDocument doc;
-		DeserializationError error = deserializeJson(doc, file);
-		file.close();
+		DeserializationError error = deserializeJson(doc, data.data(), data.size());
 
 		if (error) {
 			ERROR("Failed to parse conversation index: " + std::string(error.c_str()));
@@ -123,7 +107,7 @@ void MessageStore::load_index() {
 
 // Save conversation index to disk
 bool MessageStore::save_index() {
-	std::string index_path = _base_path + "/conversations.json";
+	std::string index_path = "/conv.json";  // Short path for SPIFFS
 
 	try {
 		JsonDocument doc;
@@ -149,15 +133,15 @@ bool MessageStore::save_index() {
 			}
 		}
 
-		// Write to file
-		std::ofstream file(index_path);
-		if (!file.is_open()) {
-			ERROR("Failed to open index file for writing: " + index_path);
+		// Serialize to string then write via OS abstraction (SPIFFS compatible)
+		std::string json_str;
+		serializeJsonPretty(doc, json_str);
+		Bytes data((const uint8_t*)json_str.data(), json_str.size());
+
+		if (Utilities::OS::write_file(index_path.c_str(), data) != data.size()) {
+			ERROR("Failed to write index file: " + index_path);
 			return false;
 		}
-
-		serializeJsonPretty(doc, file);
-		file.close();
 
 		DEBUG("Saved conversation index");
 		return true;
@@ -190,16 +174,16 @@ bool MessageStore::save_message(const LXMessage& message) {
 		// This ensures exact reconstruction on load
 		doc["packed"] = message.packed().toHex();
 
-		// Write message file
+		// Write message file via OS abstraction (SPIFFS compatible)
 		std::string message_path = get_message_path(message.hash());
-		std::ofstream file(message_path);
-		if (!file.is_open()) {
-			ERROR("Failed to open message file for writing: " + message_path);
+		std::string json_str;
+		serializeJsonPretty(doc, json_str);
+		Bytes data((const uint8_t*)json_str.data(), json_str.size());
+
+		if (Utilities::OS::write_file(message_path.c_str(), data) != data.size()) {
+			ERROR("Failed to write message file: " + message_path);
 			return false;
 		}
-
-		serializeJsonPretty(doc, file);
-		file.close();
 
 		DEBUG("  Message file saved: " + message_path);
 
@@ -264,16 +248,15 @@ LXMessage MessageStore::load_message(const Bytes& message_hash) {
 	}
 
 	try {
-		// Read JSON file
-		std::ifstream file(message_path);
-		if (!file.is_open()) {
-			ERROR("Failed to open message file: " + message_path);
+		// Read JSON file via OS abstraction (SPIFFS compatible)
+		Bytes data;
+		if (Utilities::OS::read_file(message_path.c_str(), data) == 0) {
+			ERROR("Failed to read message file: " + message_path);
 			return LXMessage(Bytes(), Bytes(), Bytes(), Bytes());
 		}
 
 		JsonDocument doc;
-		DeserializationError error = deserializeJson(doc, file);
-		file.close();
+		DeserializationError error = deserializeJson(doc, data.data(), data.size());
 
 		if (error) {
 			ERROR("Failed to parse message file: " + std::string(error.c_str()));
@@ -462,13 +445,15 @@ bool MessageStore::clear_all() {
 }
 
 // Get message file path
+// Use short path for SPIFFS compatibility (32 char filename limit)
+// Format: /m/<first12chars>.j (12 chars of hash = 6 bytes = plenty unique for local store)
 std::string MessageStore::get_message_path(const Bytes& message_hash) const {
-	return _base_path + "/messages/" + message_hash.toHex() + ".json";
+	return "/m/" + message_hash.toHex().substr(0, 12) + ".j";
 }
 
 // Get conversation directory path
 std::string MessageStore::get_conversation_path(const Bytes& peer_hash) const {
-	return _base_path + "/conversations/" + peer_hash.toHex();
+	return "/c/" + peer_hash.toHex().substr(0, 12);
 }
 
 // Determine peer hash from message
