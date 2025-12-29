@@ -258,6 +258,26 @@ namespace LXMF {
 		 */
 		void on_link_closed(const RNS::Link& link);
 
+		/**
+		 * @brief Handle incoming link established to our delivery destination
+		 *
+		 * Called when a remote peer establishes a link to send us DIRECT messages.
+		 * Sets up resource callbacks to receive LXMF messages.
+		 *
+		 * @param link The incoming link (non-const to set callbacks)
+		 */
+		void on_incoming_link_established(RNS::Link& link);
+
+		/**
+		 * @brief Handle resource concluded on incoming link
+		 *
+		 * Called when an LXMF message resource transfer completes.
+		 * Unpacks and queues the message for delivery.
+		 *
+		 * @param resource The completed resource containing LXMF message
+		 */
+		void on_resource_concluded(const RNS::Resource& resource);
+
 	private:
 		/**
 		 * @brief Establish a link to a destination

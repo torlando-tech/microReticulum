@@ -697,8 +697,7 @@ using namespace RNS::Utilities;
 	TRACE("Transport::outbound: destination=" + packet.destination_hash().toHex() + " hops=" + std::to_string(packet.hops()));
 
 	while (_jobs_running) {
-		TRACE("Transport::outbound: sleeping...");
-		OS::sleep(0.0005);
+		OS::sleep(0.001);  // Wait for jobs to finish
 	}
 
 	_jobs_locked = true;
@@ -1235,8 +1234,7 @@ using namespace RNS::Utilities;
 */
 
 	while (_jobs_running) {
-		TRACE("Transport::inbound: sleeping...");
-		OS::sleep(0.0005);
+		OS::sleep(0.001);  // Wait for jobs to finish
 	}
 
 	if (!_identity) {

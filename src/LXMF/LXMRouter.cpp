@@ -3,6 +3,7 @@
 #include "../Utilities/OS.h"
 #include "../Packet.h"
 #include "../Transport.h"
+#include "../Resource.h"
 
 #include <map>
 #include <MsgPack.h>
@@ -39,6 +40,30 @@ static void static_link_closed_callback(Link& link) {
 	}
 }
 
+// Static callback for incoming link established on delivery destination
+static void static_delivery_link_established_callback(Link& link) {
+	// Find router that owns this destination
+	auto it = _router_registry.find(link.destination().hash());
+	if (it != _router_registry.end()) {
+		it->second->on_incoming_link_established(link);
+	}
+}
+
+// Static callback for resource concluded on delivery links
+static void static_resource_concluded_callback(const Resource& resource) {
+	Link link = resource.link();
+	if (!link) {
+		ERROR("static_resource_concluded_callback: Resource has no link");
+		return;
+	}
+
+	// Find router that owns this link's destination
+	auto it = _router_registry.find(link.destination().hash());
+	if (it != _router_registry.end()) {
+		it->second->on_resource_concluded(resource);
+	}
+}
+
 // Constructor
 LXMRouter::LXMRouter(
 	const Identity& identity,
@@ -64,8 +89,11 @@ LXMRouter::LXMRouter(
 	// Register this router in global registry for callback dispatch
 	_router_registry[_delivery_destination.hash()] = this;
 
-	// Register packet callback for receiving LXMF messages
+	// Register packet callback for receiving LXMF messages (OPPORTUNISTIC)
 	_delivery_destination.set_packet_callback(static_packet_callback);
+
+	// Register link established callback for incoming links (DIRECT delivery)
+	_delivery_destination.set_link_established_callback(static_delivery_link_established_callback);
 
 	INFO("  Delivery destination: " + _delivery_destination.hash().toHex());
 	INFO("  Destination type: " + std::to_string((uint8_t)_delivery_destination.type()));
@@ -598,5 +626,67 @@ void LXMRouter::on_link_closed(const Link& link) {
 	if (it != _direct_links.end()) {
 		_direct_links.erase(it);
 		DEBUG("  Removed link from cache");
+	}
+}
+
+// Incoming link established callback (for DIRECT delivery to our destination)
+void LXMRouter::on_incoming_link_established(Link& link) {
+	INFO("Incoming link established from remote peer");
+	DEBUG("  Link ID: " + link.link_id().toHex());
+
+	// Set up resource concluded callback to receive LXMF messages over this link
+	link.set_resource_concluded_callback(static_resource_concluded_callback);
+	DEBUG("  Resource callback registered for incoming LXMF messages");
+}
+
+// Resource concluded callback (LXMF message received via DIRECT delivery)
+void LXMRouter::on_resource_concluded(const RNS::Resource& resource) {
+	DEBUG("Resource concluded, status=" + std::to_string((int)resource.status()));
+
+	if (resource.status() != RNS::Type::Resource::COMPLETE) {
+		WARNING("Resource transfer failed with status " + std::to_string((int)resource.status()));
+		return;
+	}
+
+	// Get the resource data - this is the LXMF message
+	Bytes data = resource.data();
+	INFO("Received LXMF message via DIRECT delivery (" + std::to_string(data.size()) + " bytes)");
+
+	try {
+		// DIRECT delivery via resource: data is the full packed LXMF message
+		// Format: destination_hash + source_hash + signature + payload
+		// (same as OPPORTUNISTIC, just delivered via link resource instead of single packet)
+
+		// Unpack the LXMF message
+		LXMessage message = LXMessage::unpack_from_bytes(data, Type::Message::DIRECT);
+
+		DEBUG("  Message hash: " + message.hash().toHex());
+		DEBUG("  Source: " + message.source_hash().toHex());
+		DEBUG("  Content size: " + std::to_string(message.content().size()) + " bytes");
+
+		// Verify destination matches
+		if (message.destination_hash() != _delivery_destination.hash()) {
+			WARNING("Message destination mismatch - ignoring");
+			return;
+		}
+
+		// Signature validation (same as on_packet)
+		if (!message.signature_validated()) {
+			WARNING("Message signature not validated");
+			DEBUG("  Unverified reason: " + std::to_string((uint8_t)message.unverified_reason()));
+
+			// Accept messages with unknown source (signature validated later)
+			if (message.unverified_reason() != Type::Message::SOURCE_UNKNOWN) {
+				WARNING("  Rejecting message with invalid signature");
+				return;
+			}
+		}
+
+		// Add to inbound queue for processing
+		_pending_inbound.push_back(message);
+		INFO("  Message queued for delivery");
+
+	} catch (const std::exception& e) {
+		ERROR("Failed to process DIRECT message: " + std::string(e.what()));
 	}
 }

@@ -806,6 +806,12 @@ void loop() {
         lora_interface->loop();
     }
 
+    // Process LXMF router queues
+    if (router) {
+        router->process_outbound();
+        router->process_inbound();
+    }
+
     // Update UI manager (processes LXMF messages)
     if (ui_manager) {
         ui_manager->update();
