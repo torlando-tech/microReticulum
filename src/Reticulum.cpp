@@ -1,6 +1,7 @@
 #include "Reticulum.h"
 
 #include "Transport.h"
+#include "Identity.h"
 #include "Log.h"
 
 //#include <TransistorNoiseSource.h>
@@ -198,6 +199,9 @@ void Reticulum::start() {
 
 	INFO("Total memory: " + std::to_string(OS::heap_size()));
 	INFO("Total flash: " + std::to_string(OS::storage_size()));
+
+	// Load known destinations (for display names, etc.)
+	Identity::load_known_destinations();
 
 	INFO("Starting Transport...");
 	Transport::start(*this);

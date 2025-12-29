@@ -23,6 +23,7 @@ namespace RNS {
 	private:
 		class IdentityEntry {
 		public:
+			IdentityEntry() : _timestamp(0) {}
 			IdentityEntry(double timestamp, const Bytes& packet_hash, const Bytes& public_key, const Bytes& app_data) :
 				_timestamp(timestamp),
 				_packet_hash(packet_hash),

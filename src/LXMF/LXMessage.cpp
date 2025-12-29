@@ -168,7 +168,7 @@ const Bytes& LXMessage::pack() {
 }
 
 // Unpack an LXMF message from bytes
-LXMessage LXMessage::unpack_from_bytes(const Bytes& lxmf_bytes, Type::Message::Method original_method) {
+LXMessage LXMessage::unpack_from_bytes(const Bytes& lxmf_bytes, Type::Message::Method original_method, bool skip_signature_validation) {
 	INFO("Unpacking LXMF message from " + std::to_string(lxmf_bytes.size()) + " bytes");
 
 	// 1. Extract fixed-size fields
@@ -290,30 +290,36 @@ LXMessage LXMessage::unpack_from_bytes(const Bytes& lxmf_bytes, Type::Message::M
 
 	DEBUG("  Calculated hash: " + message._hash.toHex());
 
-	// 5. Try to validate signature
-	// Check if we have the source identity cached
-	Identity source_identity = Identity::recall(source_hash);
-	if (source_identity) {
-		INFO("  Source identity found in cache, validating signature");
-		message._source = Destination(source_identity, RNS::Type::Destination::OUT, RNS::Type::Destination::SINGLE, "lxmf", "delivery");
+	// 5. Try to validate signature (skip if loading from trusted storage)
+	if (skip_signature_validation) {
+		// Trust that signature was validated when originally received
+		message._signature_validated = true;
+		DEBUG("  Skipping signature validation (trusted storage)");
+	} else {
+		// Check if we have the source identity cached
+		Identity source_identity = Identity::recall(source_hash);
+		if (source_identity) {
+			INFO("  Source identity found in cache, validating signature");
+			message._source = Destination(source_identity, RNS::Type::Destination::OUT, RNS::Type::Destination::SINGLE, "lxmf", "delivery");
 
-		// Validate signature
-		Bytes signed_part;
-		signed_part << hashed_part;
-		signed_part << message._hash;
+			// Validate signature
+			Bytes signed_part;
+			signed_part << hashed_part;
+			signed_part << message._hash;
 
-		if (source_identity.validate(signature, signed_part)) {
-			message._signature_validated = true;
-			INFO("  Signature validated successfully");
+			if (source_identity.validate(signature, signed_part)) {
+				message._signature_validated = true;
+				INFO("  Signature validated successfully");
+			} else {
+				message._signature_validated = false;
+				message._unverified_reason = Type::Message::SIGNATURE_INVALID;
+				WARNING("  Signature validation failed!");
+			}
 		} else {
 			message._signature_validated = false;
-			message._unverified_reason = Type::Message::SIGNATURE_INVALID;
-			WARNING("  Signature validation failed!");
+			message._unverified_reason = Type::Message::SOURCE_UNKNOWN;
+			DEBUG("  Source identity unknown, signature not validated");
 		}
-	} else {
-		message._signature_validated = false;
-		message._unverified_reason = Type::Message::SOURCE_UNKNOWN;
-		DEBUG("  Source identity unknown, signature not validated");
 	}
 
 	// Similarly try to get destination identity

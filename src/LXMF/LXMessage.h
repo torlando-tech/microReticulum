@@ -87,9 +87,10 @@ namespace LXMF {
 		 *
 		 * @param lxmf_bytes Packed LXMF message
 		 * @param original_method Original delivery method (optional)
+		 * @param skip_signature_validation Skip Ed25519 validation (for trusted local storage)
 		 * @return LXMessage object (or throws on error)
 		 */
-		static LXMessage unpack_from_bytes(const RNS::Bytes& lxmf_bytes, Type::Message::Method original_method = Type::Message::DIRECT);
+		static LXMessage unpack_from_bytes(const RNS::Bytes& lxmf_bytes, Type::Message::Method original_method = Type::Message::DIRECT, bool skip_signature_validation = false);
 
 		/**
 		 * @brief Validate the message signature

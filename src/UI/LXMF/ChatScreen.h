@@ -168,6 +168,7 @@ private:
     // Utility
     static String format_timestamp(double timestamp);
     static String get_delivery_indicator(bool outgoing, bool delivered, bool failed);
+    static String parse_display_name(const RNS::Bytes& app_data);
 };
 
 } // namespace LXMF

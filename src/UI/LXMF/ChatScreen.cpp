@@ -6,7 +6,9 @@
 #ifdef ARDUINO
 
 #include "../../Log.h"
+#include "../../Identity.h"
 #include "../LVGL/LVGLInit.h"
+#include <MsgPack.h>
 
 using namespace RNS;
 
@@ -213,8 +215,19 @@ void ChatScreen::load_conversation(const Bytes& peer_hash, ::LXMF::MessageStore&
 
     INFO(("Loading conversation with peer " + String(peer_hash.toHex().substr(0, 8).c_str()) + "...").c_str());
 
+    // Try to get display name from app_data
+    String peer_name;
+    Bytes app_data = Identity::recall_app_data(peer_hash);
+    if (app_data && app_data.size() > 0) {
+        peer_name = parse_display_name(app_data);
+    }
+
+    // Fall back to truncated hash if no display name
+    if (peer_name.length() == 0) {
+        peer_name = String(peer_hash.toHex().substr(0, 12).c_str()) + "...";
+    }
+
     // Update header with peer info
-    String peer_name = String(peer_hash.toHex().substr(0, 8).c_str()) + "...";
     lv_obj_t* label_peer = lv_obj_get_child(_header, 1);  // Second child is peer label
     lv_label_set_text(label_peer, peer_name.c_str());
 
@@ -426,6 +439,49 @@ String ChatScreen::get_delivery_indicator(bool outgoing, bool delivered, bool fa
         return LV_SYMBOL_OK LV_SYMBOL_OK;  // Double check for delivered
     } else {
         return LV_SYMBOL_OK;  // Single check for sent
+    }
+}
+
+String ChatScreen::parse_display_name(const Bytes& app_data) {
+    if (app_data.size() == 0) {
+        return String();
+    }
+
+    // Check first byte to determine format
+    uint8_t first_byte = app_data.data()[0];
+
+    // Msgpack fixarray (0x90-0x9f) or array16 (0xdc) indicates LXMF 0.5.0+ format
+    if ((first_byte >= 0x90 && first_byte <= 0x9f) || first_byte == 0xdc) {
+        // Msgpack encoded: [display_name, stamp_cost]
+        MsgPack::Unpacker unpacker;
+        unpacker.feed(app_data.data(), app_data.size());
+
+        // Read array header
+        MsgPack::arr_size_t arr_size;
+        if (!unpacker.deserialize(arr_size)) {
+            return String();
+        }
+
+        if (arr_size.size() < 1) {
+            return String();
+        }
+
+        // First element is display_name (can be nil or bytes)
+        if (unpacker.isNil()) {
+            unpacker.unpackNil();
+            return String();
+        }
+
+        // Try to read as binary (bytes)
+        MsgPack::bin_t<uint8_t> name_bin;
+        if (unpacker.deserialize(name_bin)) {
+            return String((const char*)name_bin.data(), name_bin.size());
+        }
+
+        return String();
+    } else {
+        // Legacy format: raw UTF-8 bytes
+        return String(app_data.toString().c_str());
     }
 }
 

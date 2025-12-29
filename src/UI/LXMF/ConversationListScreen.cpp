@@ -7,6 +7,7 @@
 
 #include "../../Log.h"
 #include "../../Identity.h"
+#include "../../Utilities/OS.h"
 #include "../../Hardware/TDeck/Config.h"
 #include <WiFi.h>
 #include <MsgPack.h>
@@ -453,19 +454,25 @@ void ConversationListScreen::on_delete_confirmed(lv_event_t* event) {
 }
 
 String ConversationListScreen::format_timestamp(uint32_t timestamp) {
-    uint32_t now = millis() / 1000;  // Convert to seconds
-    uint32_t diff = now - timestamp;
+    double now = Utilities::OS::time();
+    double diff = now - (double)timestamp;
 
-    if (diff < 60) {
+    if (diff < 0) {
+        return "Future";  // Clock not synced or future timestamp
+    } else if (diff < 60) {
         return "Just now";
     } else if (diff < 3600) {
-        return String(diff / 60) + "m ago";
+        int mins = (int)(diff / 60);
+        return String(mins) + "m ago";
     } else if (diff < 86400) {
-        return String(diff / 3600) + "h ago";
+        int hours = (int)(diff / 3600);
+        return String(hours) + "h ago";
     } else if (diff < 604800) {
-        return String(diff / 86400) + "d ago";
+        int days = (int)(diff / 86400);
+        return String(days) + "d ago";
     } else {
-        return String(diff / 604800) + "w ago";
+        int weeks = (int)(diff / 604800);
+        return String(weeks) + "w ago";
     }
 }
 

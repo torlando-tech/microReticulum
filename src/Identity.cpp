@@ -11,6 +11,7 @@
 #include "Cryptography/Token.h"
 #include "Cryptography/Random.h"
 
+#include <ArduinoJson.h>
 #include <algorithm>
 #include <string.h>
 
@@ -198,9 +199,24 @@ Can be used to load previously created and saved identities into Reticulum.
 		throw std::invalid_argument("Can't remember " + destination_hash.toHex() + ", the public key size of " + std::to_string(public_key.size()) + " is not valid.");
 	}
 	else {
-		//p _known_destinations[destination_hash] = {OS::time(), packet_hash, public_key, app_data};
-		// CBA ACCUMULATES
-		_known_destinations.insert({destination_hash, {OS::time(), packet_hash, public_key, app_data}});
+		// Check if this is a new destination or updated app_data
+		bool should_save = false;
+		auto iter = _known_destinations.find(destination_hash);
+		if (iter == _known_destinations.end()) {
+			// New destination
+			_known_destinations.insert({destination_hash, {OS::time(), packet_hash, public_key, app_data}});
+			should_save = true;
+		} else if (app_data && app_data.size() > 0 && iter->second._app_data != app_data) {
+			// Update existing with new app_data
+			iter->second._app_data = app_data;
+			iter->second._timestamp = OS::time();
+			should_save = true;
+		}
+
+		// Persist to storage if changed
+		if (should_save) {
+			save_known_destinations();
+		}
 	}
 }
 
@@ -257,11 +273,8 @@ Recall last heard app_data for a destination hash.
 }
 
 /*static*/ bool Identity::save_known_destinations() {
-	// TODO: Improve the storage method so we don't have to
-	// deserialize and serialize the entire table on every
-	// save, but the only changes. It might be possible to
-	// simply overwrite on exit now that every local client
-	// disconnect triggers a data persist.
+	// Short path for SPIFFS compatibility
+	const char* storage_path = "/known_dst.json";
 
 	bool success = false;
 	try {
@@ -281,34 +294,33 @@ Recall last heard app_data for a destination hash.
 		_saving_known_destinations = true;
 		double save_start = OS::time();
 
-		std::map<Bytes, IdentityEntry> storage_known_destinations;
-// TODO
-/*
-		if os.path.isfile(RNS.Reticulum.storagepath+"/known_destinations"):
-			try:
-				file = open(RNS.Reticulum.storagepath+"/known_destinations","rb")
-				storage_known_destinations = umsgpack.load(file)
-				file.close()
-			except:
-				pass
-*/
+		DEBUG("Saving " + std::to_string(_known_destinations.size()) + " known destinations to storage...");
 
-		for (auto& [destination_hash, identity_entry] : storage_known_destinations) {
-			if (_known_destinations.find(destination_hash) == _known_destinations.end()) {
-				//_known_destinations[destination_hash] = storage_known_destinations[destination_hash];
-				//_known_destinations[destination_hash] = identity_entry;
-				// CBA ACCUMULATES
-				_known_destinations.insert({destination_hash, identity_entry});
+		// Create JSON document
+		JsonDocument doc;
+		JsonArray destinations = doc["destinations"].to<JsonArray>();
+
+		for (const auto& [dest_hash, entry] : _known_destinations) {
+			JsonObject dest = destinations.add<JsonObject>();
+			dest["hash"] = dest_hash.toHex();
+			dest["time"] = entry._timestamp;
+			dest["packet_hash"] = entry._packet_hash.toHex();
+			dest["public_key"] = entry._public_key.toHex();
+			if (entry._app_data && entry._app_data.size() > 0) {
+				dest["app_data"] = entry._app_data.toHex();
 			}
 		}
 
-// TODO
-/*
-		DEBUG("Saving " + std::to_string(_known_destinations.size()) + " known destinations to storage...");
-		file = open(RNS.Reticulum.storagepath+"/known_destinations","wb")
-		umsgpack.dump(Identity.known_destinations, file)
-		file.close()
-*/
+		// Serialize to string and write to file
+		std::string json_str;
+		serializeJson(doc, json_str);
+		Bytes data((const uint8_t*)json_str.data(), json_str.size());
+
+		if (OS::write_file(storage_path, data) != data.size()) {
+			ERROR("Failed to write known destinations file");
+			_saving_known_destinations = false;
+			return false;
+		}
 
 		std::string time_str;
 		double save_time = OS::time() - save_start;
@@ -319,7 +331,7 @@ Recall last heard app_data for a destination hash.
 			time_str = std::to_string(OS::round(save_time, 1)) + " s";
 		}
 
-		DEBUG("Saved known destinations to storage in " + time_str);
+		DEBUG("Saved " + std::to_string(_known_destinations.size()) + " known destinations in " + time_str);
 
 		success = true;
 	}
@@ -333,26 +345,76 @@ Recall last heard app_data for a destination hash.
 }
 
 /*static*/ void Identity::load_known_destinations() {
-// TODO
-/*
-	if os.path.isfile(RNS.Reticulum.storagepath+"/known_destinations"):
-		try:
-			file = open(RNS.Reticulum.storagepath+"/known_destinations","rb")
-			loaded_known_destinations = umsgpack.load(file)
-			file.close()
+	// Short path for SPIFFS compatibility
+	const char* storage_path = "/known_dst.json";
 
-			Identity.known_destinations = {}
-			for known_destination in loaded_known_destinations:
-				if len(known_destination) == RNS.Reticulum.TRUNCATED_HASHLENGTH//8:
-					Identity.known_destinations[known_destination] = loaded_known_destinations[known_destination]
+	if (!OS::file_exists(storage_path)) {
+		DEBUG("No known destinations file found, starting fresh");
+		return;
+	}
 
-			RNS.log("Loaded "+str(len(Identity.known_destinations))+" known destination from storage", RNS.LOG_VERBOSE)
-		except:
-			RNS.log("Error loading known destinations from disk, file will be recreated on exit", RNS.LOG_ERROR)
-	else:
-		RNS.log("Destinations file does not exist, no known destinations loaded", RNS.LOG_VERBOSE)
-*/
+	try {
+		// Read JSON file
+		Bytes data;
+		if (OS::read_file(storage_path, data) == 0) {
+			WARNING("Failed to read known destinations file or empty");
+			return;
+		}
 
+		// Parse JSON
+		JsonDocument doc;
+		DeserializationError error = deserializeJson(doc, data.data(), data.size());
+
+		if (error) {
+			ERROR("Failed to parse known destinations file: " + std::string(error.c_str()));
+			return;
+		}
+
+		// Load destinations
+		JsonArray destinations = doc["destinations"].as<JsonArray>();
+		size_t loaded_count = 0;
+
+		for (JsonObject dest : destinations) {
+			IdentityEntry entry;
+
+			// Parse destination hash
+			Bytes dest_hash;
+			const char* hash_hex = dest["hash"];
+			if (!hash_hex) continue;
+			dest_hash.assignHex(hash_hex);
+
+			// Parse entry fields
+			entry._timestamp = dest["time"] | 0.0;
+
+			const char* packet_hash_hex = dest["packet_hash"];
+			if (packet_hash_hex) {
+				entry._packet_hash.assignHex(packet_hash_hex);
+			}
+
+			const char* public_key_hex = dest["public_key"];
+			if (public_key_hex) {
+				entry._public_key.assignHex(public_key_hex);
+			}
+
+			if (dest["app_data"].is<const char*>()) {
+				const char* app_data_hex = dest["app_data"];
+				if (app_data_hex) {
+					entry._app_data.assignHex(app_data_hex);
+				}
+			}
+
+			// Add to known destinations (don't overwrite existing)
+			if (_known_destinations.find(dest_hash) == _known_destinations.end()) {
+				_known_destinations.insert({dest_hash, entry});
+				loaded_count++;
+			}
+		}
+
+		DEBUG("Loaded " + std::to_string(loaded_count) + " known destinations from storage");
+
+	} catch (std::exception& e) {
+		ERRORF("Error loading known destinations from disk: %s", e.what());
+	}
 }
 
 /*static*/ void Identity::cull_known_destinations() {

@@ -268,7 +268,8 @@ LXMessage MessageStore::load_message(const Bytes& message_hash) {
 		Bytes packed;
 		packed.assignHex(doc["packed"].as<const char*>());
 
-		LXMessage message = LXMessage::unpack_from_bytes(packed);
+		// Skip signature validation - messages from storage were already validated when received
+		LXMessage message = LXMessage::unpack_from_bytes(packed, LXMF::Type::Message::DIRECT, true);
 
 		// Restore incoming flag from storage (unpack_from_bytes defaults to true)
 		if (doc.containsKey("incoming")) {

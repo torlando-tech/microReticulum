@@ -277,10 +277,8 @@ void UIManager::on_announce_selected(const Bytes& dest_hash) {
     std::string msg = "Announce selected: " + hash_hex + "...";
     INFO(msg.c_str());
 
-    // Open compose screen with destination pre-filled
-    _compose_screen->clear();
-    _compose_screen->set_destination(dest_hash);
-    show_compose();
+    // Go directly to chat screen with this destination
+    show_chat(dest_hash);
 }
 
 void UIManager::on_back_from_announces() {
