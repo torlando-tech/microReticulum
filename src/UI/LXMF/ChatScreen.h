@@ -141,7 +141,6 @@ private:
     lv_obj_t* _btn_send;
     lv_obj_t* _btn_back;
     lv_obj_t* _btn_info;
-    lv_obj_t* _keyboard;
 
     RNS::Bytes _peer_hash;
     ::LXMF::MessageStore* _message_store;
@@ -155,15 +154,19 @@ private:
     void create_header();
     void create_message_list();
     void create_input_area();
-    void create_keyboard();
     void create_message_bubble(const MessageItem& item);
 
     // Event handlers
     static void on_back_clicked(lv_event_t* event);
     static void on_send_clicked(lv_event_t* event);
     static void on_info_clicked(lv_event_t* event);
-    static void on_textarea_focused(lv_event_t* event);
-    static void on_keyboard_ready(lv_event_t* event);
+    static void on_message_long_pressed(lv_event_t* event);
+    static void on_copy_dialog_action(lv_event_t* event);
+    static void on_textarea_long_pressed(lv_event_t* event);
+    static void on_paste_dialog_action(lv_event_t* event);
+
+    // Copy/paste state
+    String _pending_copy_text;
 
     // Utility
     static String format_timestamp(double timestamp);

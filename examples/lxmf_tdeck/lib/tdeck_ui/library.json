@@ -16,6 +16,7 @@
         "flags": "-std=gnu++11 -I../../../../src",
         "srcFilter": [
             "+<Hardware/TDeck/*.cpp>",
+            "+<UI/*.cpp>",
             "+<UI/LVGL/*.cpp>",
             "+<UI/LXMF/*.cpp>"
         ],
