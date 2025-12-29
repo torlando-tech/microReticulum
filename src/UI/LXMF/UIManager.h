@@ -12,6 +12,7 @@
 #include "ComposeScreen.h"
 #include "AnnounceListScreen.h"
 #include "StatusScreen.h"
+#include "SettingsScreen.h"
 #include "../../LXMF/LXMRouter.h"
 #include "../../LXMF/MessageStore.h"
 #include "../../Reticulum.h"
@@ -88,6 +89,16 @@ public:
     void show_status();
 
     /**
+     * Show settings screen
+     */
+    void show_settings();
+
+    /**
+     * Get settings screen for external configuration
+     */
+    SettingsScreen* get_settings_screen() { return _settings_screen; }
+
+    /**
      * Update RNS connection status displayed on status screen
      * @param connected Whether connected to RNS server
      * @param server_name Server hostname (optional)
@@ -119,7 +130,8 @@ private:
         SCREEN_CHAT,
         SCREEN_COMPOSE,
         SCREEN_ANNOUNCES,
-        SCREEN_STATUS
+        SCREEN_STATUS,
+        SCREEN_SETTINGS
     };
 
     RNS::Reticulum& _reticulum;
@@ -134,14 +146,13 @@ private:
     ComposeScreen* _compose_screen;
     AnnounceListScreen* _announce_list_screen;
     StatusScreen* _status_screen;
+    SettingsScreen* _settings_screen;
 
     bool _initialized;
 
     // Screen navigation handlers
     void on_conversation_selected(const RNS::Bytes& peer_hash);
     void on_new_message();
-    void on_settings();
-    static void settings_msgbox_cb(lv_event_t* event);
     void on_back_to_conversation_list();
     void on_send_message_from_chat(const String& content);
     void on_send_message_from_compose(const RNS::Bytes& dest_hash, const String& message);
@@ -150,6 +161,7 @@ private:
     void on_announce_selected(const RNS::Bytes& dest_hash);
     void on_back_from_announces();
     void on_back_from_status();
+    void on_back_from_settings();
 
     // LXMF message handling
     void send_message(const RNS::Bytes& dest_hash, const String& content);

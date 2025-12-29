@@ -39,6 +39,7 @@
 // UI
 #include <UI/LVGL/LVGLInit.h>
 #include <UI/LXMF/UIManager.h>
+#include <UI/LXMF/SettingsScreen.h>
 
 // Logging
 #include <Log.h>
@@ -47,12 +48,8 @@ using namespace RNS;
 using namespace LXMF;
 using namespace Hardware::TDeck;
 
-// Configuration
-const char* WIFI_SSID = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-// Use local RNS server for testing
-const char* RNS_SERVER_IP = "YOUR_SERVER_IP";
-const uint16_t RNS_SERVER_PORT = 4965;
+// Application settings (loaded from NVS)
+UI::LXMF::AppSettings app_settings;
 
 // Global instances
 Reticulum* reticulum = nullptr;
@@ -67,7 +64,6 @@ Interface* tcp_interface = nullptr;
 uint32_t last_ui_update = 0;
 uint32_t last_announce = 0;
 uint32_t last_status_check = 0;
-const uint32_t ANNOUNCE_INTERVAL = 60000;  // 60 seconds - more aggressive due to connection instability
 const uint32_t STATUS_CHECK_INTERVAL = 1000;  // 1 second
 
 // Connection tracking
@@ -209,12 +205,52 @@ void setup_gps() {
     INFO(gps_msg.c_str());
 }
 
+void load_app_settings() {
+    INFO("Loading application settings from NVS...");
+
+    Preferences prefs;
+    prefs.begin("settings", true);  // Read-only
+
+    // Network
+    app_settings.wifi_ssid = prefs.getString("wifi_ssid", "");
+    app_settings.wifi_password = prefs.getString("wifi_pass", "");
+    app_settings.tcp_host = prefs.getString("tcp_host", "YOUR_SERVER_IP");
+    app_settings.tcp_port = prefs.getUShort("tcp_port", 4965);
+
+    // Identity
+    app_settings.display_name = prefs.getString("disp_name", "");
+
+    // Display
+    app_settings.brightness = prefs.getUChar("brightness", 180);
+    app_settings.screen_timeout = prefs.getUShort("timeout", 60);
+
+    // Advanced
+    app_settings.announce_interval = prefs.getULong("announce", 60);
+    app_settings.gps_time_sync = prefs.getBool("gps_sync", true);
+
+    prefs.end();
+
+    // Log loaded settings (hide password)
+    String msg = "  WiFi SSID: " + (app_settings.wifi_ssid.length() > 0 ? app_settings.wifi_ssid : "(not set)");
+    INFO(msg.c_str());
+    msg = "  TCP Server: " + app_settings.tcp_host + ":" + String(app_settings.tcp_port);
+    INFO(msg.c_str());
+    msg = "  Brightness: " + String(app_settings.brightness);
+    INFO(msg.c_str());
+}
+
 void setup_wifi() {
-    String msg = "Connecting to WiFi: " + String(WIFI_SSID);
+    // Check if WiFi credentials are configured
+    if (app_settings.wifi_ssid.length() == 0) {
+        WARNING("WiFi not configured - skipping WiFi setup");
+        return;
+    }
+
+    String msg = "Connecting to WiFi: " + app_settings.wifi_ssid;
     INFO(msg.c_str());
 
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    WiFi.begin(app_settings.wifi_ssid.c_str(), app_settings.wifi_password.c_str());
 
     uint32_t start = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - start < 30000) {
@@ -350,21 +386,25 @@ void setup_reticulum() {
     std::string msg = "  Identity: " + identity_hex + "...";
     INFO(msg.c_str());
 
-    // Add TCP client interface
-    String server_addr = String(RNS_SERVER_IP) + ":" + String(RNS_SERVER_PORT);
-    msg = std::string("Connecting to RNS server at ") + server_addr.c_str();
-    INFO(msg.c_str());
+    // Add TCP client interface (only if WiFi is connected)
+    if (WiFi.status() == WL_CONNECTED) {
+        String server_addr = app_settings.tcp_host + ":" + String(app_settings.tcp_port);
+        msg = std::string("Connecting to RNS server at ") + server_addr.c_str();
+        INFO(msg.c_str());
 
-    tcp_interface_impl = new TCPClientInterface("tcp0");
-    tcp_interface_impl->set_target_host(RNS_SERVER_IP);
-    tcp_interface_impl->set_target_port(RNS_SERVER_PORT);
-    tcp_interface = new Interface(tcp_interface_impl);
+        tcp_interface_impl = new TCPClientInterface("tcp0");
+        tcp_interface_impl->set_target_host(app_settings.tcp_host.c_str());
+        tcp_interface_impl->set_target_port(app_settings.tcp_port);
+        tcp_interface = new Interface(tcp_interface_impl);
 
-    if (!tcp_interface->start()) {
-        ERROR("Failed to connect to RNS server!");
+        if (!tcp_interface->start()) {
+            ERROR("Failed to connect to RNS server!");
+        } else {
+            INFO("Connected to RNS server");
+            Transport::register_interface(*tcp_interface);
+        }
     } else {
-        INFO("Connected to RNS server");
-        Transport::register_interface(*tcp_interface);
+        WARNING("WiFi not connected - skipping TCP interface");
     }
 
     // Start Transport (initializes Transport identity and enables packet processing)
@@ -382,23 +422,25 @@ void setup_lxmf() {
     router = new LXMRouter(*identity, "/lxmf");
     INFO("LXMF router created");
 
-    // Wait for TCP connection to stabilize before announcing
-    INFO("Waiting 3 seconds for TCP connection to stabilize...");
-    delay(3000);
-
-    // Check TCP status before announcing
+    // Only do network stuff if TCP interface exists
     if (tcp_interface) {
+        // Wait for TCP connection to stabilize before announcing
+        INFO("Waiting 3 seconds for TCP connection to stabilize...");
+        delay(3000);
+
+        // Check TCP status before announcing
         if (tcp_interface->online()) {
             INFO("TCP interface online: YES");
+            // Announce delivery destination
+            INFO("Sending LXMF announce...");
+            router->announce();
+            last_announce = millis();
         } else {
             INFO("TCP interface online: NO");
         }
+    } else {
+        WARNING("No TCP interface - network features disabled until WiFi configured");
     }
-
-    // Announce delivery destination
-    INFO("Sending LXMF announce...");
-    router->announce();
-    last_announce = millis();
 
     std::string dest_hash = router->delivery_destination().hash().toHex();
     std::string msg = "  Delivery destination: " + dest_hash;
@@ -418,8 +460,51 @@ void setup_ui_manager() {
 
     // Set initial RNS connection status
     if (tcp_interface) {
-        ui_manager->set_rns_status(tcp_interface->online(), RNS_SERVER_IP);
+        ui_manager->set_rns_status(tcp_interface->online(), app_settings.tcp_host);
     }
+
+    // Configure settings screen
+    UI::LXMF::SettingsScreen* settings = ui_manager->get_settings_screen();
+    if (settings) {
+        // Pass GPS for status display
+        settings->set_gps(&gps);
+
+        // Set brightness change callback (immediate)
+        settings->set_brightness_change_callback([](uint8_t brightness) {
+            // Apply brightness immediately via display backlight
+            ledcWrite(0, brightness);  // Channel 0 is backlight on T-Deck
+            INFO(("Brightness changed to " + String(brightness)).c_str());
+        });
+
+        // Set WiFi reconnect callback
+        settings->set_wifi_reconnect_callback([](const String& ssid, const String& password) {
+            INFO(("Reconnecting WiFi to: " + ssid).c_str());
+            WiFi.disconnect();
+            delay(100);
+            WiFi.begin(ssid.c_str(), password.c_str());
+
+            // Wait for connection (with timeout)
+            uint32_t start = millis();
+            while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
+                delay(100);
+            }
+
+            if (WiFi.status() == WL_CONNECTED) {
+                INFO(("WiFi connected! IP: " + WiFi.localIP().toString()).c_str());
+            } else {
+                WARNING("WiFi reconnection failed");
+            }
+        });
+
+        // Set save callback (update app_settings and apply)
+        settings->set_save_callback([](const UI::LXMF::AppSettings& new_settings) {
+            app_settings = new_settings;
+            INFO("Settings saved");
+        });
+    }
+
+    // Apply initial brightness from settings
+    ledcWrite(0, app_settings.brightness);
 
     INFO("UI manager ready");
 }
@@ -448,11 +533,18 @@ void setup() {
     // Initialize hardware
     setup_hardware();
 
+    // Load application settings from NVS (before WiFi/GPS)
+    load_app_settings();
+
     // Initialize GPS and try to sync time (before WiFi)
     setup_gps();
-    INFO("\n=== Time Synchronization ===");
-    if (!sync_time_from_gps(15000)) {  // 15 second timeout for GPS
-        INFO("GPS time sync not available, will try NTP after WiFi");
+    if (app_settings.gps_time_sync) {
+        INFO("\n=== Time Synchronization ===");
+        if (!sync_time_from_gps(15000)) {  // 15 second timeout for GPS
+            INFO("GPS time sync not available, will try NTP after WiFi");
+        }
+    } else {
+        INFO("GPS time sync disabled in settings");
     }
 
     // Initialize WiFi
@@ -497,8 +589,9 @@ void loop() {
         ui_manager->update();
     }
 
-    // Periodic announce
-    if (millis() - last_announce > ANNOUNCE_INTERVAL) {
+    // Periodic announce (using interval from settings)
+    uint32_t announce_interval_ms = app_settings.announce_interval * 1000;
+    if (millis() - last_announce > announce_interval_ms) {
         if (router) {
             router->announce();
             last_announce = millis();
@@ -516,7 +609,7 @@ void loop() {
         }
         // Update UI status
         if (ui_manager) {
-            ui_manager->set_rns_status(true, RNS_SERVER_IP);
+            ui_manager->set_rns_status(true, app_settings.tcp_host);
         }
         last_rns_online = true;
     }
@@ -528,7 +621,7 @@ void loop() {
             bool current_online = tcp_interface->online();
             if (current_online != last_rns_online) {
                 last_rns_online = current_online;
-                ui_manager->set_rns_status(current_online, RNS_SERVER_IP);
+                ui_manager->set_rns_status(current_online, app_settings.tcp_host);
                 if (!current_online) {
                     WARNING("RNS connection lost");
                 }

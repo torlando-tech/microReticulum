@@ -21,6 +21,7 @@ UIManager::UIManager(Reticulum& reticulum, ::LXMF::LXMRouter& router, ::LXMF::Me
       _compose_screen(nullptr),
       _announce_list_screen(nullptr),
       _status_screen(nullptr),
+      _settings_screen(nullptr),
       _initialized(false) {
 }
 
@@ -40,6 +41,9 @@ UIManager::~UIManager() {
     if (_status_screen) {
         delete _status_screen;
     }
+    if (_settings_screen) {
+        delete _settings_screen;
+    }
 }
 
 bool UIManager::init() {
@@ -55,6 +59,7 @@ bool UIManager::init() {
     _compose_screen = new ComposeScreen();
     _announce_list_screen = new AnnounceListScreen();
     _status_screen = new StatusScreen();
+    _settings_screen = new SettingsScreen();
 
     // Set up callbacks for conversation list screen
     _conversation_list_screen->set_conversation_selected_callback(
@@ -66,7 +71,7 @@ bool UIManager::init() {
     );
 
     _conversation_list_screen->set_settings_callback(
-        [this]() { on_settings(); }
+        [this]() { show_settings(); }
     );
 
     _conversation_list_screen->set_announces_callback(
@@ -110,6 +115,18 @@ bool UIManager::init() {
     _status_screen->set_back_callback(
         [this]() { on_back_from_status(); }
     );
+
+    // Set up callbacks for settings screen
+    _settings_screen->set_back_callback(
+        [this]() { on_back_from_settings(); }
+    );
+
+    // Load settings from NVS
+    _settings_screen->load_settings();
+
+    // Set identity and LXMF address on settings screen
+    _settings_screen->set_identity_hash(_router.identity().hash());
+    _settings_screen->set_lxmf_address(_router.delivery_destination().hash());
 
     // Set up callback for status button in conversation list
     _conversation_list_screen->set_status_callback(
@@ -230,20 +247,18 @@ void UIManager::on_new_message() {
     show_compose();
 }
 
-void UIManager::on_settings() {
-    INFO("Settings button clicked");
+void UIManager::show_settings() {
+    INFO("Showing settings screen");
 
-    // Show settings info message box with OK button
-    static const char* btns[] = {"OK", ""};
-    lv_obj_t* mbox = lv_msgbox_create(NULL, "Settings",
-        "Settings not implemented yet.", btns, false);
-    lv_obj_center(mbox);
-    lv_obj_add_event_cb(mbox, settings_msgbox_cb, LV_EVENT_VALUE_CHANGED, NULL);
-}
+    _settings_screen->refresh();
+    _settings_screen->show();
+    _conversation_list_screen->hide();
+    _chat_screen->hide();
+    _compose_screen->hide();
+    _announce_list_screen->hide();
+    _status_screen->hide();
 
-void UIManager::settings_msgbox_cb(lv_event_t* event) {
-    lv_obj_t* mbox = lv_event_get_current_target(event);
-    lv_msgbox_close(mbox);
+    _current_screen = SCREEN_SETTINGS;
 }
 
 void UIManager::on_back_to_conversation_list() {
@@ -286,6 +301,10 @@ void UIManager::on_back_from_announces() {
 }
 
 void UIManager::on_back_from_status() {
+    show_conversation_list();
+}
+
+void UIManager::on_back_from_settings() {
     show_conversation_list();
 }
 
@@ -404,6 +423,9 @@ void UIManager::refresh_current_screen() {
             break;
         case SCREEN_STATUS:
             _status_screen->refresh();
+            break;
+        case SCREEN_SETTINGS:
+            _settings_screen->refresh();
             break;
     }
 }
