@@ -162,14 +162,15 @@ void AnnounceListScreen::show_empty_state() {
 }
 
 void AnnounceListScreen::create_announce_item(const AnnounceItem& item) {
-    // Create container for announce item
+    // Create container for announce item - compact 2-row layout matching ConversationListScreen
     lv_obj_t* container = lv_obj_create(_list);
-    lv_obj_set_size(container, LV_PCT(100), 50);
+    lv_obj_set_size(container, LV_PCT(100), 44);
     lv_obj_set_style_bg_color(container, lv_color_hex(0x2E2E2E), 0);
     lv_obj_set_style_bg_color(container, lv_color_hex(0x3E3E3E), LV_STATE_PRESSED);
     lv_obj_set_style_border_width(container, 1, 0);
     lv_obj_set_style_border_color(container, lv_color_hex(0x404040), 0);
-    lv_obj_set_style_radius(container, 8, 0);
+    lv_obj_set_style_radius(container, 6, 0);
+    lv_obj_set_style_pad_all(container, 0, 0);
     lv_obj_add_flag(container, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -178,29 +179,34 @@ void AnnounceListScreen::create_announce_item(const AnnounceItem& item) {
     lv_obj_set_user_data(container, hash_copy);
     lv_obj_add_event_cb(container, on_announce_clicked, LV_EVENT_CLICKED, this);
 
-    // Destination hash (truncated)
+    // Row 1: Destination hash (left) + Timestamp (right)
     lv_obj_t* label_hash = lv_label_create(container);
     lv_label_set_text(label_hash, item.hash_display.c_str());
-    lv_obj_align(label_hash, LV_ALIGN_TOP_LEFT, 8, 6);
+    lv_obj_align(label_hash, LV_ALIGN_TOP_LEFT, 6, 4);
     lv_obj_set_style_text_color(label_hash, lv_color_hex(0x42A5F5), 0);
     lv_obj_set_style_text_font(label_hash, &lv_font_montserrat_14, 0);
+
+    lv_obj_t* label_time = lv_label_create(container);
+    lv_label_set_text(label_time, item.timestamp_str.c_str());
+    lv_obj_align(label_time, LV_ALIGN_TOP_RIGHT, -6, 6);
+    lv_obj_set_style_text_color(label_time, lv_color_hex(0x808080), 0);
+
+    // Row 2: Hops info (left) + Status dot (right)
+    lv_obj_t* label_hops = lv_label_create(container);
+    lv_label_set_text(label_hops, format_hops(item.hops).c_str());
+    lv_obj_align(label_hops, LV_ALIGN_BOTTOM_LEFT, 6, -4);
+    lv_obj_set_style_text_color(label_hops, lv_color_hex(0xB0B0B0), 0);
 
     // Status indicator (green dot if has path)
     if (item.has_path) {
         lv_obj_t* status_dot = lv_obj_create(container);
         lv_obj_set_size(status_dot, 8, 8);
-        lv_obj_align(status_dot, LV_ALIGN_TOP_RIGHT, -8, 8);
+        lv_obj_align(status_dot, LV_ALIGN_BOTTOM_RIGHT, -6, -8);
         lv_obj_set_style_bg_color(status_dot, lv_color_hex(0x4CAF50), 0);
         lv_obj_set_style_radius(status_dot, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_border_width(status_dot, 0, 0);
+        lv_obj_set_style_pad_all(status_dot, 0, 0);
     }
-
-    // Hops and timestamp
-    String status_text = format_hops(item.hops) + " " + LV_SYMBOL_BULLET + " " + item.timestamp_str;
-    lv_obj_t* label_status = lv_label_create(container);
-    lv_label_set_text(label_status, status_text.c_str());
-    lv_obj_align(label_status, LV_ALIGN_BOTTOM_LEFT, 8, -6);
-    lv_obj_set_style_text_color(label_status, lv_color_hex(0x808080), 0);
 }
 
 void AnnounceListScreen::set_announce_selected_callback(AnnounceSelectedCallback callback) {

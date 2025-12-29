@@ -139,6 +139,12 @@ public:
      */
     lv_obj_t* get_object();
 
+    /**
+     * Update status indicators (WiFi RSSI and battery)
+     * Call periodically from main loop
+     */
+    void update_status();
+
 private:
     lv_obj_t* _screen;
     lv_obj_t* _header;
@@ -146,9 +152,12 @@ private:
     lv_obj_t* _bottom_nav;
     lv_obj_t* _btn_new;
     lv_obj_t* _btn_settings;
+    lv_obj_t* _label_wifi;
+    lv_obj_t* _label_battery;
 
     ::LXMF::MessageStore* _message_store;
     std::vector<ConversationItem> _conversations;
+    RNS::Bytes _pending_delete_hash;  // Hash of conversation pending deletion
 
     ConversationSelectedCallback _conversation_selected_callback;
     NewMessageCallback _new_message_callback;
@@ -164,6 +173,8 @@ private:
 
     // Event handlers
     static void on_conversation_clicked(lv_event_t* event);
+    static void on_conversation_long_pressed(lv_event_t* event);
+    static void on_delete_confirmed(lv_event_t* event);
     static void on_new_message_clicked(lv_event_t* event);
     static void on_settings_clicked(lv_event_t* event);
     static void on_bottom_nav_clicked(lv_event_t* event);

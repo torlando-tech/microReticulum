@@ -6,15 +6,19 @@
 #ifdef ARDUINO
 
 #include "../../Log.h"
+#include "../../Hardware/TDeck/Config.h"
+#include <WiFi.h>
 
 using namespace RNS;
+using namespace Hardware::TDeck;
 
 namespace UI {
 namespace LXMF {
 
 ConversationListScreen::ConversationListScreen(lv_obj_t* parent)
     : _screen(nullptr), _header(nullptr), _list(nullptr), _bottom_nav(nullptr),
-      _btn_new(nullptr), _btn_settings(nullptr), _message_store(nullptr) {
+      _btn_new(nullptr), _btn_settings(nullptr), _label_wifi(nullptr), _label_battery(nullptr),
+      _message_store(nullptr) {
 
     // Create screen object
     if (parent) {
@@ -60,6 +64,17 @@ void ConversationListScreen::create_header() {
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 8, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+
+    // Status indicators (WiFi RSSI and Battery) - positioned in center-right area
+    _label_wifi = lv_label_create(_header);
+    lv_label_set_text(_label_wifi, LV_SYMBOL_WIFI " --");
+    lv_obj_align(_label_wifi, LV_ALIGN_LEFT_MID, 95, 0);
+    lv_obj_set_style_text_color(_label_wifi, lv_color_hex(0x808080), 0);
+
+    _label_battery = lv_label_create(_header);
+    lv_label_set_text(_label_battery, LV_SYMBOL_BATTERY_FULL " --%");
+    lv_obj_align(_label_battery, LV_ALIGN_LEFT_MID, 145, 0);
+    lv_obj_set_style_text_color(_label_battery, lv_color_hex(0x808080), 0);
 
     // New message button
     _btn_new = lv_btn_create(_header);
@@ -185,12 +200,15 @@ void ConversationListScreen::refresh() {
 }
 
 void ConversationListScreen::create_conversation_item(const ConversationItem& item) {
-    // Create container for conversation item
+    // Create container for conversation item - compact 2-row layout
     lv_obj_t* container = lv_obj_create(_list);
-    lv_obj_set_size(container, LV_PCT(100), 60);
+    lv_obj_set_size(container, LV_PCT(100), 44);
     lv_obj_set_style_bg_color(container, lv_color_hex(0x2E2E2E), 0);
+    lv_obj_set_style_bg_color(container, lv_color_hex(0x3E3E3E), LV_STATE_PRESSED);
     lv_obj_set_style_border_width(container, 1, 0);
     lv_obj_set_style_border_color(container, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_radius(container, 6, 0);
+    lv_obj_set_style_pad_all(container, 0, 0);
     lv_obj_add_flag(container, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -198,33 +216,37 @@ void ConversationListScreen::create_conversation_item(const ConversationItem& it
     Bytes* peer_hash_copy = new Bytes(item.peer_hash);
     lv_obj_set_user_data(container, peer_hash_copy);
     lv_obj_add_event_cb(container, on_conversation_clicked, LV_EVENT_CLICKED, this);
+    lv_obj_add_event_cb(container, on_conversation_long_pressed, LV_EVENT_LONG_PRESSED, this);
 
-    // Peer name/hash
+    // Row 1: Peer hash (left) + Timestamp (right)
     lv_obj_t* label_peer = lv_label_create(container);
     lv_label_set_text(label_peer, item.peer_name.c_str());
-    lv_obj_align(label_peer, LV_ALIGN_TOP_LEFT, 5, 5);
+    lv_obj_align(label_peer, LV_ALIGN_TOP_LEFT, 6, 4);
     lv_obj_set_style_text_color(label_peer, lv_color_hex(0x42A5F5), 0);
     lv_obj_set_style_text_font(label_peer, &lv_font_montserrat_14, 0);
 
-    // Last message preview
-    lv_obj_t* label_preview = lv_label_create(container);
-    lv_label_set_text(label_preview, item.last_message.c_str());
-    lv_obj_align(label_preview, LV_ALIGN_TOP_LEFT, 5, 25);
-    lv_obj_set_style_text_color(label_preview, lv_color_hex(0xB0B0B0), 0);
-
-    // Timestamp
     lv_obj_t* label_time = lv_label_create(container);
     lv_label_set_text(label_time, item.timestamp_str.c_str());
-    lv_obj_align(label_time, LV_ALIGN_BOTTOM_LEFT, 5, -5);
+    lv_obj_align(label_time, LV_ALIGN_TOP_RIGHT, -6, 6);
     lv_obj_set_style_text_color(label_time, lv_color_hex(0x808080), 0);
+
+    // Row 2: Message preview (left) + Unread badge (right)
+    lv_obj_t* label_preview = lv_label_create(container);
+    lv_label_set_text(label_preview, item.last_message.c_str());
+    lv_obj_align(label_preview, LV_ALIGN_BOTTOM_LEFT, 6, -4);
+    lv_obj_set_style_text_color(label_preview, lv_color_hex(0xB0B0B0), 0);
+    lv_obj_set_width(label_preview, 260);  // Limit width to leave room for badge
+    lv_label_set_long_mode(label_preview, LV_LABEL_LONG_DOT);
 
     // Unread count badge
     if (item.unread_count > 0) {
         lv_obj_t* badge = lv_obj_create(container);
-        lv_obj_set_size(badge, 24, 24);
-        lv_obj_align(badge, LV_ALIGN_BOTTOM_RIGHT, -5, -5);
+        lv_obj_set_size(badge, 20, 20);
+        lv_obj_align(badge, LV_ALIGN_BOTTOM_RIGHT, -6, -4);
         lv_obj_set_style_bg_color(badge, lv_color_hex(0xF44336), 0);
         lv_obj_set_style_radius(badge, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(badge, 0, 0);
+        lv_obj_set_style_pad_all(badge, 0, 0);
 
         lv_obj_t* label_count = lv_label_create(badge);
         lv_label_set_text_fmt(label_count, "%d", item.unread_count);
@@ -275,6 +297,45 @@ void ConversationListScreen::hide() {
 
 lv_obj_t* ConversationListScreen::get_object() {
     return _screen;
+}
+
+void ConversationListScreen::update_status() {
+    // Update WiFi RSSI
+    if (WiFi.status() == WL_CONNECTED) {
+        int rssi = WiFi.RSSI();
+        String wifi_text = String(LV_SYMBOL_WIFI) + " " + String(rssi);
+        lv_label_set_text(_label_wifi, wifi_text.c_str());
+
+        // Color based on signal strength
+        if (rssi > -50) {
+            lv_obj_set_style_text_color(_label_wifi, lv_color_hex(0x4CAF50), 0);  // Green
+        } else if (rssi > -70) {
+            lv_obj_set_style_text_color(_label_wifi, lv_color_hex(0xFFEB3B), 0);  // Yellow
+        } else {
+            lv_obj_set_style_text_color(_label_wifi, lv_color_hex(0xF44336), 0);  // Red
+        }
+    } else {
+        lv_label_set_text(_label_wifi, LV_SYMBOL_WIFI " --");
+        lv_obj_set_style_text_color(_label_wifi, lv_color_hex(0x808080), 0);
+    }
+
+    // Update battery level (read from ADC)
+    int raw_adc = analogRead(Pin::BATTERY_ADC);
+    float voltage = (raw_adc / 4095.0) * 3.3 * Power::BATTERY_VOLTAGE_DIVIDER;
+    int percent = (int)((voltage - Power::BATTERY_EMPTY) / (Power::BATTERY_FULL - Power::BATTERY_EMPTY) * 100);
+    percent = constrain(percent, 0, 100);
+
+    String battery_text = String(LV_SYMBOL_BATTERY_FULL) + " " + String(percent) + "%";
+    lv_label_set_text(_label_battery, battery_text.c_str());
+
+    // Color based on battery level
+    if (percent > 50) {
+        lv_obj_set_style_text_color(_label_battery, lv_color_hex(0x4CAF50), 0);  // Green
+    } else if (percent > 20) {
+        lv_obj_set_style_text_color(_label_battery, lv_color_hex(0xFFEB3B), 0);  // Yellow
+    } else {
+        lv_obj_set_style_text_color(_label_battery, lv_color_hex(0xF44336), 0);  // Red
+    }
 }
 
 void ConversationListScreen::on_conversation_clicked(lv_event_t* event) {
@@ -337,6 +398,43 @@ void ConversationListScreen::on_bottom_nav_clicked(lv_event_t* event) {
 
 void ConversationListScreen::msgbox_close_cb(lv_event_t* event) {
     lv_obj_t* mbox = lv_event_get_current_target(event);
+    lv_msgbox_close(mbox);
+}
+
+void ConversationListScreen::on_conversation_long_pressed(lv_event_t* event) {
+    ConversationListScreen* screen = (ConversationListScreen*)lv_event_get_user_data(event);
+    lv_obj_t* target = lv_event_get_target(event);
+
+    Bytes* peer_hash = (Bytes*)lv_obj_get_user_data(target);
+    if (!peer_hash) {
+        return;
+    }
+
+    // Store the hash we want to delete
+    screen->_pending_delete_hash = *peer_hash;
+
+    // Show confirmation dialog
+    static const char* btns[] = {"Delete", "Cancel", ""};
+    lv_obj_t* mbox = lv_msgbox_create(NULL, "Delete Conversation",
+        "Delete this conversation and all messages?", btns, false);
+    lv_obj_center(mbox);
+    lv_obj_add_event_cb(mbox, on_delete_confirmed, LV_EVENT_VALUE_CHANGED, screen);
+}
+
+void ConversationListScreen::on_delete_confirmed(lv_event_t* event) {
+    lv_obj_t* mbox = lv_event_get_current_target(event);
+    ConversationListScreen* screen = (ConversationListScreen*)lv_event_get_user_data(event);
+    uint16_t btn_id = lv_msgbox_get_active_btn(mbox);
+
+    if (btn_id == 0 && screen->_message_store) {  // "Delete" button
+        // Delete the conversation
+        screen->_message_store->delete_conversation(screen->_pending_delete_hash);
+        INFO("Deleted conversation");
+
+        // Refresh the list
+        screen->refresh();
+    }
+
     lv_msgbox_close(mbox);
 }
 
