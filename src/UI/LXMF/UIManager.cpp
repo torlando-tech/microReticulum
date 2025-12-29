@@ -141,6 +141,16 @@ void UIManager::update() {
 
     // Process inbound LXMF messages
     _router.process_inbound();
+
+    // Update status indicators (WiFi/battery) on conversation list
+    static uint32_t last_status_update = 0;
+    uint32_t now = millis();
+    if (now - last_status_update > 5000) {  // Update every 5 seconds
+        last_status_update = now;
+        if (_conversation_list_screen) {
+            _conversation_list_screen->update_status();
+        }
+    }
 }
 
 void UIManager::show_conversation_list() {
