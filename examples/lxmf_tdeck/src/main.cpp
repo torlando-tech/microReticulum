@@ -5,6 +5,8 @@
 #include <Wire.h>
 #include <SPIFFS.h>
 #include <Preferences.h>
+#include <time.h>
+#include <sys/time.h>
 
 // Reticulum
 #include <Reticulum.h>
@@ -30,6 +32,9 @@
 #include <Hardware/TDeck/Keyboard.h>
 #include <Hardware/TDeck/Touch.h>
 #include <Hardware/TDeck/Trackball.h>
+
+// GPS
+#include <TinyGPSPlus.h>
 
 // UI
 #include <UI/LVGL/LVGLInit.h>
@@ -68,6 +73,142 @@ const uint32_t STATUS_CHECK_INTERVAL = 1000;  // 1 second
 // Connection tracking
 bool last_rns_online = false;
 
+// GPS
+TinyGPSPlus gps;
+HardwareSerial GPSSerial(1);  // UART1 for GPS
+bool gps_time_synced = false;
+
+/**
+ * Calculate timezone offset from longitude
+ * Each 15 degrees of longitude = 1 hour offset from UTC
+ * Positive = East of Greenwich (ahead of UTC)
+ * Negative = West of Greenwich (behind UTC)
+ */
+int calculate_timezone_offset_hours(double longitude) {
+    // Simple calculation: divide longitude by 15, round to nearest hour
+    int offset = (int)round(longitude / 15.0);
+    // Clamp to valid range (-12 to +14)
+    if (offset < -12) offset = -12;
+    if (offset > 14) offset = 14;
+    return offset;
+}
+
+/**
+ * Try to sync time from GPS
+ * Returns true if successful, false if no valid fix
+ */
+bool sync_time_from_gps(uint32_t timeout_ms = 30000) {
+    INFO("Attempting GPS time sync...");
+
+    uint32_t start = millis();
+    bool got_time = false;
+    bool got_location = false;
+
+    while (millis() - start < timeout_ms) {
+        while (GPSSerial.available() > 0) {
+            if (gps.encode(GPSSerial.read())) {
+                // Check if we have valid date/time
+                if (gps.date.isValid() && gps.time.isValid() && gps.date.year() >= 2024) {
+                    got_time = true;
+                }
+                // Check if we have valid location (for timezone)
+                if (gps.location.isValid()) {
+                    got_location = true;
+                }
+                // If we have both, we can sync
+                if (got_time && got_location) {
+                    break;
+                }
+            }
+        }
+        if (got_time && got_location) break;
+        delay(10);
+    }
+
+    if (!got_time) {
+        WARNING("GPS time not available");
+        return false;
+    }
+
+    // Build UTC time from GPS
+    struct tm gps_time;
+    gps_time.tm_year = gps.date.year() - 1900;
+    gps_time.tm_mon = gps.date.month() - 1;
+    gps_time.tm_mday = gps.date.day();
+    gps_time.tm_hour = gps.time.hour();
+    gps_time.tm_min = gps.time.minute();
+    gps_time.tm_sec = gps.time.second();
+    gps_time.tm_isdst = 0;  // GPS time is UTC, no DST
+
+    // Convert to Unix timestamp (UTC)
+    time_t gps_unix = mktime(&gps_time);
+    // mktime assumes local time, adjust back to UTC
+    // Actually, we'll set TZ to UTC first
+    setenv("TZ", "UTC0", 1);
+    tzset();
+    gps_unix = mktime(&gps_time);
+
+    // Set the system time
+    struct timeval tv;
+    tv.tv_sec = gps_unix;
+    tv.tv_usec = 0;
+    settimeofday(&tv, nullptr);
+
+    // Set timezone based on location if available
+    if (got_location) {
+        double longitude = gps.location.lng();
+        int tz_offset = calculate_timezone_offset_hours(longitude);
+
+        // Build POSIX TZ string (e.g., "EST5" for UTC-5)
+        // Note: POSIX uses opposite sign convention!
+        char tz_str[32];
+        if (tz_offset >= 0) {
+            snprintf(tz_str, sizeof(tz_str), "GPS%d", -tz_offset);
+        } else {
+            snprintf(tz_str, sizeof(tz_str), "GPS+%d", -tz_offset);
+        }
+        setenv("TZ", tz_str, 1);
+        tzset();
+
+        String msg = "  GPS location: " + String(gps.location.lat(), 4) + ", " + String(longitude, 4);
+        INFO(msg.c_str());
+        msg = "  Timezone offset: UTC" + String(tz_offset >= 0 ? "+" : "") + String(tz_offset);
+        INFO(msg.c_str());
+    } else {
+        // No location, use default Eastern Time
+        WARNING("GPS location not available, using Eastern Time");
+        setenv("TZ", "EST5EDT,M3.2.0,M11.1.0", 1);
+        tzset();
+    }
+
+    // Set the time offset for Utilities::OS::time()
+    time_t now = time(nullptr);
+    uint64_t uptime_ms = millis();
+    uint64_t unix_ms = (uint64_t)now * 1000;
+    RNS::Utilities::OS::setTimeOffset(unix_ms - uptime_ms);
+
+    // Display synced time
+    struct tm timeinfo;
+    getLocalTime(&timeinfo);
+    char time_str[64];
+    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S %Z", &timeinfo);
+    String msg = "  GPS time synced: " + String(time_str);
+    INFO(msg.c_str());
+
+    gps_time_synced = true;
+    return true;
+}
+
+void setup_gps() {
+    INFO("Initializing GPS...");
+
+    // Initialize GPS serial (9600 baud is default for most GPS modules)
+    GPSSerial.begin(9600, SERIAL_8N1, Pin::GPS_TX, Pin::GPS_RX);
+
+    String gps_msg = "  GPS UART initialized on TX=" + String(Pin::GPS_TX) + ", RX=" + String(Pin::GPS_RX);
+    INFO(gps_msg.c_str());
+}
+
 void setup_wifi() {
     String msg = "Connecting to WiFi: " + String(WIFI_SSID);
     INFO(msg.c_str());
@@ -88,6 +229,41 @@ void setup_wifi() {
         INFO(msg.c_str());
         msg = "  RSSI: " + String(WiFi.RSSI()) + " dBm";
         INFO(msg.c_str());
+
+        // Try GPS time sync first (if GPS is initialized and we haven't synced already)
+        if (!gps_time_synced) {
+            // Fallback to NTP if GPS didn't work
+            INFO("Syncing time via NTP (GPS not available)...");
+
+            // Use configTzTime for proper timezone handling on ESP32
+            // Eastern Time: EST5EDT = UTC-5, DST starts 2nd Sunday March, ends 1st Sunday Nov
+            configTzTime("EST5EDT,M3.2.0,M11.1.0", "pool.ntp.org", "time.nist.gov");
+
+            // Wait for time to be set (max 10 seconds)
+            struct tm timeinfo;
+            int retry = 0;
+            while (!getLocalTime(&timeinfo) && retry < 20) {
+                delay(500);
+                retry++;
+            }
+
+            if (retry < 20) {
+                // Set the time offset for Utilities::OS::time()
+                time_t now = time(nullptr);
+                uint64_t uptime_ms = millis();
+                uint64_t unix_ms = (uint64_t)now * 1000;
+                RNS::Utilities::OS::setTimeOffset(unix_ms - uptime_ms);
+
+                char time_str[64];
+                strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S %Z", &timeinfo);
+                msg = "  NTP time synced: " + String(time_str);
+                INFO(msg.c_str());
+            } else {
+                WARNING("NTP time sync failed!");
+            }
+        } else {
+            INFO("Time already synced via GPS");
+        }
     } else {
         ERROR("WiFi connection failed!");
     }
@@ -271,6 +447,13 @@ void setup() {
 
     // Initialize hardware
     setup_hardware();
+
+    // Initialize GPS and try to sync time (before WiFi)
+    setup_gps();
+    INFO("\n=== Time Synchronization ===");
+    if (!sync_time_from_gps(15000)) {  // 15 second timeout for GPS
+        INFO("GPS time sync not available, will try NTP after WiFi");
+    }
 
     // Initialize WiFi
     setup_wifi();

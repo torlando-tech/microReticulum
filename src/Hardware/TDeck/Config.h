@@ -50,6 +50,10 @@ namespace Pin {
     // Power management
     constexpr uint8_t POWER_EN = 10;      // Power enable pin
     constexpr uint8_t BATTERY_ADC = 4;    // Battery voltage ADC
+
+    // GPS (L76K or UBlox M10Q on Grove connector)
+    constexpr uint8_t GPS_TX = 43;        // GPS TX -> ESP32 RX
+    constexpr uint8_t GPS_RX = 44;        // GPS RX -> ESP32 TX
 }
 
 namespace I2C {
