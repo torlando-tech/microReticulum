@@ -6,6 +6,7 @@
 #ifdef ARDUINO
 
 #include "../../Log.h"
+#include "../LVGL/LVGLInit.h"
 
 using namespace RNS;
 
@@ -107,6 +108,11 @@ void ComposeScreen::create_content_area() {
     lv_obj_set_style_bg_color(_text_area_dest, lv_color_hex(0x2a2a2a), 0);
     lv_obj_set_style_text_color(_text_area_dest, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_border_color(_text_area_dest, lv_color_hex(0x404040), 0);
+    // Add to input group for keyboard navigation
+    lv_group_t* group = LVGL::LVGLInit::get_default_group();
+    if (group) {
+        lv_group_add_obj(group, _text_area_dest);
+    }
 
     // "Message:" label
     lv_obj_t* label_message = lv_label_create(_content_area);
@@ -125,6 +131,10 @@ void ComposeScreen::create_content_area() {
     lv_obj_set_style_bg_color(_text_area_message, lv_color_hex(0x2a2a2a), 0);
     lv_obj_set_style_text_color(_text_area_message, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_border_color(_text_area_message, lv_color_hex(0x404040), 0);
+    // Add to input group for keyboard navigation
+    if (group) {
+        lv_group_add_obj(group, _text_area_message);
+    }
 }
 
 void ComposeScreen::create_button_area() {

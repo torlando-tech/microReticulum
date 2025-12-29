@@ -62,16 +62,22 @@ bool Keyboard::init_hardware_only(TwoWire& wire) {
 
     _wire = &wire;
 
-    // I2C should already be initialized by caller
-    // Try to read firmware version to verify communication
-    uint8_t version = get_firmware_version();
-    if (version == 0) {
-        WARNING("  Could not read keyboard firmware version (may not be critical)");
-    } else {
-        INFO(("  Keyboard firmware version: " + String(version)).c_str());
+    // Verify keyboard is present by checking I2C address
+    _wire->beginTransmission(I2C::KEYBOARD_ADDR);
+    uint8_t result = _wire->endTransmission();
+    if (result != 0) {
+        WARNING("  Keyboard not found on I2C bus");
+        _wire = nullptr;
+        return false;
     }
 
-    // Clear any pending keys
+    // Clear any pending keys by reading and discarding
+    _wire->requestFrom(I2C::KEYBOARD_ADDR, (uint8_t)1);
+    while (_wire->available()) {
+        _wire->read();
+    }
+
+    // Clear buffer
     clear_buffer();
 
     _initialized = true;
@@ -80,7 +86,7 @@ bool Keyboard::init_hardware_only(TwoWire& wire) {
 }
 
 uint8_t Keyboard::poll() {
-    if (!_initialized) {
+    if (!_initialized || !_wire) {
         return 0;
     }
 
@@ -90,32 +96,23 @@ uint8_t Keyboard::poll() {
     }
     _last_poll_time = now;
 
-    // Read key count
-    uint8_t key_count = 0;
-    if (!read_register(Register::REG_KEY_COUNT, &key_count)) {
+    // T-Deck keyboard uses simple protocol: just read 1 byte directly
+    // Returns ASCII key code if pressed, 0 if no key
+    uint8_t bytes_read = _wire->requestFrom(I2C::KEYBOARD_ADDR, (uint8_t)1);
+    if (bytes_read != 1) {
         return 0;
     }
 
-    if (key_count == 0) {
+    uint8_t key = _wire->read();
+
+    // No key pressed or invalid
+    if (key == KEY_NONE || key == 0xFF) {
         return 0;
     }
 
-    // Read keys from device
-    uint8_t keys[Kbd::MAX_KEYS_BUFFERED];
-    if (!read_registers(Register::REG_KEY_DATA, keys, key_count)) {
-        return 0;
-    }
-
-    // Add keys to buffer
-    uint8_t added = 0;
-    for (uint8_t i = 0; i < key_count; i++) {
-        if (keys[i] != KEY_NONE) {
-            buffer_push((char)keys[i]);
-            added++;
-        }
-    }
-
-    return added;
+    // Add key to buffer
+    buffer_push((char)key);
+    return 1;
 }
 
 char Keyboard::read_key() {
@@ -150,6 +147,14 @@ uint8_t Keyboard::get_firmware_version() {
 void Keyboard::lvgl_read_cb(lv_indev_drv_t* drv, lv_indev_data_t* data) {
     // Safety check - LVGL should never pass null but be defensive
     if (!data) {
+        return;
+    }
+
+    // Skip if not properly initialized
+    if (!_initialized || !_wire) {
+        data->state = LV_INDEV_STATE_RELEASED;
+        data->key = 0;
+        data->continue_reading = false;
         return;
     }
 

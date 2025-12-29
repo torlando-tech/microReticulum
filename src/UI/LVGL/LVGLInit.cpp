@@ -55,9 +55,6 @@ bool LVGLInit::init() {
     lv_group_set_default(_default_group);
 
     // Initialize keyboard input
-    // TEMPORARILY DISABLED - keyboard causing crashes, needs debugging
-    // TODO: Fix I2C bus contention between keyboard and touch
-    #if 0
     if (Keyboard::init()) {
         _keyboard = Keyboard::get_indev();
         // Associate keyboard with input group
@@ -68,9 +65,6 @@ bool LVGLInit::init() {
     } else {
         WARNING("  Keyboard initialization failed");
     }
-    #else
-    WARNING("  Keyboard disabled for debugging");
-    #endif
 
     // Initialize touch input
     if (Touch::init()) {
