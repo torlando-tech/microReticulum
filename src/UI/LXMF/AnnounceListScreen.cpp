@@ -90,7 +90,7 @@ void AnnounceListScreen::create_header() {
     lv_obj_add_event_cb(_btn_announce, on_send_announce_clicked, LV_EVENT_CLICKED, this);
 
     lv_obj_t* label_announce = lv_label_create(_btn_announce);
-    lv_label_set_text(label_announce, LV_SYMBOL_CALL);  // Broadcast icon
+    lv_label_set_text(label_announce, LV_SYMBOL_BELL);  // Bell icon for announce
     lv_obj_center(label_announce);
     lv_obj_set_style_text_color(label_announce, lv_color_hex(0xffffff), 0);
 
