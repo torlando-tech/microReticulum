@@ -265,8 +265,17 @@ void ChatScreen::refresh() {
 }
 
 void ChatScreen::create_message_bubble(const MessageItem& item) {
-    // Create container for message bubble
-    lv_obj_t* bubble = lv_obj_create(_message_list);
+    // Create a full-width row container for alignment
+    lv_obj_t* row = lv_obj_create(_message_list);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Create the actual message bubble inside the row
+    lv_obj_t* bubble = lv_obj_create(row);
     lv_obj_set_width(bubble, LV_PCT(80));
     lv_obj_set_height(bubble, LV_SIZE_CONTENT);
 
@@ -274,11 +283,11 @@ void ChatScreen::create_message_bubble(const MessageItem& item) {
     if (item.outgoing) {
         // Outgoing: blue, align right
         lv_obj_set_style_bg_color(bubble, lv_color_hex(0x1976D2), 0);
-        lv_obj_set_style_align(bubble, LV_ALIGN_TOP_RIGHT, 0);
+        lv_obj_align(bubble, LV_ALIGN_RIGHT_MID, 0, 0);
     } else {
         // Incoming: gray, align left
         lv_obj_set_style_bg_color(bubble, lv_color_hex(0x424242), 0);
-        lv_obj_set_style_align(bubble, LV_ALIGN_TOP_LEFT, 0);
+        lv_obj_align(bubble, LV_ALIGN_LEFT_MID, 0, 0);
     }
 
     lv_obj_set_style_radius(bubble, 10, 0);
