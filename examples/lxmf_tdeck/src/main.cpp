@@ -69,6 +69,10 @@ const uint32_t STATUS_CHECK_INTERVAL = 1000;  // 1 second
 // Connection tracking
 bool last_rns_online = false;
 
+// Screen timeout
+bool screen_off = false;
+uint8_t saved_brightness = 180;  // Save brightness before turning off
+
 // GPS
 TinyGPSPlus gps;
 HardwareSerial GPSSerial(1);  // UART1 for GPS
@@ -635,6 +639,26 @@ void loop() {
                     WARNING("RNS connection lost");
                 }
             }
+        }
+    }
+
+    // Screen timeout handling
+    if (app_settings.screen_timeout > 0) {  // 0 = never timeout
+        uint32_t inactive_ms = lv_disp_get_inactive_time(NULL);
+        uint32_t timeout_ms = app_settings.screen_timeout * 1000;
+
+        if (!screen_off && inactive_ms > timeout_ms) {
+            // Screen has been inactive long enough - turn off backlight
+            saved_brightness = app_settings.brightness;
+            ledcWrite(0, 0);  // Turn off backlight (channel 0)
+            screen_off = true;
+            DEBUG("Screen timeout - backlight off");
+        }
+        else if (screen_off && inactive_ms < 1000) {
+            // Activity detected - turn screen back on
+            ledcWrite(0, saved_brightness);
+            screen_off = false;
+            DEBUG("Activity detected - backlight on");
         }
     }
 
