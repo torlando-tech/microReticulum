@@ -422,6 +422,11 @@ void setup_lxmf() {
     router = new LXMRouter(*identity, "/lxmf");
     INFO("LXMF router created");
 
+    // Set display name from settings for announces
+    if (!app_settings.display_name.isEmpty()) {
+        router->set_display_name(app_settings.display_name.c_str());
+    }
+
     // Only do network stuff if TCP interface exists
     if (tcp_interface) {
         // Wait for TCP connection to stabilize before announcing
@@ -499,6 +504,10 @@ void setup_ui_manager() {
         // Set save callback (update app_settings and apply)
         settings->set_save_callback([](const UI::LXMF::AppSettings& new_settings) {
             app_settings = new_settings;
+            // Update router display name
+            if (router && !new_settings.display_name.isEmpty()) {
+                router->set_display_name(new_settings.display_name.c_str());
+            }
             INFO("Settings saved");
         });
     }

@@ -19,7 +19,7 @@ namespace LXMF {
 
 AnnounceListScreen::AnnounceListScreen(lv_obj_t* parent)
     : _screen(nullptr), _header(nullptr), _list(nullptr),
-      _btn_back(nullptr), _btn_refresh(nullptr), _empty_label(nullptr) {
+      _btn_back(nullptr), _btn_refresh(nullptr), _btn_announce(nullptr), _empty_label(nullptr) {
 
     // Create screen object
     if (parent) {
@@ -80,6 +80,19 @@ void AnnounceListScreen::create_header() {
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 60, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+
+    // Send Announce button (green)
+    _btn_announce = lv_btn_create(_header);
+    lv_obj_set_size(_btn_announce, 65, 28);
+    lv_obj_align(_btn_announce, LV_ALIGN_RIGHT_MID, -70, 0);
+    lv_obj_set_style_bg_color(_btn_announce, lv_color_hex(0x2e7d32), 0);
+    lv_obj_set_style_bg_color(_btn_announce, lv_color_hex(0x388e3c), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(_btn_announce, on_send_announce_clicked, LV_EVENT_CLICKED, this);
+
+    lv_obj_t* label_announce = lv_label_create(_btn_announce);
+    lv_label_set_text(label_announce, LV_SYMBOL_CALL);  // Broadcast icon
+    lv_obj_center(label_announce);
+    lv_obj_set_style_text_color(label_announce, lv_color_hex(0xffffff), 0);
 
     // Refresh button
     _btn_refresh = lv_btn_create(_header);
@@ -241,6 +254,10 @@ void AnnounceListScreen::set_back_callback(BackCallback callback) {
     _back_callback = callback;
 }
 
+void AnnounceListScreen::set_send_announce_callback(SendAnnounceCallback callback) {
+    _send_announce_callback = callback;
+}
+
 void AnnounceListScreen::show() {
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);
@@ -276,6 +293,13 @@ void AnnounceListScreen::on_back_clicked(lv_event_t* event) {
 void AnnounceListScreen::on_refresh_clicked(lv_event_t* event) {
     AnnounceListScreen* screen = (AnnounceListScreen*)lv_event_get_user_data(event);
     screen->refresh();
+}
+
+void AnnounceListScreen::on_send_announce_clicked(lv_event_t* event) {
+    AnnounceListScreen* screen = (AnnounceListScreen*)lv_event_get_user_data(event);
+    if (screen->_send_announce_callback) {
+        screen->_send_announce_callback();
+    }
 }
 
 String AnnounceListScreen::format_timestamp(double timestamp) {

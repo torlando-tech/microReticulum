@@ -171,6 +171,20 @@ namespace LXMF {
 		void set_announce_at_start(bool enabled);
 
 		/**
+		 * @brief Set display name for announces
+		 *
+		 * @param name Display name to include in announces
+		 */
+		void set_display_name(const std::string& name);
+
+		/**
+		 * @brief Get current display name
+		 *
+		 * @return Display name string
+		 */
+		inline const std::string& display_name() const { return _display_name; }
+
+		/**
 		 * @brief Get the delivery destination
 		 *
 		 * @return Destination for receiving LXMF messages
@@ -297,6 +311,7 @@ namespace LXMF {
 		uint32_t _announce_interval = 0;           // Seconds (0 = disabled)
 		bool _announce_at_start = true;            // Announce on startup
 		double _last_announce_time = 0.0;          // Last announce timestamp
+		std::string _display_name;                 // Display name for announces
 
 		// Internal state
 		bool _initialized = false;

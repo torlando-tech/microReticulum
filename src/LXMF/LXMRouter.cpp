@@ -5,6 +5,7 @@
 #include "../Transport.h"
 
 #include <map>
+#include <MsgPack.h>
 
 using namespace LXMF;
 using namespace RNS;
@@ -297,8 +298,34 @@ void LXMRouter::announce(const Bytes& app_data, bool path_response) {
 	INFO("Announcing LXMF delivery destination: " + _delivery_destination.hash().toHex());
 
 	try {
+		Bytes announce_data;
+
+		// If app_data provided, use it directly
+		if (app_data && app_data.size() > 0) {
+			announce_data = app_data;
+		}
+		// Otherwise build LXMF-format app_data: [display_name, stamp_cost]
+		else if (!_display_name.empty()) {
+			MsgPack::Packer packer;
+			// LXMF 0.5.0+ format: [display_name_bytes, stamp_cost]
+			packer.pack(MsgPack::arr_size_t(2));
+			// Pack display name as raw bytes
+			std::vector<uint8_t> name_bytes(_display_name.begin(), _display_name.end());
+			MsgPack::bin_t<uint8_t> name_bin;
+			name_bin = name_bytes;
+			packer.pack(name_bin);
+			// Pack stamp_cost as nil (not used)
+			packer.packNil();
+
+			announce_data = Bytes(packer.data(), packer.size());
+			DEBUG("  Built LXMF app_data for display_name: " + _display_name);
+		}
+
+		DEBUG("  Name hash: " + RNS::Destination::name_hash("lxmf", "delivery").toHex());
+		DEBUG("  App_data (" + std::to_string(announce_data.size()) + " bytes): " +
+		      (announce_data.size() > 0 ? announce_data.toHex() : "(empty)"));
 		DEBUG("  Calling _delivery_destination.announce()...");
-		_delivery_destination.announce(app_data, path_response);
+		_delivery_destination.announce(announce_data, path_response);
 		_last_announce_time = Utilities::OS::time();
 		INFO("Announce sent successfully");
 
@@ -321,6 +348,14 @@ void LXMRouter::set_announce_interval(uint32_t interval) {
 void LXMRouter::set_announce_at_start(bool enabled) {
 	_announce_at_start = enabled;
 	DEBUG("Announce at start: " + std::string(enabled ? "enabled" : "disabled"));
+}
+
+// Set display name for announces
+void LXMRouter::set_display_name(const std::string& name) {
+	_display_name = name;
+	if (!name.empty()) {
+		INFO("Display name set to: " + name);
+	}
 }
 
 // Clear failed outbound

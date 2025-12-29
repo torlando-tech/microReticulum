@@ -58,6 +58,7 @@ public:
     using AnnounceSelectedCallback = std::function<void(const RNS::Bytes& destination_hash)>;
     using BackCallback = std::function<void()>;
     using RefreshCallback = std::function<void()>;
+    using SendAnnounceCallback = std::function<void()>;
 
     /**
      * Create announce list screen
@@ -88,6 +89,12 @@ public:
     void set_back_callback(BackCallback callback);
 
     /**
+     * Set callback for send announce button
+     * @param callback Function to call when announce button is pressed
+     */
+    void set_send_announce_callback(SendAnnounceCallback callback);
+
+    /**
      * Show the screen
      */
     void show();
@@ -109,12 +116,14 @@ private:
     lv_obj_t* _list;
     lv_obj_t* _btn_back;
     lv_obj_t* _btn_refresh;
+    lv_obj_t* _btn_announce;
     lv_obj_t* _empty_label;
 
     std::vector<AnnounceItem> _announces;
 
     AnnounceSelectedCallback _announce_selected_callback;
     BackCallback _back_callback;
+    SendAnnounceCallback _send_announce_callback;
 
     // UI construction
     void create_header();
@@ -126,6 +135,7 @@ private:
     static void on_announce_clicked(lv_event_t* event);
     static void on_back_clicked(lv_event_t* event);
     static void on_refresh_clicked(lv_event_t* event);
+    static void on_send_announce_clicked(lv_event_t* event);
 
     // Utility
     static String format_timestamp(double timestamp);

@@ -25,7 +25,7 @@ using namespace RNS::Utilities;
 // CBA
 // CBA ACCUMULATES
 /*static*/ //uint16_t Identity::_known_destinations_maxsize = 100;
-/*static*/ uint16_t Identity::_known_destinations_maxsize = 100;
+/*static*/ uint16_t Identity::_known_destinations_maxsize = 2000;  // Increased for T-Deck PSRAM
 
 // Ratchet cache static members
 /*static*/ std::map<Bytes, Bytes> Identity::_known_ratchets;

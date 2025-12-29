@@ -111,6 +111,13 @@ bool UIManager::init() {
         [this]() { on_back_from_announces(); }
     );
 
+    _announce_list_screen->set_send_announce_callback(
+        [this]() {
+            INFO("Sending LXMF announce");
+            _router.announce();
+        }
+    );
+
     // Set up callbacks for status screen
     _status_screen->set_back_callback(
         [this]() { on_back_from_status(); }
