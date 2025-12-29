@@ -641,11 +641,81 @@ void setup_ui_manager() {
 
         // Set save callback (update app_settings and apply)
         settings->set_save_callback([](const UI::LXMF::AppSettings& new_settings) {
+            // Check what changed
+            bool tcp_settings_changed = (new_settings.tcp_enabled != app_settings.tcp_enabled) ||
+                                       (new_settings.tcp_host != app_settings.tcp_host) ||
+                                       (new_settings.tcp_port != app_settings.tcp_port);
+            bool lora_settings_changed = (new_settings.lora_enabled != app_settings.lora_enabled) ||
+                                        (new_settings.lora_frequency != app_settings.lora_frequency) ||
+                                        (new_settings.lora_bandwidth != app_settings.lora_bandwidth) ||
+                                        (new_settings.lora_sf != app_settings.lora_sf) ||
+                                        (new_settings.lora_cr != app_settings.lora_cr) ||
+                                        (new_settings.lora_power != app_settings.lora_power);
+
             app_settings = new_settings;
+
             // Update router display name
             if (router && !new_settings.display_name.isEmpty()) {
                 router->set_display_name(new_settings.display_name.c_str());
             }
+
+            // Handle TCP interface changes at runtime
+            if (tcp_settings_changed) {
+                if (tcp_interface_impl) {
+                    INFO("Stopping TCP interface...");
+                    tcp_interface_impl->stop();
+                    // Note: We don't delete it to avoid Transport issues
+                }
+
+                if (new_settings.tcp_enabled && WiFi.status() == WL_CONNECTED) {
+                    INFO("Starting TCP interface...");
+                    if (tcp_interface_impl) {
+                        tcp_interface_impl->set_target_host(new_settings.tcp_host.c_str());
+                        tcp_interface_impl->set_target_port(new_settings.tcp_port);
+                        tcp_interface_impl->start();
+                    }
+                } else if (!new_settings.tcp_enabled) {
+                    INFO("TCP interface disabled");
+                }
+            }
+
+            // Handle LoRa interface changes at runtime
+            if (lora_settings_changed) {
+                if (lora_interface_impl) {
+                    INFO("Stopping LoRa interface...");
+                    lora_interface_impl->stop();
+                }
+
+                if (new_settings.lora_enabled) {
+                    INFO("Starting LoRa interface with new settings...");
+
+                    // Create interface if it doesn't exist yet
+                    if (!lora_interface_impl) {
+                        INFO("Creating new LoRa interface...");
+                        lora_interface_impl = new SX1262Interface("LoRa");
+                        lora_interface = new Interface(lora_interface_impl);
+                    }
+
+                    SX1262Config lora_config;
+                    lora_config.frequency = new_settings.lora_frequency;
+                    lora_config.bandwidth = new_settings.lora_bandwidth;
+                    lora_config.spreading_factor = new_settings.lora_sf;
+                    lora_config.coding_rate = new_settings.lora_cr;
+                    lora_config.tx_power = new_settings.lora_power;
+                    lora_interface_impl->set_config(lora_config);
+
+                    if (lora_interface->start()) {
+                        INFO("LoRa interface started");
+                        // Register with transport if not already registered
+                        Transport::register_interface(*lora_interface);
+                    } else {
+                        ERROR("Failed to start LoRa interface!");
+                    }
+                } else {
+                    INFO("LoRa interface disabled");
+                }
+            }
+
             INFO("Settings saved");
         });
     }

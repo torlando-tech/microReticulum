@@ -37,7 +37,7 @@ namespace SX1262Pins {
  */
 struct SX1262Config {
     float frequency = 927.25f;        // MHz
-    float bandwidth = 50.0f;          // kHz
+    float bandwidth = 62.5f;          // kHz (valid: 7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250, 500)
     uint8_t spreading_factor = 7;     // SF7-SF12
     uint8_t coding_rate = 5;          // 5=4/5, 6=4/6, 7=4/7, 8=4/8
     int8_t tx_power = 17;             // dBm (2-22)
@@ -80,6 +80,9 @@ private:
     // RadioLib objects
     SX1262* _radio = nullptr;
     Module* _module = nullptr;
+
+    // SPI for LoRa (shared HSPI bus with display, but with MISO enabled)
+    SPIClass* _lora_spi = nullptr;
 
     // SPI mutex for shared bus with display
     static SemaphoreHandle_t _spi_mutex;

@@ -57,7 +57,7 @@ struct AppSettings {
         tcp_enabled(true),
         lora_enabled(false),
         lora_frequency(927.25f),
-        lora_bandwidth(50.0f),
+        lora_bandwidth(62.5f),
         lora_sf(7),
         lora_cr(5),
         lora_power(17),

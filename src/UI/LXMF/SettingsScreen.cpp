@@ -439,7 +439,7 @@ void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     lv_obj_set_style_text_font(bw_label, &lv_font_montserrat_14, 0);
 
     _dropdown_lora_bandwidth = lv_dropdown_create(bw_row);
-    lv_dropdown_set_options(_dropdown_lora_bandwidth, "50 kHz\n62.5 kHz\n125 kHz\n250 kHz\n500 kHz");
+    lv_dropdown_set_options(_dropdown_lora_bandwidth, "62.5 kHz\n125 kHz\n250 kHz\n500 kHz");
     lv_obj_set_size(_dropdown_lora_bandwidth, 100, 28);
     lv_obj_align(_dropdown_lora_bandwidth, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_bg_color(_dropdown_lora_bandwidth, lv_color_hex(0x2a2a2a), 0);
@@ -622,7 +622,12 @@ void SettingsScreen::load_settings() {
     _settings.tcp_enabled = prefs.getBool(KEY_TCP_ENABLED, true);
     _settings.lora_enabled = prefs.getBool(KEY_LORA_ENABLED, false);
     _settings.lora_frequency = prefs.getFloat(KEY_LORA_FREQ, 927.25f);
-    _settings.lora_bandwidth = prefs.getFloat(KEY_LORA_BW, 50.0f);
+    _settings.lora_bandwidth = prefs.getFloat(KEY_LORA_BW, 62.5f);
+    // Validate bandwidth - SX1262 valid values: 7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250, 500
+    // If saved value is invalid (like 50 kHz), correct to nearest valid value
+    if (_settings.lora_bandwidth < 60.0f) {
+        _settings.lora_bandwidth = 62.5f;  // 50 kHz -> 62.5 kHz
+    }
     _settings.lora_sf = prefs.getUChar(KEY_LORA_SF, 7);
     _settings.lora_cr = prefs.getUChar(KEY_LORA_CR, 5);
     _settings.lora_power = prefs.getChar(KEY_LORA_POWER, 17);
@@ -735,13 +740,12 @@ void SettingsScreen::update_ui_from_settings() {
         lv_textarea_set_text(_ta_lora_frequency, freq_str);
     }
     if (_dropdown_lora_bandwidth) {
-        // Map bandwidth to index: 50=0, 62.5=1, 125=2, 250=3, 500=4
+        // Map bandwidth to index: 62.5=0, 125=1, 250=2, 500=3
         int idx = 0;
-        if (_settings.lora_bandwidth < 55.0f) idx = 0;       // 50 kHz
-        else if (_settings.lora_bandwidth < 100.0f) idx = 1; // 62.5 kHz
-        else if (_settings.lora_bandwidth < 200.0f) idx = 2; // 125 kHz
-        else if (_settings.lora_bandwidth < 400.0f) idx = 3; // 250 kHz
-        else idx = 4;  // 500 kHz
+        if (_settings.lora_bandwidth < 100.0f) idx = 0;       // 62.5 kHz
+        else if (_settings.lora_bandwidth < 200.0f) idx = 1;  // 125 kHz
+        else if (_settings.lora_bandwidth < 400.0f) idx = 2;  // 250 kHz
+        else idx = 3;  // 500 kHz
         lv_dropdown_set_selected(_dropdown_lora_bandwidth, idx);
     }
     if (_dropdown_lora_sf) {
@@ -808,10 +812,10 @@ void SettingsScreen::update_settings_from_ui() {
         _settings.lora_frequency = String(lv_textarea_get_text(_ta_lora_frequency)).toFloat();
     }
     if (_dropdown_lora_bandwidth) {
-        // Map index to bandwidth: 0=50, 1=62.5, 2=125, 3=250, 4=500
-        static const float bw_values[] = {50.0f, 62.5f, 125.0f, 250.0f, 500.0f};
+        // Map index to bandwidth: 0=62.5, 1=125, 2=250, 3=500
+        static const float bw_values[] = {62.5f, 125.0f, 250.0f, 500.0f};
         int idx = lv_dropdown_get_selected(_dropdown_lora_bandwidth);
-        if (idx >= 0 && idx < 5) {
+        if (idx >= 0 && idx < 4) {
             _settings.lora_bandwidth = bw_values[idx];
         }
     }

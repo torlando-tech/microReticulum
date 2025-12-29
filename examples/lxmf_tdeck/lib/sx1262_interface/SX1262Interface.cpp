@@ -74,9 +74,19 @@ bool SX1262Interface::start() {
         return false;
     }
 
-    // Create RadioLib module and radio
-    // Note: SPI is already initialized by display, we just need to configure our pins
-    _module = new Module(SX1262Pins::CS, SX1262Pins::DIO1, SX1262Pins::RST, SX1262Pins::BUSY);
+    // Set radio CS high to avoid conflicts
+    pinMode(SX1262Pins::CS, OUTPUT);
+    digitalWrite(SX1262Pins::CS, HIGH);
+
+    // Create SPI instance for LoRa using HSPI (same bus as display)
+    // Display uses HSPI without MISO (write-only), we add MISO for radio reads
+    // SCK=40, MISO=38, MOSI=41
+    _lora_spi = new SPIClass(HSPI);
+    _lora_spi->begin(40, SX1262Pins::SPI_MISO, 41, SX1262Pins::CS);
+    DEBUG("SX1262Interface: HSPI initialized (SCK=40, MISO=38, MOSI=41, CS=9)");
+
+    // Create RadioLib module and radio with our SPI instance
+    _module = new Module(SX1262Pins::CS, SX1262Pins::DIO1, SX1262Pins::RST, SX1262Pins::BUSY, *_lora_spi);
     _radio = new SX1262(_module);
 
     // Initialize radio with configuration
@@ -173,8 +183,20 @@ void SX1262Interface::loop() {
         return;  // Display is using SPI, try again later
     }
 
-    // Check if a packet was received
+    // Check IRQ status to see if a packet was actually received
+    uint16_t irqStatus = _radio->getIrqStatus();
+
+    // Only process if RX_DONE flag is set (0x0002 for SX126x)
+    if (!(irqStatus & 0x0002)) {
+        xSemaphoreGive(_spi_mutex);
+        return;  // No new packet
+    }
+
+    // Read the received packet (this also clears IRQ internally)
     int16_t state = _radio->readData(_rx_buffer.writable(HW_MTU), HW_MTU);
+
+    // Immediately restart receive to clear IRQ flags and prepare for next packet
+    _radio->startReceive();
 
     if (state == RADIOLIB_ERR_NONE) {
         // Got a packet
@@ -197,17 +219,11 @@ void SX1262Interface::loop() {
                   "SNR=" + std::to_string((int)_last_snr) + " dB");
 
             on_incoming(payload);
-
-            // Restart receive
-            start_receive();
             return;
         }
     } else if (state != RADIOLIB_ERR_RX_TIMEOUT) {
         // An error occurred (not just timeout)
         ERROR("SX1262Interface: Receive error, code " + std::to_string(state));
-        xSemaphoreGive(_spi_mutex);
-        start_receive();
-        return;
     }
 
     xSemaphoreGive(_spi_mutex);
