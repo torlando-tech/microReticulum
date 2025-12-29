@@ -488,14 +488,31 @@ Link LXMRouter::get_link_for_destination(const Bytes& destination_hash) {
 		Link& existing_link = it->second;
 
 		// Check if link is still valid
-		if (existing_link &&
-		    (existing_link.status() == RNS::Type::Link::ACTIVE ||
-		     existing_link.status() == RNS::Type::Link::PENDING)) {
-			DEBUG("  Using existing link (status: " + std::to_string((uint8_t)existing_link.status()) + ")");
+		if (existing_link && existing_link.status() == RNS::Type::Link::ACTIVE) {
+			DEBUG("  Using existing active link");
 			return existing_link;
+		} else if (existing_link && existing_link.status() == RNS::Type::Link::PENDING) {
+			// Check if pending link has timed out
+			auto time_it = _link_creation_times.find(destination_hash);
+			if (time_it != _link_creation_times.end()) {
+				double age = Utilities::OS::time() - time_it->second;
+				if (age > LINK_ESTABLISHMENT_TIMEOUT) {
+					WARNING("  Pending link timed out after " + std::to_string((int)age) + "s, removing");
+					_direct_links.erase(it);
+					_link_creation_times.erase(time_it);
+					// Fall through to create new link
+				} else {
+					DEBUG("  Using existing pending link (age: " + std::to_string((int)age) + "s)");
+					return existing_link;
+				}
+			} else {
+				DEBUG("  Using existing pending link");
+				return existing_link;
+			}
 		} else {
 			DEBUG("  Existing link is not active, removing");
 			_direct_links.erase(it);
+			_link_creation_times.erase(destination_hash);
 		}
 	}
 
@@ -533,8 +550,9 @@ Link LXMRouter::get_link_for_destination(const Bytes& destination_hash) {
 		link.set_link_established_callback(static_link_established_callback);
 		link.set_link_closed_callback(static_link_closed_callback);
 
-		// Store link (use insert to avoid default-constructing Link which crashes)
+		// Store link and creation time
 		_direct_links.insert({destination_hash, link});
+		_link_creation_times[destination_hash] = Utilities::OS::time();
 
 		INFO("  Link establishment initiated");
 		return link;

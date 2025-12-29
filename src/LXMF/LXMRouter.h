@@ -320,6 +320,8 @@ namespace LXMF {
 
 		// Link management for DIRECT delivery
 		std::map<RNS::Bytes, RNS::Link> _direct_links;  // dest_hash -> Link
+		std::map<RNS::Bytes, double> _link_creation_times;  // dest_hash -> creation timestamp
+		static constexpr double LINK_ESTABLISHMENT_TIMEOUT = 30.0;  // Seconds to wait for pending links
 
 		// Callbacks
 		DeliveryCallback _delivery_callback;
