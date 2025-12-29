@@ -246,20 +246,24 @@ void ChatScreen::create_message_bubble(const MessageItem& item) {
     lv_obj_add_flag(bubble, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(bubble, on_message_long_pressed, LV_EVENT_LONG_PRESSED, this);
 
+    // Use flex layout for proper content + status arrangement
+    lv_obj_set_flex_flow(bubble, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(bubble, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
     // Message content
     lv_obj_t* label_content = lv_label_create(bubble);
     lv_label_set_text(label_content, item.content.c_str());
     lv_label_set_long_mode(label_content, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(label_content, LV_PCT(100));
-    lv_obj_align(label_content, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_text_color(label_content, lv_color_white(), 0);
 
-    // Timestamp and delivery status
+    // Timestamp and delivery status (on its own line)
     String status_text = item.timestamp_str + " " + get_delivery_indicator(item.outgoing, item.delivered, item.failed);
 
     lv_obj_t* label_status = lv_label_create(bubble);
     lv_label_set_text(label_status, status_text.c_str());
-    lv_obj_align(label_status, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_set_width(label_status, LV_PCT(100));
+    lv_obj_set_style_text_align(label_status, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_color(label_status, lv_color_hex(0xB0B0B0), 0);
     lv_obj_set_style_text_font(label_status, &lv_font_montserrat_14, 0);
 }

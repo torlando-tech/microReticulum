@@ -245,8 +245,9 @@ void ConversationListScreen::create_conversation_item(const ConversationItem& it
     lv_label_set_text(label_preview, item.last_message.c_str());
     lv_obj_align(label_preview, LV_ALIGN_BOTTOM_LEFT, 6, -4);
     lv_obj_set_style_text_color(label_preview, lv_color_hex(0xB0B0B0), 0);
-    lv_obj_set_width(label_preview, 200);  // Limit width to leave room for timestamp
+    lv_obj_set_width(label_preview, 220);  // Limit width to leave room for timestamp
     lv_label_set_long_mode(label_preview, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_max_height(label_preview, 16, 0);  // Force single line
 
     lv_obj_t* label_time = lv_label_create(container);
     lv_label_set_text(label_time, item.timestamp_str.c_str());
