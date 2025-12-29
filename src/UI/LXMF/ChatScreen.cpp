@@ -251,23 +251,20 @@ void ChatScreen::refresh() {
     INFO(("  Found " + String(message_hashes.size()) + " messages").c_str());
 
     for (const auto& msg_hash : message_hashes) {
-        ::LXMF::LXMessage msg = _message_store->load_message(msg_hash);
+        // Use fast metadata loader (no msgpack unpacking)
+        ::LXMF::MessageStore::MessageMetadata meta = _message_store->load_message_metadata(msg_hash);
+
+        if (!meta.valid) {
+            continue;
+        }
 
         MessageItem item;
         item.message_hash = msg_hash;
-
-        // Get message content
-        String content((const char*)msg.content().data(), msg.content().size());
-        item.content = content;
-
-        item.timestamp_str = format_timestamp(msg.timestamp());
-
-        // Determine if outgoing (check if source matches our identity)
-        // TODO: Need to pass our identity hash for comparison
-        item.outgoing = msg.incoming() == false;
-
-        item.delivered = (msg.state() == ::LXMF::Type::Message::DELIVERED);
-        item.failed = (msg.state() == ::LXMF::Type::Message::FAILED);
+        item.content = String(meta.content.c_str());
+        item.timestamp_str = format_timestamp(meta.timestamp);
+        item.outgoing = !meta.incoming;
+        item.delivered = (meta.state == static_cast<int>(::LXMF::Type::Message::DELIVERED));
+        item.failed = (meta.state == static_cast<int>(::LXMF::Type::Message::FAILED));
 
         _messages.push_back(item);
         create_message_bubble(item);

@@ -43,6 +43,21 @@ namespace LXMF {
 			RNS::Bytes last_message_hash;      // Hash of most recent message
 		};
 
+		/**
+		 * @brief Lightweight message metadata for fast loading
+		 *
+		 * Contains only fields needed for chat list display, avoiding
+		 * expensive msgpack unpacking.
+		 */
+		struct MessageMetadata {
+			RNS::Bytes hash;
+			std::string content;
+			double timestamp;
+			bool incoming;
+			int state;  // Type::Message::State as int
+			bool valid;  // True if loaded successfully
+		};
+
 	public:
 		/**
 		 * @brief Construct MessageStore
@@ -72,6 +87,17 @@ namespace LXMF {
 		 * @return LXMessage object (or empty if not found)
 		 */
 		LXMessage load_message(const RNS::Bytes& message_hash);
+
+		/**
+		 * @brief Load only message metadata (fast path for chat list)
+		 *
+		 * Reads content/timestamp/state directly from JSON without msgpack unpacking.
+		 * Much faster than load_message() for displaying message lists.
+		 *
+		 * @param message_hash Hash of the message to load
+		 * @return MessageMetadata struct (check .valid field)
+		 */
+		MessageMetadata load_message_metadata(const RNS::Bytes& message_hash);
 
 		/**
 		 * @brief Delete a message from storage

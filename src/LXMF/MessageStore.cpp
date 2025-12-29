@@ -169,6 +169,12 @@ bool MessageStore::save_message(const LXMessage& message) {
 		doc["destination_hash"] = message.destination_hash().toHex();
 		doc["source_hash"] = message.source_hash().toHex();
 		doc["incoming"] = message.incoming();
+		doc["timestamp"] = message.timestamp();
+		doc["state"] = static_cast<int>(message.state());
+
+		// Store content as UTF-8 for fast loading (no msgpack unpacking needed)
+		std::string content_str((const char*)message.content().data(), message.content().size());
+		doc["content"] = content_str;
 
 		// Store the entire packed message to preserve hash/signature
 		// This ensures exact reconstruction on load
@@ -282,6 +288,52 @@ LXMessage MessageStore::load_message(const Bytes& message_hash) {
 	} catch (const std::exception& e) {
 		ERROR("Exception loading message: " + std::string(e.what()));
 		return LXMessage(Bytes(), Bytes(), Bytes(), Bytes());
+	}
+}
+
+// Load only message metadata (fast path - no msgpack unpacking)
+MessageStore::MessageMetadata MessageStore::load_message_metadata(const Bytes& message_hash) {
+	MessageMetadata meta;
+	meta.valid = false;
+
+	if (!_initialized) {
+		return meta;
+	}
+
+	std::string message_path = get_message_path(message_hash);
+
+	if (!Utilities::OS::file_exists(message_path.c_str())) {
+		return meta;
+	}
+
+	try {
+		Bytes data;
+		if (Utilities::OS::read_file(message_path.c_str(), data) == 0) {
+			return meta;
+		}
+
+		JsonDocument doc;
+		DeserializationError error = deserializeJson(doc, data.data(), data.size());
+
+		if (error) {
+			return meta;
+		}
+
+		meta.hash = message_hash;
+
+		// Read pre-extracted fields (no msgpack unpacking needed)
+		if (doc["content"].is<const char*>()) {
+			meta.content = doc["content"].as<std::string>();
+		}
+		meta.timestamp = doc["timestamp"] | 0.0;
+		meta.incoming = doc["incoming"] | true;
+		meta.state = doc["state"] | 0;
+		meta.valid = true;
+
+		return meta;
+
+	} catch (...) {
+		return meta;
 	}
 }
 
