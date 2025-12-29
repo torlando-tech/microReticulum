@@ -6,8 +6,10 @@
 #ifdef ARDUINO
 
 #include "../../Log.h"
+#include "../../Identity.h"
 #include "../../Hardware/TDeck/Config.h"
 #include <WiFi.h>
+#include <MsgPack.h>
 
 using namespace RNS;
 using namespace Hardware::TDeck;
@@ -181,7 +183,19 @@ void ConversationListScreen::refresh() {
         // Create conversation item
         ConversationItem item;
         item.peer_hash = peer_hash;
-        item.peer_name = truncate_hash(peer_hash);
+
+        // Try to get display name from app_data, fall back to hash
+        Bytes app_data = Identity::recall_app_data(peer_hash);
+        if (app_data && app_data.size() > 0) {
+            String display_name = parse_display_name(app_data);
+            if (display_name.length() > 0) {
+                item.peer_name = display_name;
+            } else {
+                item.peer_name = truncate_hash(peer_hash);
+            }
+        } else {
+            item.peer_name = truncate_hash(peer_hash);
+        }
 
         // Get message content for preview
         String content((const char*)last_msg.content().data(), last_msg.content().size());
@@ -218,25 +232,25 @@ void ConversationListScreen::create_conversation_item(const ConversationItem& it
     lv_obj_add_event_cb(container, on_conversation_clicked, LV_EVENT_CLICKED, this);
     lv_obj_add_event_cb(container, on_conversation_long_pressed, LV_EVENT_LONG_PRESSED, this);
 
-    // Row 1: Peer hash (left) + Timestamp (right)
+    // Row 1: Peer hash
     lv_obj_t* label_peer = lv_label_create(container);
     lv_label_set_text(label_peer, item.peer_name.c_str());
     lv_obj_align(label_peer, LV_ALIGN_TOP_LEFT, 6, 4);
     lv_obj_set_style_text_color(label_peer, lv_color_hex(0x42A5F5), 0);
     lv_obj_set_style_text_font(label_peer, &lv_font_montserrat_14, 0);
 
-    lv_obj_t* label_time = lv_label_create(container);
-    lv_label_set_text(label_time, item.timestamp_str.c_str());
-    lv_obj_align(label_time, LV_ALIGN_TOP_RIGHT, -6, 6);
-    lv_obj_set_style_text_color(label_time, lv_color_hex(0x808080), 0);
-
-    // Row 2: Message preview (left) + Unread badge (right)
+    // Row 2: Message preview (left) + Timestamp (right)
     lv_obj_t* label_preview = lv_label_create(container);
     lv_label_set_text(label_preview, item.last_message.c_str());
     lv_obj_align(label_preview, LV_ALIGN_BOTTOM_LEFT, 6, -4);
     lv_obj_set_style_text_color(label_preview, lv_color_hex(0xB0B0B0), 0);
-    lv_obj_set_width(label_preview, 260);  // Limit width to leave room for badge
+    lv_obj_set_width(label_preview, 200);  // Limit width to leave room for timestamp
     lv_label_set_long_mode(label_preview, LV_LABEL_LONG_DOT);
+
+    lv_obj_t* label_time = lv_label_create(container);
+    lv_label_set_text(label_time, item.timestamp_str.c_str());
+    lv_obj_align(label_time, LV_ALIGN_BOTTOM_RIGHT, -6, -4);
+    lv_obj_set_style_text_color(label_time, lv_color_hex(0x808080), 0);
 
     // Unread count badge
     if (item.unread_count > 0) {
@@ -456,13 +470,51 @@ String ConversationListScreen::format_timestamp(uint32_t timestamp) {
 }
 
 String ConversationListScreen::truncate_hash(const Bytes& hash) {
-    if (hash.size() < 8) {
-        return String(hash.toHex().c_str());
+    return String(hash.toHex().c_str());
+}
+
+String ConversationListScreen::parse_display_name(const Bytes& app_data) {
+    if (app_data.size() == 0) {
+        return String();
     }
 
-    // Show first 8 hex chars (4 bytes)
-    String hex = String(hash.toHex().c_str());
-    return hex.substring(0, 8) + "...";
+    uint8_t first_byte = app_data.data()[0];
+
+    // Check for msgpack array format (LXMF 0.5.0+)
+    // fixarray: 0x90-0x9f (array with 0-15 elements)
+    // array16: 0xdc
+    if ((first_byte >= 0x90 && first_byte <= 0x9f) || first_byte == 0xdc) {
+        // Msgpack encoded: [display_name, stamp_cost, ...]
+        MsgPack::Unpacker unpacker;
+        unpacker.feed(app_data.data(), app_data.size());
+
+        // Get array size
+        MsgPack::arr_size_t arr_size;
+        if (!unpacker.deserialize(arr_size)) {
+            return String();
+        }
+
+        if (arr_size.size() < 1) {
+            return String();
+        }
+
+        // First element is display_name (can be nil or bytes)
+        if (unpacker.isNil()) {
+            unpacker.unpackNil();
+            return String();
+        }
+
+        MsgPack::bin_t<uint8_t> name_bin;
+        if (unpacker.deserialize(name_bin)) {
+            // Convert bytes to string
+            return String((const char*)name_bin.data(), name_bin.size());
+        }
+
+        return String();
+    } else {
+        // Original format: raw UTF-8 string
+        return String(app_data.toString().c_str());
+    }
 }
 
 } // namespace LXMF

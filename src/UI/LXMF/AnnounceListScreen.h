@@ -45,6 +45,7 @@ public:
     struct AnnounceItem {
         RNS::Bytes destination_hash;
         String hash_display;    // Truncated hash for display
+        String display_name;    // Display name from announce (if available)
         uint8_t hops;           // Hop count (0 = direct)
         double timestamp;       // When announced
         String timestamp_str;   // Human-readable time
@@ -130,6 +131,7 @@ private:
     static String format_timestamp(double timestamp);
     static String format_hops(uint8_t hops);
     static String truncate_hash(const RNS::Bytes& hash);
+    static String parse_display_name(const RNS::Bytes& app_data);
 };
 
 } // namespace LXMF

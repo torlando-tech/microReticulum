@@ -8,7 +8,9 @@
 #include "../../Log.h"
 #include "../../Transport.h"
 #include "../../Identity.h"
+#include "../../Destination.h"
 #include "../../Utilities/OS.h"
+#include <MsgPack.h>
 
 using namespace RNS;
 
@@ -117,12 +119,24 @@ void AnnounceListScreen::refresh() {
     // Get destination table from Transport
     const auto& dest_table = Transport::get_destination_table();
 
+    // Compute name_hash for lxmf.delivery to filter announces
+    Bytes lxmf_delivery_name_hash = Destination::name_hash("lxmf", "delivery");
+
     for (auto it = dest_table.begin(); it != dest_table.end(); ++it) {
         const Bytes& dest_hash = it->first;
         const Transport::DestinationEntry& dest_entry = it->second;
 
         // Check if this destination has a known identity (was announced properly)
         Identity identity = Identity::recall(dest_hash);
+        if (!identity) {
+            continue;  // Skip destinations without known identity
+        }
+
+        // Verify this is an lxmf.delivery destination by computing expected hash
+        Bytes expected_hash = Destination::hash(identity, "lxmf", "delivery");
+        if (dest_hash != expected_hash) {
+            continue;  // Not an lxmf.delivery destination
+        }
 
         AnnounceItem item;
         item.destination_hash = dest_hash;
@@ -131,6 +145,12 @@ void AnnounceListScreen::refresh() {
         item.timestamp = dest_entry._timestamp;
         item.timestamp_str = format_timestamp(dest_entry._timestamp);
         item.has_path = Transport::has_path(dest_hash);
+
+        // Try to get display name from app_data
+        Bytes app_data = Identity::recall_app_data(dest_hash);
+        if (app_data && app_data.size() > 0) {
+            item.display_name = parse_display_name(app_data);
+        }
 
         _announces.push_back(item);
     }
@@ -179,29 +199,33 @@ void AnnounceListScreen::create_announce_item(const AnnounceItem& item) {
     lv_obj_set_user_data(container, hash_copy);
     lv_obj_add_event_cb(container, on_announce_clicked, LV_EVENT_CLICKED, this);
 
-    // Row 1: Destination hash (left) + Timestamp (right)
-    lv_obj_t* label_hash = lv_label_create(container);
-    lv_label_set_text(label_hash, item.hash_display.c_str());
-    lv_obj_align(label_hash, LV_ALIGN_TOP_LEFT, 6, 4);
-    lv_obj_set_style_text_color(label_hash, lv_color_hex(0x42A5F5), 0);
-    lv_obj_set_style_text_font(label_hash, &lv_font_montserrat_14, 0);
+    // Row 1: Display name (if available) or destination hash
+    lv_obj_t* label_name = lv_label_create(container);
+    if (item.display_name.length() > 0) {
+        lv_label_set_text(label_name, item.display_name.c_str());
+    } else {
+        lv_label_set_text(label_name, item.hash_display.c_str());
+    }
+    lv_obj_align(label_name, LV_ALIGN_TOP_LEFT, 6, 4);
+    lv_obj_set_style_text_color(label_name, lv_color_hex(0x42A5F5), 0);
+    lv_obj_set_style_text_font(label_name, &lv_font_montserrat_14, 0);
 
-    lv_obj_t* label_time = lv_label_create(container);
-    lv_label_set_text(label_time, item.timestamp_str.c_str());
-    lv_obj_align(label_time, LV_ALIGN_TOP_RIGHT, -6, 6);
-    lv_obj_set_style_text_color(label_time, lv_color_hex(0x808080), 0);
-
-    // Row 2: Hops info (left) + Status dot (right)
+    // Row 2: Hops info (left) + Timestamp (right)
     lv_obj_t* label_hops = lv_label_create(container);
     lv_label_set_text(label_hops, format_hops(item.hops).c_str());
     lv_obj_align(label_hops, LV_ALIGN_BOTTOM_LEFT, 6, -4);
     lv_obj_set_style_text_color(label_hops, lv_color_hex(0xB0B0B0), 0);
 
-    // Status indicator (green dot if has path)
+    lv_obj_t* label_time = lv_label_create(container);
+    lv_label_set_text(label_time, item.timestamp_str.c_str());
+    lv_obj_align(label_time, LV_ALIGN_BOTTOM_RIGHT, -6, -4);
+    lv_obj_set_style_text_color(label_time, lv_color_hex(0x808080), 0);
+
+    // Status indicator (green dot if has path) - on row 1, right side
     if (item.has_path) {
         lv_obj_t* status_dot = lv_obj_create(container);
         lv_obj_set_size(status_dot, 8, 8);
-        lv_obj_align(status_dot, LV_ALIGN_BOTTOM_RIGHT, -6, -8);
+        lv_obj_align(status_dot, LV_ALIGN_TOP_RIGHT, -6, 8);
         lv_obj_set_style_bg_color(status_dot, lv_color_hex(0x4CAF50), 0);
         lv_obj_set_style_radius(status_dot, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_border_width(status_dot, 0, 0);
@@ -283,13 +307,51 @@ String AnnounceListScreen::format_hops(uint8_t hops) {
 }
 
 String AnnounceListScreen::truncate_hash(const Bytes& hash) {
-    if (hash.size() < 8) {
-        return String(hash.toHex().c_str());
+    return String(hash.toHex().c_str());
+}
+
+String AnnounceListScreen::parse_display_name(const Bytes& app_data) {
+    if (app_data.size() == 0) {
+        return String();
     }
 
-    // Show first 12 hex chars (6 bytes)
-    String hex = String(hash.toHex().c_str());
-    return hex.substring(0, 12) + "...";
+    uint8_t first_byte = app_data.data()[0];
+
+    // Check for msgpack array format (LXMF 0.5.0+)
+    // fixarray: 0x90-0x9f (array with 0-15 elements)
+    // array16: 0xdc
+    if ((first_byte >= 0x90 && first_byte <= 0x9f) || first_byte == 0xdc) {
+        // Msgpack encoded: [display_name, stamp_cost, ...]
+        MsgPack::Unpacker unpacker;
+        unpacker.feed(app_data.data(), app_data.size());
+
+        // Get array size
+        MsgPack::arr_size_t arr_size;
+        if (!unpacker.deserialize(arr_size)) {
+            return String();
+        }
+
+        if (arr_size.size() < 1) {
+            return String();
+        }
+
+        // First element is display_name (can be nil or bytes)
+        if (unpacker.isNil()) {
+            unpacker.unpackNil();
+            return String();
+        }
+
+        MsgPack::bin_t<uint8_t> name_bin;
+        if (unpacker.deserialize(name_bin)) {
+            // Convert bytes to string
+            return String((const char*)name_bin.data(), name_bin.size());
+        }
+
+        return String();
+    } else {
+        // Original format: raw UTF-8 string
+        return String(app_data.toString().c_str());
+    }
 }
 
 } // namespace LXMF
