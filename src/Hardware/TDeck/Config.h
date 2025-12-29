@@ -51,9 +51,10 @@ namespace Pin {
     constexpr uint8_t POWER_EN = 10;      // Power enable pin
     constexpr uint8_t BATTERY_ADC = 4;    // Battery voltage ADC
 
-    // GPS (L76K or UBlox M10Q on Grove connector)
-    constexpr uint8_t GPS_TX = 43;        // GPS TX -> ESP32 RX
-    constexpr uint8_t GPS_RX = 44;        // GPS RX -> ESP32 TX
+    // GPS (L76K or UBlox M10Q - built-in on T-Deck Plus)
+    // Pin naming from ESP32's perspective (matches LilyGo convention)
+    constexpr uint8_t GPS_TX = 43;        // ESP32 TX -> GPS RX (ESP32 transmits)
+    constexpr uint8_t GPS_RX = 44;        // ESP32 RX <- GPS TX (ESP32 receives)
 }
 
 namespace I2C {
@@ -134,6 +135,16 @@ namespace Power {
     // Battery levels (in volts)
     constexpr float BATTERY_FULL = 4.2;
     constexpr float BATTERY_EMPTY = 3.3;
+}
+
+namespace Radio {
+    // SX1262 LoRa Radio pins
+    constexpr uint8_t LORA_CS = 9;        // Chip select
+    constexpr uint8_t LORA_BUSY = 13;     // SX1262 busy signal
+    constexpr uint8_t LORA_RST = 17;      // Reset
+    constexpr uint8_t LORA_DIO1 = 45;     // Interrupt (DIO1, not DIO0)
+    // Note: Uses shared SPI bus with display (SCK=40, MOSI=41, MISO=38)
+    constexpr uint8_t SPI_MISO = 38;      // SPI MISO (LoRa only, display is write-only)
 }
 
 } // namespace TDeck

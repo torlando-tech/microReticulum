@@ -35,6 +35,15 @@ struct AppSettings {
     uint8_t brightness;
     uint16_t screen_timeout;  // seconds, 0 = never
 
+    // Interfaces
+    bool tcp_enabled;
+    bool lora_enabled;
+    float lora_frequency;     // MHz
+    float lora_bandwidth;     // kHz
+    uint8_t lora_sf;          // Spreading factor (7-12)
+    uint8_t lora_cr;          // Coding rate (5-8)
+    int8_t lora_power;        // TX power dBm (2-22)
+
     // Advanced
     uint32_t announce_interval;  // seconds
     bool gps_time_sync;
@@ -45,6 +54,13 @@ struct AppSettings {
         tcp_port(4965),
         brightness(180),
         screen_timeout(60),
+        tcp_enabled(true),
+        lora_enabled(false),
+        lora_frequency(927.25f),
+        lora_bandwidth(50.0f),
+        lora_sf(7),
+        lora_cr(5),
+        lora_power(17),
         announce_interval(60),
         gps_time_sync(true)
     {}
@@ -216,6 +232,17 @@ private:
     lv_obj_t* _label_storage;
     lv_obj_t* _label_ram;
 
+    // Interfaces section
+    lv_obj_t* _switch_tcp_enabled;
+    lv_obj_t* _switch_lora_enabled;
+    lv_obj_t* _ta_lora_frequency;
+    lv_obj_t* _dropdown_lora_bandwidth;
+    lv_obj_t* _dropdown_lora_sf;
+    lv_obj_t* _dropdown_lora_cr;
+    lv_obj_t* _slider_lora_power;
+    lv_obj_t* _label_lora_power_value;
+    lv_obj_t* _lora_params_container;  // Container for LoRa params (shown/hidden based on enabled)
+
     // Advanced section
     lv_obj_t* _ta_announce_interval;
     lv_obj_t* _switch_gps_sync;
@@ -238,6 +265,7 @@ private:
     void create_network_section(lv_obj_t* parent);
     void create_identity_section(lv_obj_t* parent);
     void create_display_section(lv_obj_t* parent);
+    void create_interfaces_section(lv_obj_t* parent);
     void create_gps_section(lv_obj_t* parent);
     void create_system_section(lv_obj_t* parent);
     void create_advanced_section(lv_obj_t* parent);
@@ -259,6 +287,8 @@ private:
     static void on_save_clicked(lv_event_t* event);
     static void on_reconnect_clicked(lv_event_t* event);
     static void on_brightness_changed(lv_event_t* event);
+    static void on_lora_enabled_changed(lv_event_t* event);
+    static void on_lora_power_changed(lv_event_t* event);
 };
 
 } // namespace LXMF

@@ -22,6 +22,9 @@
 // TCP Client Interface
 #include "TCPClientInterface.h"
 
+// LoRa Interface
+#include "SX1262Interface.h"
+
 // LXMF
 #include <LXMF/LXMRouter.h>
 #include <LXMF/MessageStore.h>
@@ -59,6 +62,8 @@ MessageStore* message_store = nullptr;
 UI::LXMF::UIManager* ui_manager = nullptr;
 TCPClientInterface* tcp_interface_impl = nullptr;
 Interface* tcp_interface = nullptr;
+SX1262Interface* lora_interface_impl = nullptr;
+Interface* lora_interface = nullptr;
 
 // Timing
 uint32_t last_ui_update = 0;
@@ -199,14 +204,105 @@ bool sync_time_from_gps(uint32_t timeout_ms = 30000) {
     return true;
 }
 
+bool try_l76k_init() {
+    // Try to initialize L76K GPS module (matches LilyGo example)
+    for (int attempt = 0; attempt < 3; attempt++) {
+        // Stop NMEA output temporarily
+        GPSSerial.write("$PCAS03,0,0,0,0,0,0,0,0,0,0,,,0,0*02\r\n");
+        delay(50);
+
+        // Drain buffer
+        uint32_t timeout = millis() + 2000;
+        while (GPSSerial.available() && millis() < timeout) {
+            GPSSerial.read();
+        }
+        GPSSerial.flush();
+        delay(100);
+
+        // Request version
+        GPSSerial.write("$PCAS06,0*1B\r\n");
+        timeout = millis() + 500;
+        while (!GPSSerial.available() && millis() < timeout) {
+            delay(10);
+        }
+
+        if (GPSSerial.available()) {
+            String response = GPSSerial.readStringUntil('\n');
+            if (response.startsWith("$GPTXT,01,01,02")) {
+                INFO("  L76K GPS detected!");
+                return true;
+            }
+        }
+        delay(200);
+    }
+    return false;
+}
+
 void setup_gps() {
     INFO("Initializing GPS...");
 
-    // Initialize GPS serial (9600 baud is default for most GPS modules)
-    GPSSerial.begin(9600, SERIAL_8N1, Pin::GPS_TX, Pin::GPS_RX);
+    // Initialize GPS serial (9600 baud is default for L76K)
+    // Note: begin(baud, config, rxPin, txPin) - ESP32 perspective
+    // GPS_RX (44) = ESP32 receives FROM GPS
+    // GPS_TX (43) = ESP32 transmits TO GPS
+    GPSSerial.begin(9600, SERIAL_8N1, Pin::GPS_RX, Pin::GPS_TX);
 
-    String gps_msg = "  GPS UART initialized on TX=" + String(Pin::GPS_TX) + ", RX=" + String(Pin::GPS_RX);
+    String gps_msg = "  GPS UART: ESP32 RX=" + String(Pin::GPS_RX) + ", TX=" + String(Pin::GPS_TX);
     INFO(gps_msg.c_str());
+
+    delay(500);  // Give GPS time to start up
+
+    bool gps_found = false;
+
+    // Try L76K at 9600 baud first
+    if (try_l76k_init()) {
+        // L76K initialization commands
+        GPSSerial.write("$PCAS04,5*1C\r\n");    // GPS + GLONASS mode
+        delay(100);
+        GPSSerial.write("$PCAS03,1,1,1,1,1,1,1,1,1,1,,,0,0*02\r\n");  // Enable all NMEA
+        delay(100);
+        GPSSerial.write("$PCAS11,3*1E\r\n");    // Vehicle mode
+        delay(100);
+        gps_found = true;
+        INFO("  L76K GPS initialized (GPS+GLONASS, Vehicle mode)");
+    } else {
+        // Try u-blox m10q at 38400 baud
+        INFO("  L76K not found, trying u-blox at 38400...");
+        GPSSerial.updateBaudRate(38400);
+        delay(100);
+
+        // Check if we get any data
+        uint32_t timeout = millis() + 1000;
+        while (!GPSSerial.available() && millis() < timeout) {
+            delay(10);
+        }
+
+        if (GPSSerial.available()) {
+            INFO("  u-blox GPS detected at 38400 baud");
+            gps_found = true;
+        } else {
+            // Try 9600 again for u-blox
+            GPSSerial.updateBaudRate(9600);
+            delay(100);
+            timeout = millis() + 1000;
+            while (!GPSSerial.available() && millis() < timeout) {
+                delay(10);
+            }
+            if (GPSSerial.available()) {
+                INFO("  GPS detected at 9600 baud");
+                gps_found = true;
+            }
+        }
+    }
+
+    // Drain buffer
+    while (GPSSerial.available()) {
+        GPSSerial.read();
+    }
+
+    if (!gps_found) {
+        WARNING("  No GPS module detected!");
+    }
 }
 
 void load_app_settings() {
@@ -227,6 +323,15 @@ void load_app_settings() {
     // Display
     app_settings.brightness = prefs.getUChar("brightness", 180);
     app_settings.screen_timeout = prefs.getUShort("timeout", 60);
+
+    // Interfaces
+    app_settings.tcp_enabled = prefs.getBool("tcp_en", true);
+    app_settings.lora_enabled = prefs.getBool("lora_en", false);
+    app_settings.lora_frequency = prefs.getFloat("lora_freq", 927.25f);
+    app_settings.lora_bandwidth = prefs.getFloat("lora_bw", 50.0f);
+    app_settings.lora_sf = prefs.getUChar("lora_sf", 7);
+    app_settings.lora_cr = prefs.getUChar("lora_cr", 5);
+    app_settings.lora_power = prefs.getChar("lora_pwr", 17);
 
     // Advanced
     app_settings.announce_interval = prefs.getULong("announce", 60);
@@ -390,8 +495,8 @@ void setup_reticulum() {
     std::string msg = "  Identity: " + identity_hex + "...";
     INFO(msg.c_str());
 
-    // Add TCP client interface (only if WiFi is connected)
-    if (WiFi.status() == WL_CONNECTED) {
+    // Add TCP client interface (if enabled and WiFi connected)
+    if (app_settings.tcp_enabled && WiFi.status() == WL_CONNECTED) {
         String server_addr = app_settings.tcp_host + ":" + String(app_settings.tcp_port);
         msg = std::string("Connecting to RNS server at ") + server_addr.c_str();
         INFO(msg.c_str());
@@ -407,8 +512,37 @@ void setup_reticulum() {
             INFO("Connected to RNS server");
             Transport::register_interface(*tcp_interface);
         }
+    } else if (!app_settings.tcp_enabled) {
+        INFO("TCP interface disabled in settings");
     } else {
         WARNING("WiFi not connected - skipping TCP interface");
+    }
+
+    // Add LoRa interface (if enabled)
+    if (app_settings.lora_enabled) {
+        INFO("Initializing LoRa interface...");
+
+        lora_interface_impl = new SX1262Interface("LoRa");
+
+        // Apply configuration from settings
+        SX1262Config lora_config;
+        lora_config.frequency = app_settings.lora_frequency;
+        lora_config.bandwidth = app_settings.lora_bandwidth;
+        lora_config.spreading_factor = app_settings.lora_sf;
+        lora_config.coding_rate = app_settings.lora_cr;
+        lora_config.tx_power = app_settings.lora_power;
+        lora_interface_impl->set_config(lora_config);
+
+        lora_interface = new Interface(lora_interface_impl);
+
+        if (!lora_interface->start()) {
+            ERROR("Failed to initialize LoRa interface!");
+        } else {
+            INFO("LoRa interface started");
+            Transport::register_interface(*lora_interface);
+        }
+    } else {
+        INFO("LoRa interface disabled in settings");
     }
 
     // Start Transport (initializes Transport identity and enables packet processing)
@@ -597,18 +731,28 @@ void loop() {
         tcp_interface->loop();
     }
 
+    // Process LoRa interface
+    if (lora_interface) {
+        lora_interface->loop();
+    }
+
     // Update UI manager (processes LXMF messages)
     if (ui_manager) {
         ui_manager->update();
     }
 
     // Periodic announce (using interval from settings)
-    uint32_t announce_interval_ms = app_settings.announce_interval * 1000;
-    if (millis() - last_announce > announce_interval_ms) {
-        if (router) {
-            router->announce();
-            last_announce = millis();
-            TRACE("Periodic announce sent");
+    if (app_settings.announce_interval > 0) {  // 0 = disabled
+        uint32_t announce_interval_ms = app_settings.announce_interval * 1000;
+        if (millis() - last_announce > announce_interval_ms) {
+            // Announce if any interface is online
+            bool has_online_interface = (tcp_interface && tcp_interface->online()) ||
+                                        (lora_interface && lora_interface->online());
+            if (router && has_online_interface) {
+                router->announce();
+                last_announce = millis();
+                INFO("Periodic announce sent (interval: " + std::to_string(app_settings.announce_interval) + "s)");
+            }
         }
     }
 
@@ -640,6 +784,11 @@ void loop() {
                 }
             }
         }
+    }
+
+    // Read GPS data continuously (TinyGPSPlus needs constant feeding)
+    while (GPSSerial.available() > 0) {
+        gps.encode(GPSSerial.read());
     }
 
     // Screen timeout handling

@@ -28,6 +28,14 @@ static const char* KEY_BRIGHTNESS = "brightness";
 static const char* KEY_TIMEOUT = "timeout";
 static const char* KEY_ANNOUNCE_INT = "announce";
 static const char* KEY_GPS_SYNC = "gps_sync";
+// Interface settings
+static const char* KEY_TCP_ENABLED = "tcp_en";
+static const char* KEY_LORA_ENABLED = "lora_en";
+static const char* KEY_LORA_FREQ = "lora_freq";
+static const char* KEY_LORA_BW = "lora_bw";
+static const char* KEY_LORA_SF = "lora_sf";
+static const char* KEY_LORA_CR = "lora_cr";
+static const char* KEY_LORA_POWER = "lora_pwr";
 
 SettingsScreen::SettingsScreen(lv_obj_t* parent)
     : _screen(nullptr), _header(nullptr), _content(nullptr),
@@ -39,6 +47,11 @@ SettingsScreen::SettingsScreen(lv_obj_t* parent)
       _label_gps_sats(nullptr), _label_gps_coords(nullptr), _label_gps_alt(nullptr), _label_gps_hdop(nullptr),
       _label_identity_hash(nullptr), _label_lxmf_address(nullptr), _label_firmware(nullptr),
       _label_storage(nullptr), _label_ram(nullptr),
+      _switch_tcp_enabled(nullptr), _switch_lora_enabled(nullptr),
+      _ta_lora_frequency(nullptr), _dropdown_lora_bandwidth(nullptr),
+      _dropdown_lora_sf(nullptr), _dropdown_lora_cr(nullptr),
+      _slider_lora_power(nullptr), _label_lora_power_value(nullptr),
+      _lora_params_container(nullptr),
       _ta_announce_interval(nullptr), _switch_gps_sync(nullptr),
       _gps(nullptr) {
 
@@ -141,6 +154,7 @@ void SettingsScreen::create_content() {
     create_network_section(_content);
     create_identity_section(_content);
     create_display_section(_content);
+    create_interfaces_section(_content);
     create_gps_section(_content);
     create_system_section(_content);
     create_advanced_section(_content);
@@ -317,6 +331,195 @@ void SettingsScreen::create_display_section(lv_obj_t* parent) {
     lv_obj_set_style_text_font(_dropdown_timeout, &lv_font_montserrat_14, 0);
 }
 
+void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
+    create_section_header(parent, "== Interfaces ==");
+
+    // TCP Enable row
+    lv_obj_t* tcp_row = lv_obj_create(parent);
+    lv_obj_set_width(tcp_row, LV_PCT(100));
+    lv_obj_set_height(tcp_row, 28);
+    lv_obj_set_style_bg_opa(tcp_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(tcp_row, 0, 0);
+    lv_obj_set_style_pad_all(tcp_row, 0, 0);
+    lv_obj_clear_flag(tcp_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* tcp_label = lv_label_create(tcp_row);
+    lv_label_set_text(tcp_label, "TCP Interface:");
+    lv_obj_align(tcp_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(tcp_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_font(tcp_label, &lv_font_montserrat_14, 0);
+
+    _switch_tcp_enabled = lv_switch_create(tcp_row);
+    lv_obj_set_size(_switch_tcp_enabled, 40, 20);
+    lv_obj_align(_switch_tcp_enabled, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(_switch_tcp_enabled, lv_color_hex(0x404040), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_tcp_enabled, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
+
+    // LoRa Enable row
+    lv_obj_t* lora_row = lv_obj_create(parent);
+    lv_obj_set_width(lora_row, LV_PCT(100));
+    lv_obj_set_height(lora_row, 28);
+    lv_obj_set_style_bg_opa(lora_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(lora_row, 0, 0);
+    lv_obj_set_style_pad_all(lora_row, 0, 0);
+    lv_obj_clear_flag(lora_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* lora_label = lv_label_create(lora_row);
+    lv_label_set_text(lora_label, "LoRa Interface:");
+    lv_obj_align(lora_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(lora_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_font(lora_label, &lv_font_montserrat_14, 0);
+
+    _switch_lora_enabled = lv_switch_create(lora_row);
+    lv_obj_set_size(_switch_lora_enabled, 40, 20);
+    lv_obj_align(_switch_lora_enabled, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(_switch_lora_enabled, lv_color_hex(0x404040), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_lora_enabled, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_add_event_cb(_switch_lora_enabled, on_lora_enabled_changed, LV_EVENT_VALUE_CHANGED, this);
+
+    // LoRa parameters container (shown/hidden based on LoRa enabled)
+    _lora_params_container = lv_obj_create(parent);
+    lv_obj_set_width(_lora_params_container, LV_PCT(100));
+    lv_obj_set_height(_lora_params_container, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(_lora_params_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_lora_params_container, 0, 0);
+    lv_obj_set_style_pad_all(_lora_params_container, 0, 0);
+    lv_obj_set_style_pad_gap(_lora_params_container, 2, 0);
+    lv_obj_set_flex_flow(_lora_params_container, LV_FLEX_FLOW_COLUMN);
+    lv_obj_clear_flag(_lora_params_container, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Frequency row
+    lv_obj_t* freq_row = lv_obj_create(_lora_params_container);
+    lv_obj_set_width(freq_row, LV_PCT(100));
+    lv_obj_set_height(freq_row, 28);
+    lv_obj_set_style_bg_opa(freq_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(freq_row, 0, 0);
+    lv_obj_set_style_pad_all(freq_row, 0, 0);
+    lv_obj_clear_flag(freq_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* freq_label = lv_label_create(freq_row);
+    lv_label_set_text(freq_label, "  Frequency:");
+    lv_obj_align(freq_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(freq_label, lv_color_hex(0x909090), 0);
+    lv_obj_set_style_text_font(freq_label, &lv_font_montserrat_14, 0);
+
+    _ta_lora_frequency = lv_textarea_create(freq_row);
+    lv_obj_set_size(_ta_lora_frequency, 80, 24);
+    lv_obj_align(_ta_lora_frequency, LV_ALIGN_RIGHT_MID, -30, 0);
+    lv_textarea_set_one_line(_ta_lora_frequency, true);
+    lv_textarea_set_max_length(_ta_lora_frequency, 8);
+    lv_textarea_set_accepted_chars(_ta_lora_frequency, "0123456789.");
+    lv_obj_set_style_bg_color(_ta_lora_frequency, lv_color_hex(0x2a2a2a), 0);
+    lv_obj_set_style_text_color(_ta_lora_frequency, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_border_color(_ta_lora_frequency, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_border_width(_ta_lora_frequency, 1, 0);
+    lv_obj_set_style_radius(_ta_lora_frequency, 4, 0);
+    lv_obj_set_style_pad_all(_ta_lora_frequency, 4, 0);
+    lv_obj_set_style_text_font(_ta_lora_frequency, &lv_font_montserrat_14, 0);
+
+    lv_obj_t* mhz_label = lv_label_create(freq_row);
+    lv_label_set_text(mhz_label, "MHz");
+    lv_obj_align(mhz_label, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_text_color(mhz_label, lv_color_hex(0x808080), 0);
+    lv_obj_set_style_text_font(mhz_label, &lv_font_montserrat_14, 0);
+
+    // Bandwidth dropdown row
+    lv_obj_t* bw_row = lv_obj_create(_lora_params_container);
+    lv_obj_set_width(bw_row, LV_PCT(100));
+    lv_obj_set_height(bw_row, 28);
+    lv_obj_set_style_bg_opa(bw_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(bw_row, 0, 0);
+    lv_obj_set_style_pad_all(bw_row, 0, 0);
+    lv_obj_clear_flag(bw_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* bw_label = lv_label_create(bw_row);
+    lv_label_set_text(bw_label, "  Bandwidth:");
+    lv_obj_align(bw_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(bw_label, lv_color_hex(0x909090), 0);
+    lv_obj_set_style_text_font(bw_label, &lv_font_montserrat_14, 0);
+
+    _dropdown_lora_bandwidth = lv_dropdown_create(bw_row);
+    lv_dropdown_set_options(_dropdown_lora_bandwidth, "50 kHz\n62.5 kHz\n125 kHz\n250 kHz\n500 kHz");
+    lv_obj_set_size(_dropdown_lora_bandwidth, 100, 28);
+    lv_obj_align(_dropdown_lora_bandwidth, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(_dropdown_lora_bandwidth, lv_color_hex(0x2a2a2a), 0);
+    lv_obj_set_style_text_color(_dropdown_lora_bandwidth, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_border_color(_dropdown_lora_bandwidth, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_text_font(_dropdown_lora_bandwidth, &lv_font_montserrat_14, 0);
+
+    // SF/CR row
+    lv_obj_t* sfcr_row = lv_obj_create(_lora_params_container);
+    lv_obj_set_width(sfcr_row, LV_PCT(100));
+    lv_obj_set_height(sfcr_row, 28);
+    lv_obj_set_style_bg_opa(sfcr_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(sfcr_row, 0, 0);
+    lv_obj_set_style_pad_all(sfcr_row, 0, 0);
+    lv_obj_clear_flag(sfcr_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* sf_label = lv_label_create(sfcr_row);
+    lv_label_set_text(sf_label, "  SF:");
+    lv_obj_align(sf_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(sf_label, lv_color_hex(0x909090), 0);
+    lv_obj_set_style_text_font(sf_label, &lv_font_montserrat_14, 0);
+
+    _dropdown_lora_sf = lv_dropdown_create(sfcr_row);
+    lv_dropdown_set_options(_dropdown_lora_sf, "7\n8\n9\n10\n11\n12");
+    lv_obj_set_size(_dropdown_lora_sf, 50, 28);
+    lv_obj_align(_dropdown_lora_sf, LV_ALIGN_LEFT_MID, 30, 0);
+    lv_obj_set_style_bg_color(_dropdown_lora_sf, lv_color_hex(0x2a2a2a), 0);
+    lv_obj_set_style_text_color(_dropdown_lora_sf, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_border_color(_dropdown_lora_sf, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_text_font(_dropdown_lora_sf, &lv_font_montserrat_14, 0);
+
+    lv_obj_t* cr_label = lv_label_create(sfcr_row);
+    lv_label_set_text(cr_label, "CR:");
+    lv_obj_align(cr_label, LV_ALIGN_LEFT_MID, 90, 0);
+    lv_obj_set_style_text_color(cr_label, lv_color_hex(0x909090), 0);
+    lv_obj_set_style_text_font(cr_label, &lv_font_montserrat_14, 0);
+
+    _dropdown_lora_cr = lv_dropdown_create(sfcr_row);
+    lv_dropdown_set_options(_dropdown_lora_cr, "4/5\n4/6\n4/7\n4/8");
+    lv_obj_set_size(_dropdown_lora_cr, 55, 28);
+    lv_obj_align(_dropdown_lora_cr, LV_ALIGN_LEFT_MID, 115, 0);
+    lv_obj_set_style_bg_color(_dropdown_lora_cr, lv_color_hex(0x2a2a2a), 0);
+    lv_obj_set_style_text_color(_dropdown_lora_cr, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_border_color(_dropdown_lora_cr, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_text_font(_dropdown_lora_cr, &lv_font_montserrat_14, 0);
+
+    // TX Power row
+    lv_obj_t* power_row = lv_obj_create(_lora_params_container);
+    lv_obj_set_width(power_row, LV_PCT(100));
+    lv_obj_set_height(power_row, 28);
+    lv_obj_set_style_bg_opa(power_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(power_row, 0, 0);
+    lv_obj_set_style_pad_all(power_row, 0, 0);
+    lv_obj_clear_flag(power_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* power_label = lv_label_create(power_row);
+    lv_label_set_text(power_label, "  TX Power:");
+    lv_obj_align(power_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(power_label, lv_color_hex(0x909090), 0);
+    lv_obj_set_style_text_font(power_label, &lv_font_montserrat_14, 0);
+
+    _slider_lora_power = lv_slider_create(power_row);
+    lv_obj_set_size(_slider_lora_power, 100, 10);
+    lv_obj_align(_slider_lora_power, LV_ALIGN_LEFT_MID, 75, 0);
+    lv_slider_set_range(_slider_lora_power, 2, 22);
+    lv_obj_set_style_bg_color(_slider_lora_power, lv_color_hex(0x404040), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_slider_lora_power, lv_color_hex(0xFFA726), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(_slider_lora_power, lv_color_hex(0xffffff), LV_PART_KNOB);
+    lv_obj_add_event_cb(_slider_lora_power, on_lora_power_changed, LV_EVENT_VALUE_CHANGED, this);
+
+    _label_lora_power_value = lv_label_create(power_row);
+    lv_label_set_text(_label_lora_power_value, "17 dBm");
+    lv_obj_align(_label_lora_power_value, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_text_color(_label_lora_power_value, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_font(_label_lora_power_value, &lv_font_montserrat_14, 0);
+
+    // Initially hide LoRa params if not enabled
+    lv_obj_add_flag(_lora_params_container, LV_OBJ_FLAG_HIDDEN);
+}
+
 void SettingsScreen::create_gps_section(lv_obj_t* parent) {
     create_section_header(parent, "== GPS Status ==");
 
@@ -415,6 +618,15 @@ void SettingsScreen::load_settings() {
     _settings.announce_interval = prefs.getUInt(KEY_ANNOUNCE_INT, 60);
     _settings.gps_time_sync = prefs.getBool(KEY_GPS_SYNC, true);
 
+    // Interface settings
+    _settings.tcp_enabled = prefs.getBool(KEY_TCP_ENABLED, true);
+    _settings.lora_enabled = prefs.getBool(KEY_LORA_ENABLED, false);
+    _settings.lora_frequency = prefs.getFloat(KEY_LORA_FREQ, 927.25f);
+    _settings.lora_bandwidth = prefs.getFloat(KEY_LORA_BW, 50.0f);
+    _settings.lora_sf = prefs.getUChar(KEY_LORA_SF, 7);
+    _settings.lora_cr = prefs.getUChar(KEY_LORA_CR, 5);
+    _settings.lora_power = prefs.getChar(KEY_LORA_POWER, 17);
+
     prefs.end();
 
     DEBUG("Settings loaded from NVS");
@@ -435,6 +647,15 @@ void SettingsScreen::save_settings() {
     prefs.putUShort(KEY_TIMEOUT, _settings.screen_timeout);
     prefs.putUInt(KEY_ANNOUNCE_INT, _settings.announce_interval);
     prefs.putBool(KEY_GPS_SYNC, _settings.gps_time_sync);
+
+    // Interface settings
+    prefs.putBool(KEY_TCP_ENABLED, _settings.tcp_enabled);
+    prefs.putBool(KEY_LORA_ENABLED, _settings.lora_enabled);
+    prefs.putFloat(KEY_LORA_FREQ, _settings.lora_frequency);
+    prefs.putFloat(KEY_LORA_BW, _settings.lora_bandwidth);
+    prefs.putUChar(KEY_LORA_SF, _settings.lora_sf);
+    prefs.putUChar(KEY_LORA_CR, _settings.lora_cr);
+    prefs.putChar(KEY_LORA_POWER, _settings.lora_power);
 
     prefs.end();
 
@@ -486,6 +707,59 @@ void SettingsScreen::update_ui_from_settings() {
             lv_obj_clear_state(_switch_gps_sync, LV_STATE_CHECKED);
         }
     }
+
+    // Interface settings
+    if (_switch_tcp_enabled) {
+        if (_settings.tcp_enabled) {
+            lv_obj_add_state(_switch_tcp_enabled, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(_switch_tcp_enabled, LV_STATE_CHECKED);
+        }
+    }
+    if (_switch_lora_enabled) {
+        if (_settings.lora_enabled) {
+            lv_obj_add_state(_switch_lora_enabled, LV_STATE_CHECKED);
+            if (_lora_params_container) {
+                lv_obj_clear_flag(_lora_params_container, LV_OBJ_FLAG_HIDDEN);
+            }
+        } else {
+            lv_obj_clear_state(_switch_lora_enabled, LV_STATE_CHECKED);
+            if (_lora_params_container) {
+                lv_obj_add_flag(_lora_params_container, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    }
+    if (_ta_lora_frequency) {
+        char freq_str[16];
+        snprintf(freq_str, sizeof(freq_str), "%.2f", _settings.lora_frequency);
+        lv_textarea_set_text(_ta_lora_frequency, freq_str);
+    }
+    if (_dropdown_lora_bandwidth) {
+        // Map bandwidth to index: 50=0, 62.5=1, 125=2, 250=3, 500=4
+        int idx = 0;
+        if (_settings.lora_bandwidth < 55.0f) idx = 0;       // 50 kHz
+        else if (_settings.lora_bandwidth < 100.0f) idx = 1; // 62.5 kHz
+        else if (_settings.lora_bandwidth < 200.0f) idx = 2; // 125 kHz
+        else if (_settings.lora_bandwidth < 400.0f) idx = 3; // 250 kHz
+        else idx = 4;  // 500 kHz
+        lv_dropdown_set_selected(_dropdown_lora_bandwidth, idx);
+    }
+    if (_dropdown_lora_sf) {
+        // SF 7-12 maps to index 0-5
+        lv_dropdown_set_selected(_dropdown_lora_sf, _settings.lora_sf - 7);
+    }
+    if (_dropdown_lora_cr) {
+        // CR 5-8 maps to index 0-3
+        lv_dropdown_set_selected(_dropdown_lora_cr, _settings.lora_cr - 5);
+    }
+    if (_slider_lora_power) {
+        lv_slider_set_value(_slider_lora_power, _settings.lora_power, LV_ANIM_OFF);
+        if (_label_lora_power_value) {
+            char pwr_str[16];
+            snprintf(pwr_str, sizeof(pwr_str), "%d dBm", _settings.lora_power);
+            lv_label_set_text(_label_lora_power_value, pwr_str);
+        }
+    }
 }
 
 void SettingsScreen::update_settings_from_ui() {
@@ -521,6 +795,36 @@ void SettingsScreen::update_settings_from_ui() {
     }
     if (_switch_gps_sync) {
         _settings.gps_time_sync = lv_obj_has_state(_switch_gps_sync, LV_STATE_CHECKED);
+    }
+
+    // Interface settings
+    if (_switch_tcp_enabled) {
+        _settings.tcp_enabled = lv_obj_has_state(_switch_tcp_enabled, LV_STATE_CHECKED);
+    }
+    if (_switch_lora_enabled) {
+        _settings.lora_enabled = lv_obj_has_state(_switch_lora_enabled, LV_STATE_CHECKED);
+    }
+    if (_ta_lora_frequency) {
+        _settings.lora_frequency = String(lv_textarea_get_text(_ta_lora_frequency)).toFloat();
+    }
+    if (_dropdown_lora_bandwidth) {
+        // Map index to bandwidth: 0=50, 1=62.5, 2=125, 3=250, 4=500
+        static const float bw_values[] = {50.0f, 62.5f, 125.0f, 250.0f, 500.0f};
+        int idx = lv_dropdown_get_selected(_dropdown_lora_bandwidth);
+        if (idx >= 0 && idx < 5) {
+            _settings.lora_bandwidth = bw_values[idx];
+        }
+    }
+    if (_dropdown_lora_sf) {
+        // Index 0-5 maps to SF 7-12
+        _settings.lora_sf = lv_dropdown_get_selected(_dropdown_lora_sf) + 7;
+    }
+    if (_dropdown_lora_cr) {
+        // Index 0-3 maps to CR 5-8
+        _settings.lora_cr = lv_dropdown_get_selected(_dropdown_lora_cr) + 5;
+    }
+    if (_slider_lora_power) {
+        _settings.lora_power = lv_slider_get_value(_slider_lora_power);
     }
 }
 
@@ -681,6 +985,30 @@ void SettingsScreen::on_brightness_changed(lv_event_t* event) {
     if (screen->_brightness_change_callback) {
         screen->_brightness_change_callback(brightness);
     }
+}
+
+void SettingsScreen::on_lora_enabled_changed(lv_event_t* event) {
+    SettingsScreen* screen = (SettingsScreen*)lv_event_get_user_data(event);
+    bool enabled = lv_obj_has_state(screen->_switch_lora_enabled, LV_STATE_CHECKED);
+
+    // Show/hide LoRa parameters
+    if (screen->_lora_params_container) {
+        if (enabled) {
+            lv_obj_clear_flag(screen->_lora_params_container, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(screen->_lora_params_container, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+void SettingsScreen::on_lora_power_changed(lv_event_t* event) {
+    SettingsScreen* screen = (SettingsScreen*)lv_event_get_user_data(event);
+    int8_t power = lv_slider_get_value(screen->_slider_lora_power);
+
+    // Update label
+    char pwr_str[16];
+    snprintf(pwr_str, sizeof(pwr_str), "%d dBm", power);
+    lv_label_set_text(screen->_label_lora_power_value, pwr_str);
 }
 
 } // namespace LXMF
