@@ -1108,7 +1108,9 @@ BLEAddress NimBLEPlatform::fromNimBLE(const NimBLEAddress& addr) {
     BLEAddress result;
     const ble_addr_t* base = addr.getBase();
     if (base) {
-        // NimBLE stores in reverse order
+        // NimBLE stores addresses in little-endian: val[0]=LSB, val[5]=MSB
+        // Our BLEAddress stores in big-endian display order: addr[0]=MSB, addr[5]=LSB
+        // Need to reverse the byte order
         for (int i = 0; i < 6; i++) {
             result.addr[i] = base->val[5 - i];
         }
@@ -1118,10 +1120,14 @@ BLEAddress NimBLEPlatform::fromNimBLE(const NimBLEAddress& addr) {
 }
 
 NimBLEAddress NimBLEPlatform::toNimBLE(const BLEAddress& addr) {
-    // NimBLE stores addresses in little-endian format (LSB first)
-    // Our BLEAddress stores in display order (MSB first, matching NimBLE's toString())
-    // So we just copy bytes directly - no reversal needed
-    NimBLEAddress nimAddr(addr.addr, addr.type);
+    // Our BLEAddress stores in big-endian display order: addr[0]=MSB, addr[5]=LSB
+    // NimBLE expects little-endian: val[0]=LSB, val[5]=MSB
+    // Need to reverse the byte order
+    uint8_t reversed[6];
+    for (int i = 0; i < 6; i++) {
+        reversed[i] = addr.addr[5 - i];
+    }
+    NimBLEAddress nimAddr(reversed, addr.type);
     DEBUG("NimBLEPlatform::toNimBLE: input=" + addr.toString() +
           " type=" + std::to_string(addr.type) +
           " -> nimAddr=" + std::string(nimAddr.toString().c_str()) +
