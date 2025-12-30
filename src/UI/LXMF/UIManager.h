@@ -107,6 +107,18 @@ public:
     void set_propagation_node_manager(::LXMF::PropagationNodeManager* manager);
 
     /**
+     * Set LoRa interface for RSSI display
+     * @param iface LoRa interface
+     */
+    void set_lora_interface(RNS::Interface* iface);
+
+    /**
+     * Set GPS for satellite count display
+     * @param gps TinyGPSPlus instance
+     */
+    void set_gps(TinyGPSPlus* gps);
+
+    /**
      * Get settings screen for external configuration
      */
     SettingsScreen* get_settings_screen() { return _settings_screen; }

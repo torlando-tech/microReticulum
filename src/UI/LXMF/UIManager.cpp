@@ -332,6 +332,18 @@ void UIManager::set_propagation_node_manager(::LXMF::PropagationNodeManager* man
     _propagation_manager = manager;
 }
 
+void UIManager::set_lora_interface(Interface* iface) {
+    if (_conversation_list_screen) {
+        _conversation_list_screen->set_lora_interface(iface);
+    }
+}
+
+void UIManager::set_gps(TinyGPSPlus* gps) {
+    if (_conversation_list_screen) {
+        _conversation_list_screen->set_gps(gps);
+    }
+}
+
 void UIManager::on_back_to_conversation_list() {
     show_conversation_list();
 }

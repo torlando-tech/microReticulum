@@ -47,6 +47,11 @@ namespace RNS {
 		virtual void stop() {}
 		virtual void loop() {}
 
+	public:
+		// Radio stats (overridden by LoRa interfaces)
+		virtual float get_rssi() const { return 0.0f; }
+		virtual float get_snr() const { return 0.0f; }
+
 		// CBA Virtual override method for custom interface to send outgoing data
 		virtual void send_outgoing(const Bytes& data) = 0;
 		
@@ -200,6 +205,10 @@ namespace RNS {
 		inline bool is_connected_to_shared_instance() const { assert(_impl); return _impl->_is_connected_to_shared_instance; }
 		inline bool is_local_shared_instance() const { assert(_impl); return _impl->_is_local_shared_instance; }
 		inline HInterface parent_interface() const { assert(_impl); return _impl->_parent_interface; }
+
+		// Radio stats (forwarded to impl)
+		inline float get_rssi() const { assert(_impl); return _impl->get_rssi(); }
+		inline float get_snr() const { assert(_impl); return _impl->get_snr(); }
 
 		virtual inline std::string toString() const { if (!_impl) return ""; return _impl->toString(); }
 

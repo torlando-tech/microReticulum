@@ -638,6 +638,14 @@ void setup_ui_manager() {
         ui_manager->set_propagation_node_manager(propagation_manager);
     }
 
+    // Set LoRa interface for RSSI display
+    if (lora_interface) {
+        ui_manager->set_lora_interface(lora_interface);
+    }
+
+    // Set GPS for satellite count display
+    ui_manager->set_gps(&gps);
+
     // Configure settings screen
     UI::LXMF::SettingsScreen* settings = ui_manager->get_settings_screen();
     if (settings) {

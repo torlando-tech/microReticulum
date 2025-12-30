@@ -11,6 +11,7 @@
 #include "../../Hardware/TDeck/Config.h"
 #include <WiFi.h>
 #include <MsgPack.h>
+#include <TinyGPSPlus.h>
 
 using namespace RNS;
 using namespace Hardware::TDeck;
@@ -20,7 +21,8 @@ namespace LXMF {
 
 ConversationListScreen::ConversationListScreen(lv_obj_t* parent)
     : _screen(nullptr), _header(nullptr), _list(nullptr), _bottom_nav(nullptr),
-      _btn_new(nullptr), _btn_settings(nullptr), _label_wifi(nullptr), _label_battery(nullptr),
+      _btn_new(nullptr), _btn_settings(nullptr), _label_wifi(nullptr), _label_lora(nullptr),
+      _label_gps(nullptr), _label_battery(nullptr), _lora_interface(nullptr), _gps(nullptr),
       _message_store(nullptr) {
 
     // Create screen object
@@ -68,15 +70,25 @@ void ConversationListScreen::create_header() {
     lv_obj_set_style_text_color(title, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
 
-    // Status indicators (WiFi RSSI and Battery) - positioned in center-right area
+    // Status indicators (WiFi RSSI, LoRa RSSI, Battery) - positioned in center-right area
     _label_wifi = lv_label_create(_header);
     lv_label_set_text(_label_wifi, LV_SYMBOL_WIFI " --");
-    lv_obj_align(_label_wifi, LV_ALIGN_LEFT_MID, 95, 0);
+    lv_obj_align(_label_wifi, LV_ALIGN_LEFT_MID, 88, 0);
     lv_obj_set_style_text_color(_label_wifi, lv_color_hex(0x808080), 0);
+
+    _label_lora = lv_label_create(_header);
+    lv_label_set_text(_label_lora, LV_SYMBOL_CALL " --");  // Antenna-like symbol
+    lv_obj_align(_label_lora, LV_ALIGN_LEFT_MID, 140, 0);
+    lv_obj_set_style_text_color(_label_lora, lv_color_hex(0x808080), 0);
+
+    _label_gps = lv_label_create(_header);
+    lv_label_set_text(_label_gps, LV_SYMBOL_GPS " --");
+    lv_obj_align(_label_gps, LV_ALIGN_LEFT_MID, 188, 0);
+    lv_obj_set_style_text_color(_label_gps, lv_color_hex(0x808080), 0);
 
     _label_battery = lv_label_create(_header);
     lv_label_set_text(_label_battery, LV_SYMBOL_BATTERY_FULL " --%");
-    lv_obj_align(_label_battery, LV_ALIGN_LEFT_MID, 145, 0);
+    lv_obj_align(_label_battery, LV_ALIGN_LEFT_MID, 225, 0);
     lv_obj_set_style_text_color(_label_battery, lv_color_hex(0x808080), 0);
 
     // New message button (right corner)
@@ -320,6 +332,53 @@ void ConversationListScreen::update_status() {
     } else {
         lv_label_set_text(_label_wifi, LV_SYMBOL_WIFI " --");
         lv_obj_set_style_text_color(_label_wifi, lv_color_hex(0x808080), 0);
+    }
+
+    // Update LoRa RSSI
+    if (_lora_interface) {
+        float rssi_f = _lora_interface->get_rssi();
+        int rssi = (int)rssi_f;
+
+        // Only show RSSI if we've received at least one packet (RSSI != 0)
+        if (rssi_f != 0.0f) {
+            String lora_text = String(LV_SYMBOL_CALL) + " " + String(rssi);
+            lv_label_set_text(_label_lora, lora_text.c_str());
+
+            // Color based on signal strength (LoRa typically has weaker signals)
+            if (rssi > -80) {
+                lv_obj_set_style_text_color(_label_lora, lv_color_hex(0x4CAF50), 0);  // Green
+            } else if (rssi > -100) {
+                lv_obj_set_style_text_color(_label_lora, lv_color_hex(0xFFEB3B), 0);  // Yellow
+            } else {
+                lv_obj_set_style_text_color(_label_lora, lv_color_hex(0xF44336), 0);  // Red
+            }
+        } else {
+            // RSSI of 0 means no recent packet
+            lv_label_set_text(_label_lora, LV_SYMBOL_CALL " --");
+            lv_obj_set_style_text_color(_label_lora, lv_color_hex(0x808080), 0);
+        }
+    } else {
+        lv_label_set_text(_label_lora, LV_SYMBOL_CALL " --");
+        lv_obj_set_style_text_color(_label_lora, lv_color_hex(0x808080), 0);
+    }
+
+    // Update GPS satellite count
+    if (_gps && _gps->satellites.isValid()) {
+        int sats = _gps->satellites.value();
+        String gps_text = String(LV_SYMBOL_GPS) + " " + String(sats);
+        lv_label_set_text(_label_gps, gps_text.c_str());
+
+        // Color based on satellite count
+        if (sats >= 6) {
+            lv_obj_set_style_text_color(_label_gps, lv_color_hex(0x4CAF50), 0);  // Green
+        } else if (sats >= 3) {
+            lv_obj_set_style_text_color(_label_gps, lv_color_hex(0xFFEB3B), 0);  // Yellow
+        } else {
+            lv_obj_set_style_text_color(_label_gps, lv_color_hex(0xF44336), 0);  // Red
+        }
+    } else {
+        lv_label_set_text(_label_gps, LV_SYMBOL_GPS " --");
+        lv_obj_set_style_text_color(_label_gps, lv_color_hex(0x808080), 0);
     }
 
     // Update battery level (read from ADC)

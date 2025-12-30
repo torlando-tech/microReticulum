@@ -11,6 +11,9 @@
 #include <functional>
 #include "../../Bytes.h"
 #include "../../LXMF/MessageStore.h"
+#include "../../Interface.h"
+
+class TinyGPSPlus;  // Forward declaration
 
 namespace UI {
 namespace LXMF {
@@ -140,10 +143,22 @@ public:
     lv_obj_t* get_object();
 
     /**
-     * Update status indicators (WiFi RSSI and battery)
+     * Update status indicators (WiFi RSSI, LoRa RSSI, and battery)
      * Call periodically from main loop
      */
     void update_status();
+
+    /**
+     * Set LoRa interface for RSSI display
+     * @param iface LoRa interface implementation
+     */
+    void set_lora_interface(RNS::Interface* iface) { _lora_interface = iface; }
+
+    /**
+     * Set GPS for satellite count display
+     * @param gps TinyGPSPlus instance
+     */
+    void set_gps(TinyGPSPlus* gps) { _gps = gps; }
 
 private:
     lv_obj_t* _screen;
@@ -153,7 +168,12 @@ private:
     lv_obj_t* _btn_new;
     lv_obj_t* _btn_settings;
     lv_obj_t* _label_wifi;
+    lv_obj_t* _label_lora;
+    lv_obj_t* _label_gps;
     lv_obj_t* _label_battery;
+
+    RNS::Interface* _lora_interface;
+    TinyGPSPlus* _gps;
 
     ::LXMF::MessageStore* _message_store;
     std::vector<ConversationItem> _conversations;

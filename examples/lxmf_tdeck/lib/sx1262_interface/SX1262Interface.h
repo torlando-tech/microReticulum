@@ -62,9 +62,9 @@ public:
     virtual void stop() override;
     virtual void loop() override;
 
-    // Status getters
-    float get_rssi() const { return _last_rssi; }
-    float get_snr() const { return _last_snr; }
+    // Status getters (override virtual from InterfaceImpl)
+    float get_rssi() const override { return _last_rssi; }
+    float get_snr() const override { return _last_snr; }
     bool is_transmitting() const { return _transmitting; }
 
     virtual std::string toString() const override;
