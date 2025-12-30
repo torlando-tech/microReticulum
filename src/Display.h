@@ -12,6 +12,7 @@
 
 #include <stdint.h>
 #include <string>
+#include <vector>
 
 // Only compile display code if enabled
 #ifdef HAS_DISPLAY
@@ -57,8 +58,20 @@ public:
     /**
      * Set the primary interface to display status for.
      * @param iface Pointer to the interface (can be nullptr)
+     * @deprecated Use add_interface() for multiple interfaces
      */
     static void set_interface(Interface* iface);
+
+    /**
+     * Add an interface to display status for.
+     * @param iface Pointer to the interface (can be nullptr)
+     */
+    static void add_interface(Interface* iface);
+
+    /**
+     * Clear all registered interfaces.
+     */
+    static void clear_interfaces();
 
     /**
      * Set the Reticulum instance for network statistics.
@@ -101,6 +114,18 @@ public:
      */
     static void set_rssi(float rssi);
 
+    /**
+     * Set BLE peer count for display.
+     * @param count Number of connected BLE peers
+     */
+    static void set_ble_peers(size_t count);
+
+    /**
+     * Set Auto interface peer count for display.
+     * @param count Number of discovered Auto peers
+     */
+    static void set_auto_peers(size_t count);
+
 private:
     // Page rendering functions
     static void draw_page_main();       // Page 0: Main status
@@ -127,11 +152,15 @@ private:
 
     // Data sources
     static Bytes _identity_hash;
-    static Interface* _interface;
+    static std::vector<Interface*> _interfaces;
     static Reticulum* _reticulum;
 
     // Signal strength
     static float _rssi;
+
+    // Peer counts (set from main loop since Display can't access interface-specific classes)
+    static size_t _ble_peers;
+    static size_t _auto_peers;
 };
 
 } // namespace RNS

@@ -45,9 +45,11 @@ uint32_t Display::_last_page_flip = 0;
 uint32_t Display::_last_update = 0;
 uint32_t Display::_start_time = 0;
 Bytes Display::_identity_hash;
-Interface* Display::_interface = nullptr;
+std::vector<Interface*> Display::_interfaces;
 Reticulum* Display::_reticulum = nullptr;
 float Display::_rssi = -120.0f;
+size_t Display::_ble_peers = 0;
+size_t Display::_auto_peers = 0;
 
 // Display object (board-specific)
 #ifdef ARDUINO
@@ -165,7 +167,29 @@ void Display::set_identity(const Identity& identity) {
 }
 
 void Display::set_interface(Interface* iface) {
-    _interface = iface;
+    // Backwards compatibility: clear and add single interface
+    _interfaces.clear();
+    if (iface) {
+        _interfaces.push_back(iface);
+    }
+}
+
+void Display::add_interface(Interface* iface) {
+    if (iface) {
+        _interfaces.push_back(iface);
+    }
+}
+
+void Display::clear_interfaces() {
+    _interfaces.clear();
+}
+
+void Display::set_ble_peers(size_t count) {
+    _ble_peers = count;
+}
+
+void Display::set_auto_peers(size_t count) {
+    _auto_peers = count;
 }
 
 void Display::set_reticulum(Reticulum* rns) {
@@ -257,15 +281,17 @@ void Display::draw_page_main() {
     }
     y += LINE_HEIGHT + 4;
 
-    // Interface status
+    // Interface summary (show count of online interfaces)
     display->setCursor(LEFT_MARGIN, y);
-    if (_interface) {
-        display->print(_interface->name().c_str());
-        display->print(": ");
-        display->print(_interface->online() ? "ONLINE" : "OFFLINE");
-    } else {
-        display->print("No interface");
+    size_t online_count = 0;
+    for (auto* iface : _interfaces) {
+        if (iface && iface->online()) online_count++;
     }
+    display->print("Ifaces: ");
+    display->print((int)_interfaces.size());
+    display->print(" (");
+    display->print((int)online_count);
+    display->print(" online)");
     y += LINE_HEIGHT;
 
     // Link count
@@ -283,53 +309,44 @@ void Display::draw_page_interface() {
 #ifdef ARDUINO
     int16_t y = CONTENT_Y;
 
-    if (!_interface) {
+    if (_interfaces.empty()) {
         display->setCursor(LEFT_MARGIN, y);
-        display->print("No interface");
+        display->print("No interfaces");
         return;
     }
 
-    // Interface name
-    display->setCursor(LEFT_MARGIN, y);
-    display->print("Interface: ");
-    display->print(_interface->name().c_str());
-    y += LINE_HEIGHT;
+    // Show each interface with status
+    for (auto* iface : _interfaces) {
+        if (!iface) continue;
 
-    // Mode
-    display->setCursor(LEFT_MARGIN, y);
-    display->print("Mode: ");
-    switch (_interface->mode()) {
-        case Type::Interface::MODE_GATEWAY:
-            display->print("Gateway");
-            break;
-        case Type::Interface::MODE_ACCESS_POINT:
-            display->print("Access Point");
-            break;
-        case Type::Interface::MODE_POINT_TO_POINT:
-            display->print("Point-to-Point");
-            break;
-        case Type::Interface::MODE_ROAMING:
-            display->print("Roaming");
-            break;
-        case Type::Interface::MODE_BOUNDARY:
-            display->print("Boundary");
-            break;
-        default:
-            display->print("Unknown");
-            break;
+        display->setCursor(LEFT_MARGIN, y);
+
+        // Interface name (truncate if needed)
+        std::string name = iface->name();
+        if (name.length() > 6) name = name.substr(0, 6);
+        display->print(name.c_str());
+        display->print(": ");
+
+        // Online/offline status
+        display->print(iface->online() ? "ON " : "OFF");
+
+        // For compact display, show bitrate in short form
+        uint32_t bps = iface->bitrate();
+        if (bps >= 1000000) {
+            char buf[8];
+            snprintf(buf, sizeof(buf), " %.0fM", bps / 1000000.0);
+            display->print(buf);
+        } else if (bps >= 1000) {
+            char buf[8];
+            snprintf(buf, sizeof(buf), " %.0fk", bps / 1000.0);
+            display->print(buf);
+        }
+
+        y += LINE_HEIGHT;
+
+        // Stop if we'd overflow the display
+        if (y > DISPLAY_HEIGHT - LINE_HEIGHT) break;
     }
-    y += LINE_HEIGHT;
-
-    // Bitrate
-    display->setCursor(LEFT_MARGIN, y);
-    display->print("Bitrate: ");
-    display->print(format_bitrate(_interface->bitrate()).c_str());
-    y += LINE_HEIGHT;
-
-    // Status
-    display->setCursor(LEFT_MARGIN, y);
-    display->print("Status: ");
-    display->print(_interface->online() ? "Online" : "Offline");
 #endif
 }
 
@@ -348,14 +365,16 @@ void Display::draw_page_network() {
     display->print((int)path_count);
     y += LINE_HEIGHT;
 
-    // RTT placeholder (would need link reference to get actual RTT)
+    // BLE peer count
     display->setCursor(LEFT_MARGIN, y);
-    display->print("RTT: --");
+    display->print("BLE Peers: ");
+    display->print((int)_ble_peers);
     y += LINE_HEIGHT;
 
-    // TX/RX bytes (if interface available)
+    // Auto interface peer count
     display->setCursor(LEFT_MARGIN, y);
-    display->print("TX/RX: --");
+    display->print("Auto Peers: ");
+    display->print((int)_auto_peers);
     y += LINE_HEIGHT;
 
     // Uptime
