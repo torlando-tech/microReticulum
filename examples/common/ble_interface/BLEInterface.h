@@ -137,6 +137,7 @@ private:
 
     void onHandshakeComplete(const RNS::Bytes& mac, const RNS::Bytes& identity, bool is_central);
     void onHandshakeFailed(const RNS::Bytes& mac, const std::string& reason);
+    void onMacRotation(const RNS::Bytes& old_mac, const RNS::Bytes& new_mac, const RNS::Bytes& identity);
 
     //=========================================================================
     // Reassembly Callbacks

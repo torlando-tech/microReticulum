@@ -28,6 +28,10 @@ void BLEIdentityManager::setHandshakeFailedCallback(HandshakeFailedCallback call
     _handshake_failed_callback = callback;
 }
 
+void BLEIdentityManager::setMacRotationCallback(MacRotationCallback callback) {
+    _mac_rotation_callback = callback;
+}
+
 //=============================================================================
 // Handshake Operations
 //=============================================================================
@@ -126,6 +130,24 @@ void BLEIdentityManager::completeHandshake(const Bytes& mac_address, const Bytes
     Bytes identity(peer_identity.data(), Limits::IDENTITY_SIZE);
     DEBUG("BLEIdentityManager::completeHandshake: Created local copies");
 
+    // Check for MAC rotation: same identity from different MAC address
+    Bytes old_mac;
+    bool is_rotation = false;
+    auto existing_mac_it = _identity_to_address.find(identity);
+    if (existing_mac_it != _identity_to_address.end() && existing_mac_it->second != mac) {
+        // MAC rotation detected!
+        old_mac = existing_mac_it->second;
+        is_rotation = true;
+
+        INFO("BLEIdentityManager: MAC rotation detected for identity " +
+             identity.toHex().substr(0, 8) + "...: " +
+             BLEAddress(old_mac.data()).toString() + " -> " +
+             BLEAddress(mac.data()).toString());
+
+        // Clean up old MAC entry to prevent stale mappings
+        _address_to_identity.erase(old_mac);
+    }
+
     // Store bidirectional mapping
     _address_to_identity[mac] = identity;
     _identity_to_address[identity] = mac;
@@ -140,9 +162,16 @@ void BLEIdentityManager::completeHandshake(const Bytes& mac_address, const Bytes
           " identity: " + identity.toHex().substr(0, 8) + "..." +
           (is_central ? " (we are central)" : " (we are peripheral)"));
 
-    // Invoke callback
+    // Invoke MAC rotation callback if this was a rotation
+    if (is_rotation && _mac_rotation_callback) {
+        DEBUG("BLEIdentityManager::completeHandshake: Calling MAC rotation callback");
+        _mac_rotation_callback(old_mac, mac, identity);
+        DEBUG("BLEIdentityManager::completeHandshake: MAC rotation callback returned");
+    }
+
+    // Invoke handshake complete callback
     if (_handshake_complete_callback) {
-        DEBUG("BLEIdentityManager::completeHandshake: Calling callback");
+        DEBUG("BLEIdentityManager::completeHandshake: Calling handshake complete callback");
         _handshake_complete_callback(mac, identity, is_central);
         DEBUG("BLEIdentityManager::completeHandshake: Callback returned");
     } else {

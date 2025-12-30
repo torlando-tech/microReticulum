@@ -325,6 +325,11 @@ void BLEInterface::setupCallbacks() {
             onHandshakeFailed(mac, reason);
         });
 
+    _identity_manager.setMacRotationCallback(
+        [this](const Bytes& old_mac, const Bytes& new_mac, const Bytes& identity) {
+            onMacRotation(old_mac, new_mac, identity);
+        });
+
     // Reassembler callbacks
     _reassembler.setReassemblyCallback(
         [this](const Bytes& peer_identity, const Bytes& packet) {
@@ -517,6 +522,24 @@ void BLEInterface::onHandshakeFailed(const Bytes& mac, const std::string& reason
             BLEAddress(mac.data()).toString() + ": " + reason);
 
     _peer_manager.connectionFailed(mac);
+}
+
+void BLEInterface::onMacRotation(const Bytes& old_mac, const Bytes& new_mac, const Bytes& identity) {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+
+    INFO("BLEInterface: MAC rotation detected for identity " +
+         identity.toHex().substr(0, 8) + "...: " +
+         BLEAddress(old_mac.data()).toString() + " -> " +
+         BLEAddress(new_mac.data()).toString());
+
+    // Update peer manager with new MAC
+    _peer_manager.updatePeerMac(identity, new_mac);
+
+    // Update fragmenter key if exists (identity stays the same, but log it)
+    auto frag_it = _fragmenters.find(identity);
+    if (frag_it != _fragmenters.end()) {
+        DEBUG("BLEInterface: Fragmenter preserved for rotated identity");
+    }
 }
 
 //=============================================================================
