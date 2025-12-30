@@ -74,7 +74,8 @@ uint32_t last_status_check = 0;
 const uint32_t STATUS_CHECK_INTERVAL = 1000;  // 1 second
 
 // Connection tracking
-bool last_rns_online = false;
+bool last_tcp_online = false;
+bool last_lora_online = false;
 
 // Screen timeout
 bool screen_off = false;
@@ -639,9 +640,22 @@ void setup_ui_manager() {
         while (1) delay(1000);
     }
 
-    // Set initial RNS connection status
-    if (tcp_interface) {
-        ui_manager->set_rns_status(tcp_interface->online(), app_settings.tcp_host);
+    // Set initial RNS connection status (check all interfaces)
+    {
+        bool tcp_online = tcp_interface && tcp_interface->online();
+        bool lora_online = lora_interface && lora_interface->online();
+        last_tcp_online = tcp_online;
+        last_lora_online = lora_online;
+
+        String status_str;
+        if (tcp_online && lora_online) {
+            status_str = "TCP+LoRa";
+        } else if (tcp_online) {
+            status_str = "TCP: " + app_settings.tcp_host;
+        } else if (lora_online) {
+            status_str = "LoRa";
+        }
+        ui_manager->set_rns_status(tcp_online || lora_online, status_str);
     }
 
     // Set propagation node manager
@@ -923,7 +937,7 @@ void loop() {
         }
     }
 
-    // Check for reconnection (handles rapid disconnect/reconnect that status check might miss)
+    // Check for TCP reconnection (handles rapid disconnect/reconnect)
     if (tcp_interface_impl && tcp_interface_impl->check_reconnected()) {
         INFO("TCP interface reconnected - sending announce");
         if (router) {
@@ -931,24 +945,36 @@ void loop() {
             router->announce();
             last_announce = millis();
         }
-        // Update UI status
-        if (ui_manager) {
-            ui_manager->set_rns_status(true, app_settings.tcp_host);
-        }
-        last_rns_online = true;
+        last_tcp_online = true;
     }
 
-    // Periodic RNS status check (backup for slower state changes)
+    // Periodic RNS status check (check all interfaces)
     if (millis() - last_status_check > STATUS_CHECK_INTERVAL) {
         last_status_check = millis();
-        if (tcp_interface && ui_manager) {
-            bool current_online = tcp_interface->online();
-            if (current_online != last_rns_online) {
-                last_rns_online = current_online;
-                ui_manager->set_rns_status(current_online, app_settings.tcp_host);
-                if (!current_online) {
-                    WARNING("RNS connection lost");
-                }
+
+        bool tcp_online = tcp_interface && tcp_interface->online();
+        bool lora_online = lora_interface && lora_interface->online();
+
+        // Check if status changed
+        if (tcp_online != last_tcp_online || lora_online != last_lora_online) {
+            last_tcp_online = tcp_online;
+            last_lora_online = lora_online;
+
+            String status_str;
+            if (tcp_online && lora_online) {
+                status_str = "TCP+LoRa";
+            } else if (tcp_online) {
+                status_str = "TCP: " + app_settings.tcp_host;
+            } else if (lora_online) {
+                status_str = "LoRa";
+            }
+
+            if (ui_manager) {
+                ui_manager->set_rns_status(tcp_online || lora_online, status_str);
+            }
+
+            if (!tcp_online && !lora_online) {
+                WARNING("All RNS interfaces offline");
             }
         }
     }
