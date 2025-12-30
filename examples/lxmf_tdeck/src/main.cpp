@@ -28,6 +28,9 @@
 // Auto Interface (IPv6 peer discovery)
 #include "AutoInterface.h"
 
+// BLE Mesh Interface
+#include "BLEInterface.h"
+
 // LXMF
 #include <LXMF/LXMRouter.h>
 #include <LXMF/MessageStore.h>
@@ -74,6 +77,8 @@ SX1262Interface* lora_interface_impl = nullptr;
 Interface* lora_interface = nullptr;
 AutoInterface* auto_interface_impl = nullptr;
 Interface* auto_interface = nullptr;
+BLEInterface* ble_interface_impl = nullptr;
+Interface* ble_interface = nullptr;
 
 // Timing
 uint32_t last_ui_update = 0;
@@ -354,6 +359,7 @@ void load_app_settings() {
     app_settings.lora_cr = prefs.getUChar("lora_cr", 5);
     app_settings.lora_power = prefs.getChar("lora_pwr", 17);
     app_settings.auto_enabled = prefs.getBool("auto_en", false);
+    app_settings.ble_enabled = prefs.getBool("ble_en", false);
 
     // Advanced
     app_settings.announce_interval = prefs.getULong("announce", 60);
@@ -591,6 +597,25 @@ void setup_reticulum() {
         INFO("AutoInterface disabled in settings");
     }
 
+    // Add BLE Mesh interface (if enabled)
+    if (app_settings.ble_enabled) {
+        INFO("Initializing BLE Mesh interface...");
+
+        ble_interface_impl = new BLEInterface("BLE");
+        ble_interface_impl->setRole(RNS::BLE::Role::DUAL);  // Both central and peripheral
+        ble_interface_impl->setLocalIdentity(identity->get_public_key().left(16));
+        ble_interface = new Interface(ble_interface_impl);
+
+        if (!ble_interface->start()) {
+            ERROR("Failed to initialize BLE interface!");
+        } else {
+            INFO("BLE Mesh interface started");
+            Transport::register_interface(*ble_interface);
+        }
+    } else {
+        INFO("BLE Mesh interface disabled in settings");
+    }
+
     // Start Transport (initializes Transport identity and enables packet processing)
     reticulum->start();
 }
@@ -749,6 +774,7 @@ void setup_ui_manager() {
                                         (new_settings.lora_cr != app_settings.lora_cr) ||
                                         (new_settings.lora_power != app_settings.lora_power);
             bool auto_settings_changed = (new_settings.auto_enabled != app_settings.auto_enabled);
+            bool ble_settings_changed = (new_settings.ble_enabled != app_settings.ble_enabled);
 
             app_settings = new_settings;
 
@@ -842,6 +868,37 @@ void setup_ui_manager() {
                     WARNING("AutoInterface enabled but WiFi not connected");
                 } else {
                     INFO("AutoInterface disabled");
+                }
+            }
+
+            // Handle BLE interface changes at runtime
+            if (ble_settings_changed) {
+                if (ble_interface_impl) {
+                    INFO("Stopping BLE interface...");
+                    ble_interface_impl->stop();
+                }
+
+                if (new_settings.ble_enabled) {
+                    INFO("Starting BLE interface...");
+
+                    // Create interface if it doesn't exist yet
+                    if (!ble_interface_impl) {
+                        INFO("Creating new BLE interface...");
+                        ble_interface_impl = new BLEInterface("BLE");
+                        ble_interface_impl->setRole(RNS::BLE::Role::DUAL);
+                        ble_interface_impl->setLocalIdentity(identity->get_public_key().left(16));
+                        ble_interface = new Interface(ble_interface_impl);
+                    }
+
+                    if (ble_interface->start()) {
+                        INFO("BLE interface started");
+                        // Register with transport if not already registered
+                        Transport::register_interface(*ble_interface);
+                    } else {
+                        ERROR("Failed to start BLE interface!");
+                    }
+                } else {
+                    INFO("BLE interface disabled");
                 }
             }
 
@@ -978,6 +1035,11 @@ void loop() {
         lora_interface->loop();
     }
 
+    // Process BLE interface
+    if (ble_interface) {
+        ble_interface->loop();
+    }
+
     // Process LXMF router queues
     if (router) {
         router->process_outbound();
@@ -995,7 +1057,8 @@ void loop() {
         if (millis() - last_announce > announce_interval_ms) {
             // Announce if any interface is online
             bool has_online_interface = (tcp_interface && tcp_interface->online()) ||
-                                        (lora_interface && lora_interface->online());
+                                        (lora_interface && lora_interface->online()) ||
+                                        (ble_interface && ble_interface->online());
             if (router && has_online_interface) {
                 router->announce();
                 last_announce = millis();

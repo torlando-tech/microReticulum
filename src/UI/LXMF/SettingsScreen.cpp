@@ -42,6 +42,7 @@ static const char* KEY_LORA_SF = "lora_sf";
 static const char* KEY_LORA_CR = "lora_cr";
 static const char* KEY_LORA_POWER = "lora_pwr";
 static const char* KEY_AUTO_ENABLED = "auto_en";
+static const char* KEY_BLE_ENABLED = "ble_en";
 // Propagation settings
 static const char* KEY_PROP_AUTO = "prop_auto";
 static const char* KEY_PROP_NODE = "prop_node";
@@ -62,7 +63,7 @@ SettingsScreen::SettingsScreen(lv_obj_t* parent)
       _ta_lora_frequency(nullptr), _dropdown_lora_bandwidth(nullptr),
       _dropdown_lora_sf(nullptr), _dropdown_lora_cr(nullptr),
       _slider_lora_power(nullptr), _label_lora_power_value(nullptr),
-      _lora_params_container(nullptr), _switch_auto_enabled(nullptr),
+      _lora_params_container(nullptr), _switch_auto_enabled(nullptr), _switch_ble_enabled(nullptr),
       _ta_announce_interval(nullptr), _switch_gps_sync(nullptr),
       _btn_propagation_nodes(nullptr), _switch_prop_fallback(nullptr), _switch_prop_only(nullptr),
       _gps(nullptr) {
@@ -449,6 +450,27 @@ void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(_switch_auto_enabled, lv_color_hex(0x404040), LV_PART_MAIN);
     lv_obj_set_style_bg_color(_switch_auto_enabled, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
 
+    // BLE Mesh row
+    lv_obj_t* ble_row = lv_obj_create(parent);
+    lv_obj_set_width(ble_row, LV_PCT(100));
+    lv_obj_set_height(ble_row, 28);
+    lv_obj_set_style_bg_opa(ble_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(ble_row, 0, 0);
+    lv_obj_set_style_pad_all(ble_row, 0, 0);
+    lv_obj_clear_flag(ble_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* ble_label = lv_label_create(ble_row);
+    lv_label_set_text(ble_label, "BLE Mesh:");
+    lv_obj_align(ble_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(ble_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_font(ble_label, &lv_font_montserrat_14, 0);
+
+    _switch_ble_enabled = lv_switch_create(ble_row);
+    lv_obj_set_size(_switch_ble_enabled, 40, 20);
+    lv_obj_align(_switch_ble_enabled, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(_switch_ble_enabled, lv_color_hex(0x404040), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_ble_enabled, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
+
     // TCP Enable row
     lv_obj_t* tcp_row = lv_obj_create(parent);
     lv_obj_set_width(tcp_row, LV_PCT(100));
@@ -830,6 +852,7 @@ void SettingsScreen::load_settings() {
     _settings.lora_cr = prefs.getUChar(KEY_LORA_CR, 5);
     _settings.lora_power = prefs.getChar(KEY_LORA_POWER, 17);
     _settings.auto_enabled = prefs.getBool(KEY_AUTO_ENABLED, false);
+    _settings.ble_enabled = prefs.getBool(KEY_BLE_ENABLED, false);
 
     // Propagation settings
     _settings.prop_auto_select = prefs.getBool(KEY_PROP_AUTO, true);
@@ -872,6 +895,7 @@ void SettingsScreen::save_settings() {
     prefs.putUChar(KEY_LORA_CR, _settings.lora_cr);
     prefs.putChar(KEY_LORA_POWER, _settings.lora_power);
     prefs.putBool(KEY_AUTO_ENABLED, _settings.auto_enabled);
+    prefs.putBool(KEY_BLE_ENABLED, _settings.ble_enabled);
 
     // Propagation settings
     prefs.putBool(KEY_PROP_AUTO, _settings.prop_auto_select);
@@ -1011,6 +1035,13 @@ void SettingsScreen::update_ui_from_settings() {
             lv_obj_clear_state(_switch_auto_enabled, LV_STATE_CHECKED);
         }
     }
+    if (_switch_ble_enabled) {
+        if (_settings.ble_enabled) {
+            lv_obj_add_state(_switch_ble_enabled, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(_switch_ble_enabled, LV_STATE_CHECKED);
+        }
+    }
 
     // Propagation settings
     if (_switch_prop_fallback) {
@@ -1107,6 +1138,9 @@ void SettingsScreen::update_settings_from_ui() {
     }
     if (_switch_auto_enabled) {
         _settings.auto_enabled = lv_obj_has_state(_switch_auto_enabled, LV_STATE_CHECKED);
+    }
+    if (_switch_ble_enabled) {
+        _settings.ble_enabled = lv_obj_has_state(_switch_ble_enabled, LV_STATE_CHECKED);
     }
 
     // Propagation settings

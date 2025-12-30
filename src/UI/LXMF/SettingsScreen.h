@@ -49,6 +49,7 @@ struct AppSettings {
     uint8_t lora_cr;          // Coding rate (5-8)
     int8_t lora_power;        // TX power dBm (2-22)
     bool auto_enabled;        // Enable AutoInterface (WiFi peer discovery)
+    bool ble_enabled;         // Enable BLE mesh interface
 
     // Advanced
     uint32_t announce_interval;  // seconds
@@ -77,6 +78,7 @@ struct AppSettings {
         lora_cr(5),
         lora_power(17),
         auto_enabled(false),
+        ble_enabled(false),
         announce_interval(60),
         gps_time_sync(true),
         prop_auto_select(true),
@@ -275,6 +277,7 @@ private:
     lv_obj_t* _label_lora_power_value;
     lv_obj_t* _lora_params_container;  // Container for LoRa params (shown/hidden based on enabled)
     lv_obj_t* _switch_auto_enabled;
+    lv_obj_t* _switch_ble_enabled;
 
     // Advanced section
     lv_obj_t* _ta_announce_interval;

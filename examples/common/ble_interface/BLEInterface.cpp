@@ -321,6 +321,9 @@ void BLEInterface::onConnected(const ConnectionHandle& conn) {
     DEBUG("BLEInterface: Connected to " + conn.peer_address.toString() +
           " (we are central)");
 
+    // Allow MTU negotiation to complete before GATT operations (Android compat)
+    Utilities::OS::sleep(Timing::POST_MTU_DELAY);
+
     // Discover services
     _platform->discoverServices(conn.handle);
 }
@@ -373,11 +376,33 @@ void BLEInterface::onServicesDiscovered(const ConnectionHandle& conn, bool succe
 
     DEBUG("BLEInterface: Services discovered for " + conn.peer_address.toString());
 
-    // Enable notifications on TX characteristic
-    _platform->enableNotifications(conn.handle, true);
+    // As central, we must READ the peripheral's identity characteristic first,
+    // then write our identity to their RX characteristic.
+    // This completes the bidirectional identity exchange per v2.2 protocol.
+    _platform->read(conn.handle, conn.identity_handle,
+        [this, conn](OperationResult result, const Bytes& data) {
+            if (result == OperationResult::SUCCESS && data.size() == Limits::IDENTITY_SIZE) {
+                Bytes mac = conn.peer_address.toBytes();
 
-    // Initiate handshake (as central)
-    initiateHandshake(conn);
+                // Store peer's identity (we are central)
+                _identity_manager.completeHandshake(mac, data, true);
+
+                DEBUG("BLEInterface: Read peer identity from " + conn.peer_address.toString() +
+                      ": " + data.toHex().substr(0, 8) + "...");
+
+                // Now enable notifications on TX characteristic
+                _platform->enableNotifications(conn.handle, true);
+
+                // Send our identity to peer's RX characteristic
+                initiateHandshake(conn);
+            } else {
+                WARNING("BLEInterface: Failed to read peer identity from " +
+                        conn.peer_address.toString() + " (result=" +
+                        std::to_string(static_cast<int>(result)) + ", size=" +
+                        std::to_string(data.size()) + ")");
+                _platform->disconnect(conn.handle);
+            }
+        });
 }
 
 void BLEInterface::onDataReceived(const ConnectionHandle& conn, const Bytes& data) {
