@@ -65,30 +65,30 @@ void ConversationListScreen::create_header() {
 
     // Title
     lv_obj_t* title = lv_label_create(_header);
-    lv_label_set_text(title, "Messages");
+    lv_label_set_text(title, "LXMF");
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 8, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
 
-    // Status indicators (WiFi RSSI, LoRa RSSI, Battery) - positioned in center-right area
+    // Status indicators (WiFi RSSI, LoRa RSSI, GPS, Battery) - positioned in center-right area
     _label_wifi = lv_label_create(_header);
     lv_label_set_text(_label_wifi, LV_SYMBOL_WIFI " --");
-    lv_obj_align(_label_wifi, LV_ALIGN_LEFT_MID, 88, 0);
+    lv_obj_align(_label_wifi, LV_ALIGN_LEFT_MID, 78, 0);
     lv_obj_set_style_text_color(_label_wifi, lv_color_hex(0x808080), 0);
 
     _label_lora = lv_label_create(_header);
     lv_label_set_text(_label_lora, LV_SYMBOL_CALL " --");  // Antenna-like symbol
-    lv_obj_align(_label_lora, LV_ALIGN_LEFT_MID, 140, 0);
+    lv_obj_align(_label_lora, LV_ALIGN_LEFT_MID, 130, 0);
     lv_obj_set_style_text_color(_label_lora, lv_color_hex(0x808080), 0);
 
     _label_gps = lv_label_create(_header);
     lv_label_set_text(_label_gps, LV_SYMBOL_GPS " --");
-    lv_obj_align(_label_gps, LV_ALIGN_LEFT_MID, 188, 0);
+    lv_obj_align(_label_gps, LV_ALIGN_LEFT_MID, 178, 0);
     lv_obj_set_style_text_color(_label_gps, lv_color_hex(0x808080), 0);
 
     _label_battery = lv_label_create(_header);
     lv_label_set_text(_label_battery, LV_SYMBOL_BATTERY_FULL " --%");
-    lv_obj_align(_label_battery, LV_ALIGN_LEFT_MID, 225, 0);
+    lv_obj_align(_label_battery, LV_ALIGN_LEFT_MID, 215, 0);
     lv_obj_set_style_text_color(_label_battery, lv_color_hex(0x808080), 0);
 
     // New message button (right corner)
@@ -382,14 +382,15 @@ void ConversationListScreen::update_status() {
     }
 
     // Update battery level (read from ADC)
+    // ESP32 ADC has linearity/offset issues - add 0.32V calibration per LilyGo community
     int raw_adc = analogRead(Pin::BATTERY_ADC);
-    float voltage = (raw_adc / 4095.0) * 3.3 * Power::BATTERY_VOLTAGE_DIVIDER;
+    float voltage = (raw_adc / 4095.0) * 3.3 * Power::BATTERY_VOLTAGE_DIVIDER + 0.32;
     int percent = (int)((voltage - Power::BATTERY_EMPTY) / (Power::BATTERY_FULL - Power::BATTERY_EMPTY) * 100);
     percent = constrain(percent, 0, 100);
 
-    // Detect charging: voltage > 4.1V indicates USB power connected
-    // (battery alone under load won't maintain this voltage)
-    bool charging = (voltage > 4.1);
+    // Detect charging: voltage > 4.4V indicates USB power connected
+    // (calibrated voltage reads ~5V+ when charging, ~4.2V max on battery)
+    bool charging = (voltage > 4.4);
 
     String battery_text;
     if (charging) {
