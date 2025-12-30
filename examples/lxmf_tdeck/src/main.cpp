@@ -28,6 +28,7 @@
 // LXMF
 #include <LXMF/LXMRouter.h>
 #include <LXMF/MessageStore.h>
+#include <LXMF/PropagationNodeManager.h>
 
 // Hardware drivers
 #include <Hardware/TDeck/Config.h>
@@ -59,6 +60,7 @@ Reticulum* reticulum = nullptr;
 Identity* identity = nullptr;
 LXMRouter* router = nullptr;
 MessageStore* message_store = nullptr;
+PropagationNodeManager* propagation_manager = nullptr;
 UI::LXMF::UIManager* ui_manager = nullptr;
 TCPClientInterface* tcp_interface_impl = nullptr;
 Interface* tcp_interface = nullptr;
@@ -337,6 +339,11 @@ void load_app_settings() {
     app_settings.announce_interval = prefs.getULong("announce", 60);
     app_settings.gps_time_sync = prefs.getBool("gps_sync", true);
 
+    // Propagation
+    app_settings.prop_auto_select = prefs.getBool("prop_auto", true);
+    app_settings.prop_selected_node = prefs.getString("prop_node", "");
+    app_settings.prop_fallback_enabled = prefs.getBool("prop_fall", true);
+
     prefs.end();
 
     // Log loaded settings (hide password)
@@ -560,6 +567,26 @@ void setup_lxmf() {
     router = new LXMRouter(*identity, "/lxmf");
     INFO("LXMF router created");
 
+    // Create and register propagation node manager
+    propagation_manager = new PropagationNodeManager();
+    Transport::register_announce_handler(HAnnounceHandler(propagation_manager));
+    INFO("Propagation node manager registered");
+
+    // Configure propagation settings
+    router->set_propagation_node_manager(propagation_manager);
+    router->set_fallback_to_propagation(app_settings.prop_fallback_enabled);
+    router->set_propagation_only(app_settings.prop_only);
+    if (!app_settings.prop_auto_select && !app_settings.prop_selected_node.isEmpty()) {
+        Bytes selected_node;
+        selected_node.assignHex(app_settings.prop_selected_node.c_str());
+        router->set_outbound_propagation_node(selected_node);
+        INFO(("  Selected propagation node: " + app_settings.prop_selected_node.substring(0, 16) + "...").c_str());
+    } else {
+        INFO("  Propagation node: auto-select");
+    }
+    INFO(("  Fallback to propagation: " + String(app_settings.prop_fallback_enabled ? "enabled" : "disabled")).c_str());
+    INFO(("  Propagation only: " + String(app_settings.prop_only ? "enabled" : "disabled")).c_str());
+
     // Set display name from settings for announces
     if (!app_settings.display_name.isEmpty()) {
         router->set_display_name(app_settings.display_name.c_str());
@@ -604,6 +631,11 @@ void setup_ui_manager() {
     // Set initial RNS connection status
     if (tcp_interface) {
         ui_manager->set_rns_status(tcp_interface->online(), app_settings.tcp_host);
+    }
+
+    // Set propagation node manager
+    if (propagation_manager) {
+        ui_manager->set_propagation_node_manager(propagation_manager);
     }
 
     // Configure settings screen
@@ -714,6 +746,12 @@ void setup_ui_manager() {
                 } else {
                     INFO("LoRa interface disabled");
                 }
+            }
+
+            // Apply propagation settings to router
+            if (router) {
+                router->set_fallback_to_propagation(new_settings.prop_fallback_enabled);
+                router->set_propagation_only(new_settings.prop_only);
             }
 
             INFO("Settings saved");

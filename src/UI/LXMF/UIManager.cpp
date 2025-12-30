@@ -22,6 +22,8 @@ UIManager::UIManager(Reticulum& reticulum, ::LXMF::LXMRouter& router, ::LXMF::Me
       _announce_list_screen(nullptr),
       _status_screen(nullptr),
       _settings_screen(nullptr),
+      _propagation_nodes_screen(nullptr),
+      _propagation_manager(nullptr),
       _initialized(false) {
 }
 
@@ -44,6 +46,9 @@ UIManager::~UIManager() {
     if (_settings_screen) {
         delete _settings_screen;
     }
+    if (_propagation_nodes_screen) {
+        delete _propagation_nodes_screen;
+    }
 }
 
 bool UIManager::init() {
@@ -60,6 +65,7 @@ bool UIManager::init() {
     _announce_list_screen = new AnnounceListScreen();
     _status_screen = new StatusScreen();
     _settings_screen = new SettingsScreen();
+    _propagation_nodes_screen = new PropagationNodesScreen();
 
     // Set up callbacks for conversation list screen
     _conversation_list_screen->set_conversation_selected_callback(
@@ -128,6 +134,27 @@ bool UIManager::init() {
         [this]() { on_back_from_settings(); }
     );
 
+    _settings_screen->set_propagation_nodes_callback(
+        [this]() { show_propagation_nodes(); }
+    );
+
+    // Set up callbacks for propagation nodes screen
+    _propagation_nodes_screen->set_back_callback(
+        [this]() { on_back_from_propagation_nodes(); }
+    );
+
+    _propagation_nodes_screen->set_node_selected_callback(
+        [this](const Bytes& node_hash) { on_propagation_node_selected(node_hash); }
+    );
+
+    _propagation_nodes_screen->set_auto_select_changed_callback(
+        [this](bool enabled) { on_propagation_auto_select_changed(enabled); }
+    );
+
+    _propagation_nodes_screen->set_sync_callback(
+        [this]() { on_propagation_sync(); }
+    );
+
     // Load settings from NVS
     _settings_screen->load_settings();
 
@@ -186,6 +213,8 @@ void UIManager::show_conversation_list() {
     _compose_screen->hide();
     _announce_list_screen->hide();
     _status_screen->hide();
+    _settings_screen->hide();
+    _propagation_nodes_screen->hide();
 
     _current_screen = SCREEN_CONVERSATION_LIST;
 }
@@ -203,6 +232,8 @@ void UIManager::show_chat(const Bytes& peer_hash) {
     _compose_screen->hide();
     _announce_list_screen->hide();
     _status_screen->hide();
+    _settings_screen->hide();
+    _propagation_nodes_screen->hide();
 
     _current_screen = SCREEN_CHAT;
 }
@@ -216,6 +247,8 @@ void UIManager::show_compose() {
     _chat_screen->hide();
     _announce_list_screen->hide();
     _status_screen->hide();
+    _settings_screen->hide();
+    _propagation_nodes_screen->hide();
 
     _current_screen = SCREEN_COMPOSE;
 }
@@ -229,6 +262,8 @@ void UIManager::show_announces() {
     _chat_screen->hide();
     _compose_screen->hide();
     _status_screen->hide();
+    _settings_screen->hide();
+    _propagation_nodes_screen->hide();
 
     _current_screen = SCREEN_ANNOUNCES;
 }
@@ -242,6 +277,8 @@ void UIManager::show_status() {
     _chat_screen->hide();
     _compose_screen->hide();
     _announce_list_screen->hide();
+    _settings_screen->hide();
+    _propagation_nodes_screen->hide();
 
     _current_screen = SCREEN_STATUS;
 }
@@ -264,8 +301,35 @@ void UIManager::show_settings() {
     _compose_screen->hide();
     _announce_list_screen->hide();
     _status_screen->hide();
+    _propagation_nodes_screen->hide();
 
     _current_screen = SCREEN_SETTINGS;
+}
+
+void UIManager::show_propagation_nodes() {
+    INFO("Showing propagation nodes screen");
+
+    if (_propagation_manager) {
+        // Load nodes from manager
+        // TODO: Get auto-select setting from NVS
+        bool auto_select = true;
+        Bytes selected_hash = _router.get_outbound_propagation_node();
+        _propagation_nodes_screen->load_nodes(*_propagation_manager, selected_hash, auto_select);
+    }
+
+    _propagation_nodes_screen->show();
+    _conversation_list_screen->hide();
+    _chat_screen->hide();
+    _compose_screen->hide();
+    _announce_list_screen->hide();
+    _status_screen->hide();
+    _settings_screen->hide();
+
+    _current_screen = SCREEN_PROPAGATION_NODES;
+}
+
+void UIManager::set_propagation_node_manager(::LXMF::PropagationNodeManager* manager) {
+    _propagation_manager = manager;
 }
 
 void UIManager::on_back_to_conversation_list() {
@@ -313,6 +377,39 @@ void UIManager::on_back_from_status() {
 
 void UIManager::on_back_from_settings() {
     show_conversation_list();
+}
+
+void UIManager::on_back_from_propagation_nodes() {
+    show_settings();
+}
+
+void UIManager::on_propagation_node_selected(const Bytes& node_hash) {
+    std::string hash_hex = node_hash.toHex().substr(0, 16);
+    std::string msg = "Propagation node selected: " + hash_hex + "...";
+    INFO(msg.c_str());
+
+    // Set the node in the router
+    _router.set_outbound_propagation_node(node_hash);
+
+    // TODO: Save to NVS
+}
+
+void UIManager::on_propagation_auto_select_changed(bool enabled) {
+    std::string msg = "Propagation auto-select changed: ";
+    msg += enabled ? "enabled" : "disabled";
+    INFO(msg.c_str());
+
+    if (enabled) {
+        // Clear manual selection, router will use best node
+        _router.set_outbound_propagation_node(Bytes());
+    }
+
+    // TODO: Save to NVS
+}
+
+void UIManager::on_propagation_sync() {
+    INFO("Requesting messages from propagation node");
+    _router.request_messages_from_propagation_node();
 }
 
 void UIManager::set_rns_status(bool connected, const String& server_name) {
@@ -433,6 +530,9 @@ void UIManager::refresh_current_screen() {
             break;
         case SCREEN_SETTINGS:
             _settings_screen->refresh();
+            break;
+        case SCREEN_PROPAGATION_NODES:
+            _propagation_nodes_screen->refresh();
             break;
     }
 }

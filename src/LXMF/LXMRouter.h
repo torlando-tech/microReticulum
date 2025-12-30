@@ -10,11 +10,15 @@
 
 #include <map>
 #include <vector>
+#include <set>
 #include <string>
 #include <functional>
 #include <memory>
 
 namespace LXMF {
+
+	// Forward declarations
+	class PropagationNodeManager;
 
 	/**
 	 * @brief LXMF Router - Message delivery orchestration
@@ -67,6 +71,26 @@ namespace LXMF {
 		 * @param message The failed message
 		 */
 		using FailedCallback = std::function<void(LXMessage& message)>;
+
+		/**
+		 * @brief Callback for sync completion
+		 * @param messages_received Number of messages received from propagation node
+		 */
+		using SyncCompleteCallback = std::function<void(size_t messages_received)>;
+
+		/**
+		 * @brief Propagation sync state
+		 */
+		enum PropagationSyncState : uint8_t {
+			PR_IDLE              = 0x00,
+			PR_PATH_REQUESTED    = 0x01,
+			PR_LINK_ESTABLISHING = 0x02,
+			PR_LINK_ESTABLISHED  = 0x03,
+			PR_REQUEST_SENT      = 0x04,
+			PR_RECEIVING         = 0x05,
+			PR_COMPLETE          = 0x06,
+			PR_FAILED            = 0x07
+		};
 
 	public:
 		/**
@@ -230,6 +254,137 @@ namespace LXMF {
 		 */
 		void retry_failed_outbound();
 
+		// ============== Propagation Node Support ==============
+
+		/**
+		 * @brief Set the propagation node manager
+		 *
+		 * @param manager Pointer to PropagationNodeManager (not owned)
+		 */
+		void set_propagation_node_manager(PropagationNodeManager* manager);
+
+		/**
+		 * @brief Set the outbound propagation node
+		 *
+		 * @param node_hash Destination hash of the propagation node
+		 */
+		void set_outbound_propagation_node(const RNS::Bytes& node_hash);
+
+		/**
+		 * @brief Get the current outbound propagation node
+		 *
+		 * @return Destination hash of the propagation node (or empty)
+		 */
+		RNS::Bytes get_outbound_propagation_node() const { return _outbound_propagation_node; }
+
+		/**
+		 * @brief Enable/disable fallback to PROPAGATED delivery
+		 *
+		 * When enabled, messages that fail DIRECT/OPPORTUNISTIC delivery will
+		 * automatically be retried via a propagation node.
+		 *
+		 * @param enabled True to enable fallback
+		 */
+		void set_fallback_to_propagation(bool enabled) { _fallback_to_propagation = enabled; }
+
+		/**
+		 * @brief Check if fallback to propagation is enabled
+		 *
+		 * @return True if fallback is enabled
+		 */
+		bool fallback_to_propagation() const { return _fallback_to_propagation; }
+
+		/**
+		 * @brief Enable/disable propagation-only mode
+		 *
+		 * When enabled, all messages are sent via propagation node only.
+		 * DIRECT and OPPORTUNISTIC delivery are skipped.
+		 *
+		 * @param enabled True to enable propagation-only mode
+		 */
+		void set_propagation_only(bool enabled) { _propagation_only = enabled; }
+
+		/**
+		 * @brief Check if propagation-only mode is enabled
+		 *
+		 * @return True if propagation-only mode is enabled
+		 */
+		bool propagation_only() const { return _propagation_only; }
+
+		/**
+		 * @brief Request messages from the propagation node
+		 *
+		 * Initiates a sync with the configured/selected propagation node to
+		 * retrieve any pending messages.
+		 */
+		void request_messages_from_propagation_node();
+
+		/**
+		 * @brief Get the current sync state
+		 *
+		 * @return Current propagation sync state
+		 */
+		PropagationSyncState get_sync_state() const { return _sync_state; }
+
+		/**
+		 * @brief Get the current sync progress
+		 *
+		 * @return Progress from 0.0 to 1.0
+		 */
+		float get_sync_progress() const { return _sync_progress; }
+
+		/**
+		 * @brief Register callback for sync completion
+		 *
+		 * @param callback Function to call when sync completes
+		 */
+		void register_sync_complete_callback(SyncCompleteCallback callback);
+
+		// ============== End Propagation Node Support ==============
+
+		// ============== Stamp Enforcement ==============
+
+		/**
+		 * @brief Set the required stamp cost for incoming messages
+		 *
+		 * Messages without a valid stamp meeting this cost will be rejected
+		 * when enforcement is enabled.
+		 *
+		 * @param cost Required number of leading zero bits (0 = no stamp required)
+		 */
+		void set_stamp_cost(uint8_t cost) { _stamp_cost = cost; }
+
+		/**
+		 * @brief Get the current stamp cost requirement
+		 *
+		 * @return Required stamp cost
+		 */
+		uint8_t stamp_cost() const { return _stamp_cost; }
+
+		/**
+		 * @brief Enable stamp enforcement
+		 *
+		 * When enabled, incoming messages must have a valid stamp meeting
+		 * the configured cost or they will be dropped.
+		 */
+		void enforce_stamps() { _enforce_stamps = true; }
+
+		/**
+		 * @brief Disable stamp enforcement
+		 *
+		 * Incoming messages will be accepted regardless of stamp validity.
+		 */
+		void ignore_stamps() { _enforce_stamps = false; }
+
+		/**
+		 * @brief Check if stamp enforcement is enabled
+		 *
+		 * @return True if stamps are enforced
+		 */
+		bool stamps_enforced() const { return _enforce_stamps; }
+
+		// ============== End Stamp Enforcement ==============
+
 		/**
 		 * @brief Packet callback for receiving LXMF messages
 		 *
@@ -308,6 +463,34 @@ namespace LXMF {
 		 */
 		bool send_opportunistic(LXMessage& message, const RNS::Identity& dest_identity);
 
+		/**
+		 * @brief Send message via PROPAGATED delivery
+		 *
+		 * @param message Message to send
+		 * @return True if send initiated successfully
+		 */
+		bool send_propagated(LXMessage& message);
+
+		/**
+		 * @brief Handle message list response from propagation node
+		 */
+		void on_message_list_response(const RNS::Bytes& response);
+
+		/**
+		 * @brief Handle message get response from propagation node
+		 */
+		void on_message_get_response(const RNS::Bytes& response);
+
+		/**
+		 * @brief Process received propagated LXMF data
+		 */
+		void process_propagated_lxmf(const RNS::Bytes& lxmf_data);
+
+		/**
+		 * @brief Static callback for outbound propagation resource
+		 */
+		static void static_propagation_resource_concluded(const RNS::Resource& resource);
+
 	private:
 		// Core components
 		RNS::Identity _identity;                   // Local identity
@@ -354,6 +537,26 @@ namespace LXMF {
 		double _next_outbound_process_time = 0.0;  // Next time to process outbound queue
 		static constexpr double OUTBOUND_RETRY_DELAY = 5.0;  // Seconds between retries
 		static constexpr double PATH_REQUEST_WAIT = 3.0;     // Seconds to wait after path request
+
+		// Propagation node support
+		PropagationNodeManager* _propagation_manager = nullptr;
+		RNS::Bytes _outbound_propagation_node;
+		RNS::Link _outbound_propagation_link{RNS::Type::NONE};
+		bool _fallback_to_propagation = true;
+		bool _propagation_only = false;
+
+		// Propagation sync state
+		PropagationSyncState _sync_state = PR_IDLE;
+		float _sync_progress = 0.0f;
+		std::set<RNS::Bytes> _locally_delivered_transient_ids;
+		SyncCompleteCallback _sync_complete_callback;
+
+		// Track outbound propagation resources (resource_hash -> message_hash)
+		static std::map<RNS::Bytes, RNS::Bytes> _pending_propagation_resources;
+
+		// Stamp enforcement
+		uint8_t _stamp_cost = 0;       // Required stamp cost (0 = no stamp required)
+		bool _enforce_stamps = false;  // Whether to enforce stamp requirements
 	};
 
 }  // namespace LXMF

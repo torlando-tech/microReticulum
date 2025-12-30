@@ -132,6 +132,11 @@ namespace LXMF {
 			// QR/Paper encoding constants
 			static const uint16_t QR_MAX_STORAGE = 2953;  // Max bytes in QR code
 			static const uint16_t PAPER_MDU = ((QR_MAX_STORAGE - 6) * 6) / 8;  // "lxm://" = 6 chars
+
+			// Stamp proof-of-work constants
+			static const uint8_t STAMP_SIZE = 32;                     // 256-bit stamp
+			static const uint16_t STAMP_WORKBLOCK_ROUNDS = 3000;      // Direct message stamps
+			static const uint16_t STAMP_WORKBLOCK_ROUNDS_PN = 1000;   // Propagation node stamps
 		}
 
 		/**

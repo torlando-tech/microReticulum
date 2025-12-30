@@ -1,4 +1,5 @@
 #include "LXMRouter.h"
+#include "PropagationNodeManager.h"
 #include "../Log.h"
 #include "../Utilities/OS.h"
 #include "../Packet.h"
@@ -21,6 +22,10 @@ std::map<Bytes, Bytes> LXMRouter::_pending_proofs;
 // Static pending outbound resources map (resource_hash -> message_hash)
 // Used to track DIRECT delivery completion
 static std::map<Bytes, Bytes> _pending_outbound_resources;
+
+// Static pending propagation resources map (resource_hash -> message_hash)
+// Used to track PROPAGATED delivery completion
+std::map<Bytes, Bytes> LXMRouter::_pending_propagation_resources;
 
 // Static packet callback for destination
 static void static_packet_callback(const Bytes& data, const Packet& packet) {
@@ -254,6 +259,24 @@ void LXMRouter::process_outbound() {
 	DEBUG("Processing outbound message to " + message.destination_hash().toHex());
 
 	try {
+		// If propagation-only mode is enabled, send via propagation node
+		if (_propagation_only) {
+			DEBUG("  Using PROPAGATED delivery (propagation-only mode)");
+			message.set_method(Type::Message::PROPAGATED);
+			if (send_propagated(message)) {
+				INFO("Message sent via PROPAGATED delivery");
+				if (_sent_callback) {
+					_sent_callback(message);
+				}
+				_pending_outbound.erase(_pending_outbound.begin());
+			} else {
+				// Propagation not ready yet - wait and retry
+				DEBUG("  Propagation delivery not ready, will retry...");
+				_next_outbound_process_time = now + OUTBOUND_RETRY_DELAY;
+			}
+			return;
+		}
+
 		// Determine delivery method based on message size
 		bool use_opportunistic = (message.packed_size() <= Type::Constants::ENCRYPTED_PACKET_MDU);
 
@@ -543,6 +566,16 @@ void LXMRouter::on_packet(const Bytes& data, const Packet& packet) {
 				WARNING("  Rejecting message with invalid signature");
 				return;
 			}
+		}
+
+		// Stamp enforcement (if enabled)
+		if (_stamp_cost > 0 && _enforce_stamps) {
+			if (!message.validate_stamp(_stamp_cost)) {
+				WARNING("  Rejecting message with invalid or missing stamp (required cost=" +
+				        std::to_string(_stamp_cost) + ")");
+				return;
+			}
+			INFO("  Stamp validated");
 		}
 
 		// Send delivery proof back to sender (matches Python LXMF packet.prove())
@@ -850,6 +883,16 @@ void LXMRouter::on_resource_concluded(const RNS::Resource& resource) {
 			}
 		}
 
+		// Stamp enforcement (if enabled)
+		if (_stamp_cost > 0 && _enforce_stamps) {
+			if (!message.validate_stamp(_stamp_cost)) {
+				WARNING("  Rejecting message with invalid or missing stamp (required cost=" +
+				        std::to_string(_stamp_cost) + ")");
+				return;
+			}
+			INFO("  Stamp validated");
+		}
+
 		// Note: We don't need to send a custom delivery proof here.
 		// The sender gets delivery confirmation when the Resource completes
 		// (via RESOURCE_PRF from RNS layer), which triggers their callback.
@@ -860,5 +903,289 @@ void LXMRouter::on_resource_concluded(const RNS::Resource& resource) {
 
 	} catch (const std::exception& e) {
 		ERROR("Failed to process DIRECT message: " + std::string(e.what()));
+	}
+}
+
+// ============== Propagation Node Support ==============
+
+void LXMRouter::set_propagation_node_manager(PropagationNodeManager* manager) {
+	_propagation_manager = manager;
+	INFO("Propagation node manager set");
+}
+
+void LXMRouter::set_outbound_propagation_node(const Bytes& node_hash) {
+	if (node_hash.size() == 0) {
+		_outbound_propagation_node = {};
+		_outbound_propagation_link = Link(RNS::Type::NONE);
+		INFO("Cleared outbound propagation node");
+		return;
+	}
+
+	// Check if changing to a different node
+	if (_outbound_propagation_node != node_hash) {
+		// Tear down existing link if any
+		if (_outbound_propagation_link && _outbound_propagation_link.status() != RNS::Type::Link::CLOSED) {
+			_outbound_propagation_link.teardown();
+		}
+		_outbound_propagation_link = Link(RNS::Type::NONE);
+	}
+
+	_outbound_propagation_node = node_hash;
+	INFO("Set outbound propagation node to " + node_hash.toHex().substr(0, 16) + "...");
+}
+
+void LXMRouter::register_sync_complete_callback(SyncCompleteCallback callback) {
+	_sync_complete_callback = callback;
+	DEBUG("Sync complete callback registered");
+}
+
+// Static callback for outbound propagation resource
+void LXMRouter::static_propagation_resource_concluded(const Resource& resource) {
+	Bytes resource_hash = resource.hash();
+	DEBUG("Propagation resource concluded: " + resource_hash.toHex().substr(0, 16) + "...");
+	DEBUG("  Status: " + std::to_string((int)resource.status()));
+
+	auto it = _pending_propagation_resources.find(resource_hash);
+	if (it == _pending_propagation_resources.end()) {
+		DEBUG("  Resource not in pending propagation map");
+		return;
+	}
+
+	Bytes message_hash = it->second;
+
+	if (resource.status() == RNS::Type::Resource::COMPLETE) {
+		INFO("PROPAGATED delivery to node confirmed for message " + message_hash.toHex().substr(0, 16) + "...");
+
+		// For PROPAGATED, "delivered" means delivered to propagation node, not final recipient
+		// We mark it as SENT (not DELIVERED) to indicate it's on the propagation network
+		std::set<LXMRouter*> notified_routers;
+		for (auto& router_entry : _router_registry) {
+			LXMRouter* router = router_entry.second;
+			if (router && router->_sent_callback && notified_routers.find(router) == notified_routers.end()) {
+				notified_routers.insert(router);
+				Bytes empty_hash;
+				LXMessage msg(empty_hash, empty_hash);
+				msg.hash(message_hash);
+				msg.state(Type::Message::SENT);
+				router->_sent_callback(msg);
+			}
+		}
+	} else {
+		WARNING("PROPAGATED resource transfer failed with status " + std::to_string((int)resource.status()));
+	}
+
+	_pending_propagation_resources.erase(it);
+}
+
+bool LXMRouter::send_propagated(LXMessage& message) {
+	INFO("Sending LXMF message via PROPAGATED delivery");
+
+	// Get propagation node
+	Bytes prop_node = _outbound_propagation_node;
+	if (prop_node.size() == 0 && _propagation_manager) {
+		DEBUG("  Looking for propagation node via manager...");
+		auto nodes = _propagation_manager->get_nodes();
+		DEBUG("  Manager has " + std::to_string(nodes.size()) + " nodes");
+		prop_node = _propagation_manager->get_effective_node();
+	}
+
+	if (prop_node.size() == 0) {
+		WARNING("No propagation node available for PROPAGATED delivery");
+		return false;
+	}
+
+	DEBUG("  Using propagation node: " + prop_node.toHex().substr(0, 16) + "...");
+
+	// Check/establish link to propagation node
+	if (!_outbound_propagation_link ||
+	    _outbound_propagation_link.status() == RNS::Type::Link::CLOSED) {
+
+		// Check if we have a path
+		if (!Transport::has_path(prop_node)) {
+			INFO("  No path to propagation node, requesting...");
+			Transport::request_path(prop_node);
+			return false;  // Will retry next cycle
+		}
+
+		// Recall identity for propagation node
+		Identity node_identity = Identity::recall(prop_node);
+		if (!node_identity) {
+			INFO("  Propagation node identity not known, waiting for announce...");
+			return false;
+		}
+
+		// Create destination for propagation node
+		Destination prop_dest(
+			node_identity,
+			RNS::Type::Destination::OUT,
+			RNS::Type::Destination::SINGLE,
+			"lxmf",
+			"propagation"
+		);
+
+		// Create link with established callback
+		_outbound_propagation_link = Link(prop_dest);
+		INFO("  Establishing link to propagation node...");
+		return false;  // Will retry when link established
+	}
+
+	// Check if link is active
+	if (_outbound_propagation_link.status() != RNS::Type::Link::ACTIVE) {
+		DEBUG("  Propagation link not yet active, waiting...");
+		return false;  // Will retry
+	}
+
+	// Generate propagation stamp if required by node
+	if (_propagation_manager) {
+		auto node_info = _propagation_manager->get_node(prop_node);
+		if (node_info && node_info.stamp_cost > 0) {
+			DEBUG("  Generating propagation stamp (cost=" + std::to_string(node_info.stamp_cost) + ")...");
+			Bytes stamp = message.generate_propagation_stamp(node_info.stamp_cost);
+			if (stamp.size() == 0) {
+				WARNING("  Failed to generate propagation stamp, sending anyway");
+			}
+		}
+	}
+
+	// Pack message for propagation
+	Bytes prop_packed = message.pack_propagated();
+	if (!prop_packed || prop_packed.size() == 0) {
+		ERROR("  Failed to pack message for propagation");
+		return false;
+	}
+
+	DEBUG("  Propagated message size: " + std::to_string(prop_packed.size()) + " bytes");
+
+	// Send via resource with callback
+	Resource resource(prop_packed, _outbound_propagation_link, true, true, static_propagation_resource_concluded);
+
+	// Track this resource
+	if (resource.hash()) {
+		_pending_propagation_resources[resource.hash()] = message.hash();
+		DEBUG("  Tracking propagation resource " + resource.hash().toHex().substr(0, 16));
+	}
+
+	message.state(Type::Message::SENDING);
+	INFO("  PROPAGATED resource transfer initiated");
+	return true;
+}
+
+void LXMRouter::request_messages_from_propagation_node() {
+	if (_sync_state != PR_IDLE && _sync_state != PR_COMPLETE && _sync_state != PR_FAILED) {
+		WARNING("Sync already in progress (state=" + std::to_string(_sync_state) + ")");
+		return;
+	}
+
+	// Get propagation node
+	Bytes prop_node = _outbound_propagation_node;
+	if (!prop_node && _propagation_manager) {
+		prop_node = _propagation_manager->get_effective_node();
+	}
+
+	if (!prop_node) {
+		WARNING("No propagation node available for sync");
+		_sync_state = PR_FAILED;
+		return;
+	}
+
+	INFO("Requesting messages from propagation node " + prop_node.toHex().substr(0, 16) + "...");
+	_sync_progress = 0.0f;
+
+	// Check if link exists and is active
+	if (_outbound_propagation_link && _outbound_propagation_link.status() == RNS::Type::Link::ACTIVE) {
+		_sync_state = PR_LINK_ESTABLISHED;
+
+		// TODO: Implement link.identify() and link.request() for full sync protocol
+		// For now, we log that sync would happen here
+		INFO("  Link active - sync protocol not yet implemented");
+		INFO("  (Requires Link.identify() and Link.request() support)");
+
+		_sync_state = PR_COMPLETE;
+		_sync_progress = 1.0f;
+		if (_sync_complete_callback) {
+			_sync_complete_callback(0);
+		}
+	} else {
+		// Need to establish link first
+		if (!Transport::has_path(prop_node)) {
+			INFO("  No path to propagation node, requesting...");
+			Transport::request_path(prop_node);
+			_sync_state = PR_PATH_REQUESTED;
+		} else {
+			Identity node_identity = Identity::recall(prop_node);
+			if (!node_identity) {
+				INFO("  Propagation node identity not known");
+				_sync_state = PR_FAILED;
+				return;
+			}
+
+			Destination prop_dest(
+				node_identity,
+				RNS::Type::Destination::OUT,
+				RNS::Type::Destination::SINGLE,
+				"lxmf",
+				"propagation"
+			);
+
+			_outbound_propagation_link = Link(prop_dest);
+			_sync_state = PR_LINK_ESTABLISHING;
+			INFO("  Establishing link for sync...");
+		}
+	}
+}
+
+void LXMRouter::on_message_list_response(const Bytes& response) {
+	// TODO: Implement when Link.request() is available
+	DEBUG("on_message_list_response: Not yet implemented");
+}
+
+void LXMRouter::on_message_get_response(const Bytes& response) {
+	// TODO: Implement when Link.request() is available
+	DEBUG("on_message_get_response: Not yet implemented");
+}
+
+void LXMRouter::process_propagated_lxmf(const Bytes& lxmf_data) {
+	// lxmf_data format: dest_hash (16 bytes) + encrypted_content
+	if (lxmf_data.size() < Type::Constants::DESTINATION_LENGTH) {
+		WARNING("Propagated LXMF data too short");
+		return;
+	}
+
+	Bytes dest_hash = lxmf_data.left(Type::Constants::DESTINATION_LENGTH);
+
+	// Verify this is for us
+	if (dest_hash != _delivery_destination.hash()) {
+		DEBUG("Received propagated message not addressed to us");
+		return;
+	}
+
+	// Decrypt the content
+	Bytes encrypted = lxmf_data.mid(Type::Constants::DESTINATION_LENGTH);
+	Bytes decrypted = _identity.decrypt(encrypted);
+
+	if (!decrypted || decrypted.size() == 0) {
+		WARNING("Failed to decrypt propagated message");
+		return;
+	}
+
+	// Reconstruct full LXMF data: dest_hash + decrypted
+	Bytes full_data;
+	full_data << dest_hash << decrypted;
+
+	try {
+		LXMessage message = LXMessage::unpack_from_bytes(full_data, Type::Message::PROPAGATED);
+
+		// Check if message was unpacked successfully (has valid hash)
+		if (message.hash().size() > 0) {
+			// Track transient ID to avoid re-downloading
+			Bytes transient_id = Identity::full_hash(lxmf_data);
+			_locally_delivered_transient_ids.insert(transient_id);
+
+			// Queue for delivery
+			_pending_inbound.push_back(message);
+			INFO("Propagated message queued for delivery");
+		}
+	} catch (const std::exception& e) {
+		ERROR("Failed to unpack propagated message: " + std::string(e.what()));
 	}
 }

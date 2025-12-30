@@ -48,6 +48,12 @@ struct AppSettings {
     uint32_t announce_interval;  // seconds
     bool gps_time_sync;
 
+    // Propagation
+    bool prop_auto_select;          // Auto-select best propagation node
+    String prop_selected_node;      // Hex string of selected node hash
+    bool prop_fallback_enabled;     // Fall back to propagation on direct failure
+    bool prop_only;                 // Only send via propagation (no direct/opportunistic)
+
     // Defaults
     AppSettings() :
         tcp_host("YOUR_SERVER_IP"),
@@ -62,7 +68,11 @@ struct AppSettings {
         lora_cr(5),
         lora_power(17),
         announce_interval(60),
-        gps_time_sync(true)
+        gps_time_sync(true),
+        prop_auto_select(true),
+        prop_selected_node(""),
+        prop_fallback_enabled(true),
+        prop_only(false)
     {}
 };
 
@@ -114,6 +124,7 @@ public:
     using SaveCallback = std::function<void(const AppSettings&)>;
     using WifiReconnectCallback = std::function<void(const String&, const String&)>;
     using BrightnessChangeCallback = std::function<void(uint8_t)>;
+    using PropagationNodesCallback = std::function<void()>;
 
     /**
      * Create settings screen
@@ -182,6 +193,11 @@ public:
     void set_brightness_change_callback(BrightnessChangeCallback callback);
 
     /**
+     * Set callback for propagation nodes button
+     */
+    void set_propagation_nodes_callback(PropagationNodesCallback callback);
+
+    /**
      * Show the screen
      */
     void show();
@@ -247,6 +263,11 @@ private:
     lv_obj_t* _ta_announce_interval;
     lv_obj_t* _switch_gps_sync;
 
+    // Delivery/Propagation section
+    lv_obj_t* _btn_propagation_nodes;
+    lv_obj_t* _switch_prop_fallback;
+    lv_obj_t* _switch_prop_only;
+
     // Data
     AppSettings _settings;
     RNS::Bytes _identity_hash;
@@ -258,6 +279,7 @@ private:
     SaveCallback _save_callback;
     WifiReconnectCallback _wifi_reconnect_callback;
     BrightnessChangeCallback _brightness_change_callback;
+    PropagationNodesCallback _propagation_nodes_callback;
 
     // UI construction
     void create_header();
@@ -269,6 +291,7 @@ private:
     void create_gps_section(lv_obj_t* parent);
     void create_system_section(lv_obj_t* parent);
     void create_advanced_section(lv_obj_t* parent);
+    void create_delivery_section(lv_obj_t* parent);
 
     // Helpers
     lv_obj_t* create_section_header(lv_obj_t* parent, const char* title);
@@ -289,6 +312,7 @@ private:
     static void on_brightness_changed(lv_event_t* event);
     static void on_lora_enabled_changed(lv_event_t* event);
     static void on_lora_power_changed(lv_event_t* event);
+    static void on_propagation_nodes_clicked(lv_event_t* event);
 };
 
 } // namespace LXMF

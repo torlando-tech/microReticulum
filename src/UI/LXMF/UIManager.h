@@ -13,7 +13,9 @@
 #include "AnnounceListScreen.h"
 #include "StatusScreen.h"
 #include "SettingsScreen.h"
+#include "PropagationNodesScreen.h"
 #include "../../LXMF/LXMRouter.h"
+#include "../../LXMF/PropagationNodeManager.h"
 #include "../../LXMF/MessageStore.h"
 #include "../../Reticulum.h"
 
@@ -94,6 +96,17 @@ public:
     void show_settings();
 
     /**
+     * Show propagation nodes screen
+     */
+    void show_propagation_nodes();
+
+    /**
+     * Set propagation node manager
+     * @param manager Propagation node manager instance
+     */
+    void set_propagation_node_manager(::LXMF::PropagationNodeManager* manager);
+
+    /**
      * Get settings screen for external configuration
      */
     SettingsScreen* get_settings_screen() { return _settings_screen; }
@@ -131,7 +144,8 @@ private:
         SCREEN_COMPOSE,
         SCREEN_ANNOUNCES,
         SCREEN_STATUS,
-        SCREEN_SETTINGS
+        SCREEN_SETTINGS,
+        SCREEN_PROPAGATION_NODES
     };
 
     RNS::Reticulum& _reticulum;
@@ -147,6 +161,9 @@ private:
     AnnounceListScreen* _announce_list_screen;
     StatusScreen* _status_screen;
     SettingsScreen* _settings_screen;
+    PropagationNodesScreen* _propagation_nodes_screen;
+
+    ::LXMF::PropagationNodeManager* _propagation_manager;
 
     bool _initialized;
 
@@ -162,6 +179,10 @@ private:
     void on_back_from_announces();
     void on_back_from_status();
     void on_back_from_settings();
+    void on_back_from_propagation_nodes();
+    void on_propagation_node_selected(const RNS::Bytes& node_hash);
+    void on_propagation_auto_select_changed(bool enabled);
+    void on_propagation_sync();
 
     // LXMF message handling
     void send_message(const RNS::Bytes& dest_hash, const String& content);

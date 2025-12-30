@@ -2018,8 +2018,10 @@ using namespace RNS::Utilities;
 									}
 									else {
 										Bytes handler_expected_hash = Destination::hash_from_name_and_identity(handler->aspect_filter().c_str(), announce_identity);
+										TRACE("Transport::inbound: Handler aspect=" + handler->aspect_filter() + " expected=" + handler_expected_hash.toHex().substr(0,16) + " packet=" + packet.destination_hash().toHex().substr(0,16));
 										if (packet.destination_hash() == handler_expected_hash) {
 											execute_callback = true;
+											TRACE("Transport::inbound: Announce handler matched!");
 										}
 									}
 									if (execute_callback) {

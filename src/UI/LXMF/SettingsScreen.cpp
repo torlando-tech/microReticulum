@@ -36,6 +36,11 @@ static const char* KEY_LORA_BW = "lora_bw";
 static const char* KEY_LORA_SF = "lora_sf";
 static const char* KEY_LORA_CR = "lora_cr";
 static const char* KEY_LORA_POWER = "lora_pwr";
+// Propagation settings
+static const char* KEY_PROP_AUTO = "prop_auto";
+static const char* KEY_PROP_NODE = "prop_node";
+static const char* KEY_PROP_FALLBACK = "prop_fall";
+static const char* KEY_PROP_ONLY = "prop_only";
 
 SettingsScreen::SettingsScreen(lv_obj_t* parent)
     : _screen(nullptr), _header(nullptr), _content(nullptr),
@@ -53,6 +58,7 @@ SettingsScreen::SettingsScreen(lv_obj_t* parent)
       _slider_lora_power(nullptr), _label_lora_power_value(nullptr),
       _lora_params_container(nullptr),
       _ta_announce_interval(nullptr), _switch_gps_sync(nullptr),
+      _btn_propagation_nodes(nullptr), _switch_prop_fallback(nullptr), _switch_prop_only(nullptr),
       _gps(nullptr) {
 
     // Create screen object
@@ -155,6 +161,7 @@ void SettingsScreen::create_content() {
     create_identity_section(_content);
     create_display_section(_content);
     create_interfaces_section(_content);
+    create_delivery_section(_content);
     create_gps_section(_content);
     create_system_section(_content);
     create_advanced_section(_content);
@@ -520,6 +527,80 @@ void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     lv_obj_add_flag(_lora_params_container, LV_OBJ_FLAG_HIDDEN);
 }
 
+void SettingsScreen::create_delivery_section(lv_obj_t* parent) {
+    create_section_header(parent, "== Delivery ==");
+
+    // Propagation Nodes button row
+    lv_obj_t* prop_nodes_row = lv_obj_create(parent);
+    lv_obj_set_width(prop_nodes_row, LV_PCT(100));
+    lv_obj_set_height(prop_nodes_row, 32);
+    lv_obj_set_style_bg_opa(prop_nodes_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(prop_nodes_row, 0, 0);
+    lv_obj_set_style_pad_all(prop_nodes_row, 0, 0);
+    lv_obj_clear_flag(prop_nodes_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* prop_label = lv_label_create(prop_nodes_row);
+    lv_label_set_text(prop_label, "Propagation Nodes:");
+    lv_obj_align(prop_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(prop_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_font(prop_label, &lv_font_montserrat_14, 0);
+
+    _btn_propagation_nodes = lv_btn_create(prop_nodes_row);
+    lv_obj_set_size(_btn_propagation_nodes, 70, 26);
+    lv_obj_align(_btn_propagation_nodes, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(_btn_propagation_nodes, lv_color_hex(0x1976D2), 0);
+    lv_obj_set_style_bg_color(_btn_propagation_nodes, lv_color_hex(0x1565C0), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(_btn_propagation_nodes, on_propagation_nodes_clicked, LV_EVENT_CLICKED, this);
+
+    lv_obj_t* btn_label = lv_label_create(_btn_propagation_nodes);
+    lv_label_set_text(btn_label, "View");
+    lv_obj_center(btn_label);
+    lv_obj_set_style_text_color(btn_label, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_14, 0);
+
+    // Fallback to Propagation switch row
+    lv_obj_t* fallback_row = lv_obj_create(parent);
+    lv_obj_set_width(fallback_row, LV_PCT(100));
+    lv_obj_set_height(fallback_row, 28);
+    lv_obj_set_style_bg_opa(fallback_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(fallback_row, 0, 0);
+    lv_obj_set_style_pad_all(fallback_row, 0, 0);
+    lv_obj_clear_flag(fallback_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* fallback_label = lv_label_create(fallback_row);
+    lv_label_set_text(fallback_label, "Fallback to Prop:");
+    lv_obj_align(fallback_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(fallback_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_font(fallback_label, &lv_font_montserrat_14, 0);
+
+    _switch_prop_fallback = lv_switch_create(fallback_row);
+    lv_obj_set_size(_switch_prop_fallback, 40, 20);
+    lv_obj_align(_switch_prop_fallback, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(_switch_prop_fallback, lv_color_hex(0x404040), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_prop_fallback, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
+
+    // Propagation Only switch row
+    lv_obj_t* prop_only_row = lv_obj_create(parent);
+    lv_obj_set_width(prop_only_row, LV_PCT(100));
+    lv_obj_set_height(prop_only_row, 28);
+    lv_obj_set_style_bg_opa(prop_only_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(prop_only_row, 0, 0);
+    lv_obj_set_style_pad_all(prop_only_row, 0, 0);
+    lv_obj_clear_flag(prop_only_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* prop_only_label = lv_label_create(prop_only_row);
+    lv_label_set_text(prop_only_label, "Propagation Only:");
+    lv_obj_align(prop_only_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(prop_only_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_font(prop_only_label, &lv_font_montserrat_14, 0);
+
+    _switch_prop_only = lv_switch_create(prop_only_row);
+    lv_obj_set_size(_switch_prop_only, 40, 20);
+    lv_obj_align(_switch_prop_only, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(_switch_prop_only, lv_color_hex(0x404040), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_prop_only, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
+}
+
 void SettingsScreen::create_gps_section(lv_obj_t* parent) {
     create_section_header(parent, "== GPS Status ==");
 
@@ -632,6 +713,12 @@ void SettingsScreen::load_settings() {
     _settings.lora_cr = prefs.getUChar(KEY_LORA_CR, 5);
     _settings.lora_power = prefs.getChar(KEY_LORA_POWER, 17);
 
+    // Propagation settings
+    _settings.prop_auto_select = prefs.getBool(KEY_PROP_AUTO, true);
+    _settings.prop_selected_node = prefs.getString(KEY_PROP_NODE, "");
+    _settings.prop_fallback_enabled = prefs.getBool(KEY_PROP_FALLBACK, true);
+    _settings.prop_only = prefs.getBool(KEY_PROP_ONLY, false);
+
     prefs.end();
 
     DEBUG("Settings loaded from NVS");
@@ -661,6 +748,12 @@ void SettingsScreen::save_settings() {
     prefs.putUChar(KEY_LORA_SF, _settings.lora_sf);
     prefs.putUChar(KEY_LORA_CR, _settings.lora_cr);
     prefs.putChar(KEY_LORA_POWER, _settings.lora_power);
+
+    // Propagation settings
+    prefs.putBool(KEY_PROP_AUTO, _settings.prop_auto_select);
+    prefs.putString(KEY_PROP_NODE, _settings.prop_selected_node);
+    prefs.putBool(KEY_PROP_FALLBACK, _settings.prop_fallback_enabled);
+    prefs.putBool(KEY_PROP_ONLY, _settings.prop_only);
 
     prefs.end();
 
@@ -764,6 +857,22 @@ void SettingsScreen::update_ui_from_settings() {
             lv_label_set_text(_label_lora_power_value, pwr_str);
         }
     }
+
+    // Propagation settings
+    if (_switch_prop_fallback) {
+        if (_settings.prop_fallback_enabled) {
+            lv_obj_add_state(_switch_prop_fallback, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(_switch_prop_fallback, LV_STATE_CHECKED);
+        }
+    }
+    if (_switch_prop_only) {
+        if (_settings.prop_only) {
+            lv_obj_add_state(_switch_prop_only, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(_switch_prop_only, LV_STATE_CHECKED);
+        }
+    }
 }
 
 void SettingsScreen::update_settings_from_ui() {
@@ -829,6 +938,14 @@ void SettingsScreen::update_settings_from_ui() {
     }
     if (_slider_lora_power) {
         _settings.lora_power = lv_slider_get_value(_slider_lora_power);
+    }
+
+    // Propagation settings
+    if (_switch_prop_fallback) {
+        _settings.prop_fallback_enabled = lv_obj_has_state(_switch_prop_fallback, LV_STATE_CHECKED);
+    }
+    if (_switch_prop_only) {
+        _settings.prop_only = lv_obj_has_state(_switch_prop_only, LV_STATE_CHECKED);
     }
 }
 
@@ -941,6 +1058,10 @@ void SettingsScreen::set_brightness_change_callback(BrightnessChangeCallback cal
     _brightness_change_callback = callback;
 }
 
+void SettingsScreen::set_propagation_nodes_callback(PropagationNodesCallback callback) {
+    _propagation_nodes_callback = callback;
+}
+
 void SettingsScreen::show() {
     refresh();
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
@@ -1013,6 +1134,13 @@ void SettingsScreen::on_lora_power_changed(lv_event_t* event) {
     char pwr_str[16];
     snprintf(pwr_str, sizeof(pwr_str), "%d dBm", power);
     lv_label_set_text(screen->_label_lora_power_value, pwr_str);
+}
+
+void SettingsScreen::on_propagation_nodes_clicked(lv_event_t* event) {
+    SettingsScreen* screen = (SettingsScreen*)lv_event_get_user_data(event);
+    if (screen->_propagation_nodes_callback) {
+        screen->_propagation_nodes_callback();
+    }
 }
 
 } // namespace LXMF

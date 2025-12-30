@@ -115,6 +115,89 @@ namespace LXMF {
 		bool send_via_link(const RNS::Link& link);
 
 		/**
+		 * @brief Pack the message for PROPAGATED delivery
+		 *
+		 * Creates the LXMF propagation format:
+		 * 1. Encrypt packed message (minus dest_hash) to destination
+		 * 2. Format: [timestamp, [dest_hash + encrypted_data]]
+		 * 3. Pack with msgpack
+		 *
+		 * @return Propagation-formatted message bytes
+		 */
+		RNS::Bytes pack_propagated();
+
+		// ========== Stamp Proof-of-Work Methods ==========
+
+		/**
+		 * @brief Set the required stamp cost for this message
+		 *
+		 * @param cost Number of leading zero bits required (0 = no stamp)
+		 */
+		inline void set_stamp_cost(uint8_t cost) { _stamp_cost = cost; }
+
+		/**
+		 * @brief Get the required stamp cost
+		 */
+		inline uint8_t stamp_cost() const { return _stamp_cost; }
+
+		/**
+		 * @brief Check if message has a valid stamp
+		 */
+		inline bool has_valid_stamp() const { return _stamp_valid; }
+
+		/**
+		 * @brief Get the attached stamp
+		 */
+		inline const RNS::Bytes& stamp() const { return _stamp; }
+
+		/**
+		 * @brief Set the stamp (for received messages)
+		 */
+		inline void stamp(const RNS::Bytes& stamp) { _stamp = stamp; }
+
+		/**
+		 * @brief Validate the attached stamp against a required cost
+		 *
+		 * Generates workblock from message hash and verifies stamp.
+		 *
+		 * @param required_cost Minimum number of leading zero bits
+		 * @return true if stamp is valid
+		 */
+		bool validate_stamp(uint8_t required_cost);
+
+		/**
+		 * @brief Generate a stamp for this message (blocking, CPU-intensive)
+		 *
+		 * Generates workblock and mines for valid stamp.
+		 * Sets _stamp and _stamp_valid on success.
+		 *
+		 * @return The generated stamp, or empty on failure
+		 */
+		RNS::Bytes generate_stamp();
+
+		/**
+		 * @brief Set the propagation stamp for PROPAGATED delivery
+		 *
+		 * @param stamp The stamp to append to lxmf_data
+		 */
+		inline void set_propagation_stamp(const RNS::Bytes& stamp) { _propagation_stamp = stamp; }
+
+		/**
+		 * @brief Get the propagation stamp
+		 */
+		inline const RNS::Bytes& propagation_stamp() const { return _propagation_stamp; }
+
+		/**
+		 * @brief Generate propagation stamp for this message
+		 *
+		 * Uses transient_id and PN-specific workblock rounds.
+		 *
+		 * @param target_cost Required stamp cost from propagation node
+		 * @return The generated stamp, or empty on failure
+		 */
+		RNS::Bytes generate_propagation_stamp(uint8_t target_cost);
+
+		/**
 		 * @brief Get message state
 		 */
 		inline Type::Message::State state() const { return _state; }
@@ -210,6 +293,11 @@ namespace LXMF {
 		inline Type::Message::Method method() const { return _method; }
 
 		/**
+		 * @brief Set delivery method
+		 */
+		inline void set_method(Type::Message::Method method) { _method = method; _desired_method = method; }
+
+		/**
 		 * @brief Get message representation (PACKET or RESOURCE)
 		 */
 		inline Type::Message::Representation representation() const { return _representation; }
@@ -264,6 +352,15 @@ namespace LXMF {
 
 		// Direction
 		bool _incoming = false;  // true if received, false if created locally
+
+		// Stamp proof-of-work
+		RNS::Bytes _stamp;                    // 32-byte stamp for direct messages
+		RNS::Bytes _propagation_stamp;        // 32-byte stamp for propagation delivery
+		bool _stamp_valid = false;            // Whether stamp has been validated
+		uint8_t _stamp_cost = 0;              // Required stamp cost (0 = no stamp needed)
+
+		// Cached propagation data (to ensure stamp matches encrypted content)
+		RNS::Bytes _propagation_encrypted;    // Cached encrypted content for propagation
 
 	private:
 		/**

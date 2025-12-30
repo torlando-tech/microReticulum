@@ -1,4 +1,5 @@
 #include "LXMessage.h"
+#include "LXStamper.h"
 #include "../Log.h"
 #include "../Utilities/OS.h"
 #include "../Packet.h"
@@ -79,12 +80,14 @@ const Bytes& LXMessage::pack() {
 		_timestamp = Utilities::OS::time();
 	}
 
-	// 2. Create payload array: [timestamp, title, content, fields] - matches Python LXMF exactly
+	// 2. Create payload array: [timestamp, title, content, fields, stamp?] - matches Python LXMF exactly
 	// Python: msgpack.packb([self.timestamp, self.title, self.content, self.fields])
+	// If stamp is present, it's appended as 5th element
 	MsgPack::Packer packer;
 
-	// Pack as array with 4 elements
-	packer.packArraySize(4);
+	// Pack as array with 4 or 5 elements (5 if stamp present)
+	bool has_stamp = (_stamp.size() == LXStamper::STAMP_SIZE);
+	packer.packArraySize(has_stamp ? 5 : 4);
 
 	// Element 0: timestamp (float64)
 	packer.pack(_timestamp);
@@ -100,6 +103,12 @@ const Bytes& LXMessage::pack() {
 	for (const auto& field : _fields) {
 		packer.packBinary(field.first.data(), field.first.size());
 		packer.packBinary(field.second.data(), field.second.size());
+	}
+
+	// Element 4 (optional): stamp - 32 bytes
+	if (has_stamp) {
+		packer.packBinary(_stamp.data(), _stamp.size());
+		DEBUG("  Stamp included in payload (" + std::to_string(_stamp.size()) + " bytes)");
 	}
 
 	Bytes packed_payload(packer.data(), packer.size());
@@ -216,11 +225,13 @@ LXMessage LXMessage::unpack_from_bytes(const Bytes& lxmf_bytes, Type::Message::M
 	Bytes content;
 	std::map<Bytes, Bytes> fields;
 
+	Bytes stamp;  // Optional 5th element
+
 	try {
 		MsgPack::bin_t<uint8_t> title_bin;
 		MsgPack::bin_t<uint8_t> content_bin;
 
-		// First, read the array header (should be 4 elements)
+		// First, read the array header (should be 4 or 5 elements)
 		MsgPack::arr_size_t arr_size;
 		unpacker.deserialize(arr_size);
 		DEBUG("  Msgpack array size: " + std::to_string(arr_size.size()));
@@ -261,6 +272,14 @@ LXMessage LXMessage::unpack_from_bytes(const Bytes& lxmf_bytes, Type::Message::M
 			fields[key] = value;
 		}
 
+		// Unpack stamp (element 4) - optional, 32 bytes
+		if (arr_size.size() > 4) {
+			MsgPack::bin_t<uint8_t> stamp_bin;
+			unpacker.deserialize(stamp_bin);
+			stamp = Bytes(stamp_bin);
+			DEBUG("  Parsed stamp: " + std::to_string(stamp.size()) + " bytes");
+		}
+
 	} catch (const std::exception& e) {
 		ERROR("Failed to unpack LXMF message payload: " + std::string(e.what()));
 		throw;
@@ -279,6 +298,12 @@ LXMessage LXMessage::unpack_from_bytes(const Bytes& lxmf_bytes, Type::Message::M
 	message._packed_valid = true;
 	message._incoming = true;
 	message._state = Type::Message::DELIVERED;
+
+	// Assign stamp if present
+	if (stamp.size() == LXStamper::STAMP_SIZE) {
+		message._stamp = stamp;
+		DEBUG("  Stamp attached to message");
+	}
 
 	// 4. Calculate hash for verification
 	Bytes hashed_part;
@@ -447,4 +472,212 @@ std::string LXMessage::toString() const {
 	} else {
 		return "<LXMessage [unpacked]>";
 	}
+}
+
+// Pack the message for PROPAGATED delivery
+Bytes LXMessage::pack_propagated() {
+	INFO("Packing LXMF message for PROPAGATED delivery");
+
+	// Ensure message is packed
+	if (!_packed_valid) {
+		pack();
+	}
+
+	// Get the destination identity for encryption
+	Identity dest_identity;
+	if (_destination) {
+		dest_identity = _destination.identity();
+	} else {
+		dest_identity = Identity::recall(_destination_hash);
+	}
+
+	if (!dest_identity) {
+		ERROR("Cannot pack for propagation - destination identity unknown");
+		return {};
+	}
+
+	// Encrypt everything after the destination hash
+	// Format: packed = dest_hash (16) + source_hash (16) + signature (64) + payload
+	// We encrypt: source_hash + signature + payload
+	Bytes encrypted;
+
+	// Use cached encrypted data if available (from generate_propagation_stamp)
+	// This ensures the stamp matches the encrypted content
+	if (_propagation_encrypted.size() > 0) {
+		encrypted = _propagation_encrypted;
+		DEBUG("  Using cached encrypted data: " + std::to_string(encrypted.size()) + " bytes");
+	} else {
+		Bytes to_encrypt = _packed.mid(Type::Constants::DESTINATION_LENGTH);
+		DEBUG("  To encrypt: " + std::to_string(to_encrypt.size()) + " bytes");
+
+		encrypted = dest_identity.encrypt(to_encrypt);
+		if (!encrypted || encrypted.size() == 0) {
+			ERROR("Failed to encrypt message for propagation");
+			return {};
+		}
+		DEBUG("  Encrypted: " + std::to_string(encrypted.size()) + " bytes");
+	}
+
+	// Build lxmf_data: dest_hash + encrypted
+	Bytes lxmf_data;
+	lxmf_data << _destination_hash << encrypted;
+
+	// Append propagation stamp if present
+	// The stamp is appended to lxmf_data before packing
+	if (_propagation_stamp.size() == LXStamper::STAMP_SIZE) {
+		lxmf_data << _propagation_stamp;
+		DEBUG("  Propagation stamp appended (" + std::to_string(_propagation_stamp.size()) + " bytes)");
+	}
+
+	// Pack as msgpack: [timestamp, [lxmf_data]]
+	// Format: array(2) [ float64(time), array(1) [ bin(lxmf_data) ] ]
+	MsgPack::Packer packer;
+
+	packer.packArraySize(2);
+
+	// Current timestamp
+	double current_time = Utilities::OS::time();
+	packer.pack(current_time);
+
+	// Inner array with lxmf_data (includes stamp if present)
+	packer.packArraySize(1);
+	packer.packBinary(lxmf_data.data(), lxmf_data.size());
+
+	Bytes result(packer.data(), packer.size());
+
+	INFO("  Propagation packed size: " + std::to_string(result.size()) + " bytes");
+
+	return result;
+}
+
+// Validate the attached stamp against a required cost
+bool LXMessage::validate_stamp(uint8_t required_cost) {
+	INFO("Validating stamp with required cost " + std::to_string(required_cost));
+
+	if (_stamp.size() != LXStamper::STAMP_SIZE) {
+		DEBUG("  No valid stamp attached (size=" + std::to_string(_stamp.size()) + ")");
+		_stamp_valid = false;
+		return false;
+	}
+
+	if (!_hash) {
+		// Need message hash - try packing if not done
+		if (!_packed_valid) {
+			ERROR("  Cannot validate stamp - message not packed and hash not available");
+			_stamp_valid = false;
+			return false;
+		}
+	}
+
+	// Generate workblock from message hash
+	Bytes workblock = LXStamper::stamp_workblock(_hash, LXStamper::WORKBLOCK_EXPAND_ROUNDS);
+
+	// Validate stamp
+	_stamp_valid = LXStamper::stamp_valid(_stamp, required_cost, workblock);
+
+	if (_stamp_valid) {
+		uint8_t value = LXStamper::stamp_value(workblock, _stamp);
+		INFO("  Stamp valid with value " + std::to_string(value));
+	} else {
+		DEBUG("  Stamp invalid (does not meet cost " + std::to_string(required_cost) + ")");
+	}
+
+	return _stamp_valid;
+}
+
+// Generate a stamp for this message
+Bytes LXMessage::generate_stamp() {
+	if (_stamp_cost == 0) {
+		DEBUG("No stamp cost set, skipping stamp generation");
+		return {};
+	}
+
+	// Ensure message is packed so we have the hash
+	if (!_hash) {
+		if (!_packed_valid) {
+			pack();
+		}
+	}
+
+	if (!_hash) {
+		ERROR("Cannot generate stamp - no message hash available");
+		return {};
+	}
+
+	INFO("Generating stamp for message " + _hash.toHex() + " with cost " + std::to_string(_stamp_cost));
+
+	auto [stamp, value] = LXStamper::generate_stamp(_hash, _stamp_cost, LXStamper::WORKBLOCK_EXPAND_ROUNDS);
+
+	if (stamp.size() == LXStamper::STAMP_SIZE) {
+		_stamp = stamp;
+		_stamp_valid = true;
+		INFO("Stamp generated with value " + std::to_string(value));
+
+		// Invalidate packed so it gets repacked with stamp
+		_packed_valid = false;
+	} else {
+		ERROR("Stamp generation failed");
+	}
+
+	return _stamp;
+}
+
+// Generate propagation stamp for this message
+Bytes LXMessage::generate_propagation_stamp(uint8_t target_cost) {
+	if (target_cost == 0) {
+		DEBUG("No propagation stamp cost specified, skipping");
+		return {};
+	}
+
+	// Ensure message is packed
+	if (!_packed_valid) {
+		pack();
+	}
+
+	// Get the destination identity for encryption
+	Identity dest_identity;
+	if (_destination) {
+		dest_identity = _destination.identity();
+	} else {
+		dest_identity = Identity::recall(_destination_hash);
+	}
+
+	if (!dest_identity) {
+		ERROR("Cannot generate propagation stamp - destination identity unknown");
+		return {};
+	}
+
+	// Build lxmf_data (same as pack_propagated but without stamp)
+	Bytes to_encrypt = _packed.mid(Type::Constants::DESTINATION_LENGTH);
+	Bytes encrypted = dest_identity.encrypt(to_encrypt);
+	if (!encrypted || encrypted.size() == 0) {
+		ERROR("Failed to encrypt message for propagation stamp calculation");
+		return {};
+	}
+
+	// Cache the encrypted data so pack_propagated uses the same ciphertext
+	// (encryption produces different output each time due to ephemeral keys)
+	_propagation_encrypted = encrypted;
+
+	Bytes lxmf_data;
+	lxmf_data << _destination_hash << encrypted;
+
+	// Calculate transient_id = SHA256(lxmf_data)
+	Bytes transient_id = Identity::full_hash(lxmf_data);
+
+	INFO("Generating propagation stamp for transient_id " + transient_id.toHex() +
+		 " with cost " + std::to_string(target_cost));
+
+	// Generate stamp using PN-specific workblock rounds
+	auto [stamp, value] = LXStamper::generate_stamp(
+		transient_id, target_cost, LXStamper::WORKBLOCK_EXPAND_ROUNDS_PN);
+
+	if (stamp.size() == LXStamper::STAMP_SIZE) {
+		_propagation_stamp = stamp;
+		INFO("Propagation stamp generated with value " + std::to_string(value));
+	} else {
+		ERROR("Propagation stamp generation failed");
+	}
+
+	return _propagation_stamp;
 }
