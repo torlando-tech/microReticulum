@@ -36,6 +36,10 @@ struct AppSettings {
     uint16_t screen_timeout;  // seconds, 0 = never
     bool keyboard_light;      // Enable keyboard backlight on keypress
 
+    // Notifications
+    bool notification_sound;  // Play sound on message received
+    uint8_t notification_volume;  // Volume 0-100
+
     // Interfaces
     bool tcp_enabled;
     bool lora_enabled;
@@ -62,6 +66,8 @@ struct AppSettings {
         brightness(180),
         screen_timeout(60),
         keyboard_light(false),
+        notification_sound(true),
+        notification_volume(50),
         tcp_enabled(true),
         lora_enabled(false),
         lora_frequency(927.25f),
@@ -238,6 +244,11 @@ private:
     lv_obj_t* _switch_kb_light;
     lv_obj_t* _dropdown_timeout;
 
+    // Notifications section
+    lv_obj_t* _switch_notification_sound;
+    lv_obj_t* _slider_notification_volume;
+    lv_obj_t* _label_notification_volume_value;
+
     // GPS status labels (read-only)
     lv_obj_t* _label_gps_sats;
     lv_obj_t* _label_gps_coords;
@@ -290,6 +301,7 @@ private:
     void create_network_section(lv_obj_t* parent);
     void create_identity_section(lv_obj_t* parent);
     void create_display_section(lv_obj_t* parent);
+    void create_notifications_section(lv_obj_t* parent);
     void create_interfaces_section(lv_obj_t* parent);
     void create_gps_section(lv_obj_t* parent);
     void create_system_section(lv_obj_t* parent);
@@ -316,6 +328,7 @@ private:
     static void on_lora_enabled_changed(lv_event_t* event);
     static void on_lora_power_changed(lv_event_t* event);
     static void on_propagation_nodes_clicked(lv_event_t* event);
+    static void on_notification_volume_changed(lv_event_t* event);
 };
 
 } // namespace LXMF

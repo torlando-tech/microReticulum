@@ -147,6 +147,14 @@ namespace Radio {
     constexpr uint8_t SPI_MISO = 38;      // SPI MISO (LoRa only, display is write-only)
 }
 
+namespace Audio {
+    // I2S speaker output pins
+    constexpr uint8_t I2S_BCK = 7;        // Bit clock
+    constexpr uint8_t I2S_WS = 5;         // Word select (LRCK)
+    constexpr uint8_t I2S_DOUT = 6;       // Data out
+    // Note: Pin::POWER_EN (10) must be HIGH to enable speaker power
+}
+
 } // namespace TDeck
 } // namespace Hardware
 

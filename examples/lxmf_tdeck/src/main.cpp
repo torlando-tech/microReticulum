@@ -45,6 +45,9 @@
 #include <UI/LXMF/UIManager.h>
 #include <UI/LXMF/SettingsScreen.h>
 
+// Audio notifications
+#include "tone/Tone.h"
+
 // Logging
 #include <Log.h>
 
@@ -332,6 +335,10 @@ void load_app_settings() {
     app_settings.brightness = prefs.getUChar("brightness", 180);
     app_settings.keyboard_light = prefs.getBool("kb_light", false);
     app_settings.screen_timeout = prefs.getUShort("timeout", 60);
+
+    // Notifications
+    app_settings.notification_sound = prefs.getBool("notif_snd", true);
+    app_settings.notification_volume = prefs.getUChar("notif_vol", 50);
 
     // Interfaces
     app_settings.tcp_enabled = prefs.getBool("tcp_en", true);
@@ -834,6 +841,9 @@ void setup() {
 
     // Initialize hardware
     setup_hardware();
+
+    // Initialize audio for notifications
+    Notification::tone_init();
 
     // Load application settings from NVS (before WiFi/GPS)
     load_app_settings();

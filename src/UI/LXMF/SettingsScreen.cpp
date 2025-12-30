@@ -30,6 +30,9 @@ static const char* KEY_KB_LIGHT = "kb_light";
 static const char* KEY_TIMEOUT = "timeout";
 static const char* KEY_ANNOUNCE_INT = "announce";
 static const char* KEY_GPS_SYNC = "gps_sync";
+// Notification settings
+static const char* KEY_NOTIF_SND = "notif_snd";
+static const char* KEY_NOTIF_VOL = "notif_vol";
 // Interface settings
 static const char* KEY_TCP_ENABLED = "tcp_en";
 static const char* KEY_LORA_ENABLED = "lora_en";
@@ -162,6 +165,7 @@ void SettingsScreen::create_content() {
     create_network_section(_content);
     create_identity_section(_content);
     create_display_section(_content);
+    create_notifications_section(_content);
     create_interfaces_section(_content);
     create_delivery_section(_content);
     create_gps_section(_content);
@@ -363,6 +367,61 @@ void SettingsScreen::create_display_section(lv_obj_t* parent) {
     lv_obj_set_style_text_color(_dropdown_timeout, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_border_color(_dropdown_timeout, lv_color_hex(0x404040), 0);
     lv_obj_set_style_text_font(_dropdown_timeout, &lv_font_montserrat_14, 0);
+}
+
+void SettingsScreen::create_notifications_section(lv_obj_t* parent) {
+    create_section_header(parent, "== Notifications ==");
+
+    // Sound enabled row
+    lv_obj_t* sound_row = lv_obj_create(parent);
+    lv_obj_set_width(sound_row, LV_PCT(100));
+    lv_obj_set_height(sound_row, 28);
+    lv_obj_set_style_bg_opa(sound_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(sound_row, 0, 0);
+    lv_obj_set_style_pad_all(sound_row, 0, 0);
+    lv_obj_clear_flag(sound_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* sound_label = lv_label_create(sound_row);
+    lv_label_set_text(sound_label, "Message Sound:");
+    lv_obj_align(sound_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(sound_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_font(sound_label, &lv_font_montserrat_14, 0);
+
+    _switch_notification_sound = lv_switch_create(sound_row);
+    lv_obj_set_size(_switch_notification_sound, 40, 20);
+    lv_obj_align(_switch_notification_sound, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(_switch_notification_sound, lv_color_hex(0x404040), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_notification_sound, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
+
+    // Volume row
+    lv_obj_t* volume_row = lv_obj_create(parent);
+    lv_obj_set_width(volume_row, LV_PCT(100));
+    lv_obj_set_height(volume_row, 28);
+    lv_obj_set_style_bg_opa(volume_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(volume_row, 0, 0);
+    lv_obj_set_style_pad_all(volume_row, 0, 0);
+    lv_obj_clear_flag(volume_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* volume_label = lv_label_create(volume_row);
+    lv_label_set_text(volume_label, "Volume:");
+    lv_obj_align(volume_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(volume_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_font(volume_label, &lv_font_montserrat_14, 0);
+
+    _slider_notification_volume = lv_slider_create(volume_row);
+    lv_obj_set_size(_slider_notification_volume, 120, 10);
+    lv_obj_align(_slider_notification_volume, LV_ALIGN_LEFT_MID, 65, 0);
+    lv_slider_set_range(_slider_notification_volume, 0, 100);
+    lv_obj_set_style_bg_color(_slider_notification_volume, lv_color_hex(0x404040), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_slider_notification_volume, lv_color_hex(0x42A5F5), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(_slider_notification_volume, lv_color_hex(0xffffff), LV_PART_KNOB);
+    lv_obj_add_event_cb(_slider_notification_volume, on_notification_volume_changed, LV_EVENT_VALUE_CHANGED, this);
+
+    _label_notification_volume_value = lv_label_create(volume_row);
+    lv_label_set_text(_label_notification_volume_value, "50");
+    lv_obj_align(_label_notification_volume_value, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_text_color(_label_notification_volume_value, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_font(_label_notification_volume_value, &lv_font_montserrat_14, 0);
 }
 
 void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
@@ -731,6 +790,10 @@ void SettingsScreen::load_settings() {
     _settings.announce_interval = prefs.getUInt(KEY_ANNOUNCE_INT, 60);
     _settings.gps_time_sync = prefs.getBool(KEY_GPS_SYNC, true);
 
+    // Notification settings
+    _settings.notification_sound = prefs.getBool(KEY_NOTIF_SND, true);
+    _settings.notification_volume = prefs.getUChar(KEY_NOTIF_VOL, 50);
+
     // Interface settings
     _settings.tcp_enabled = prefs.getBool(KEY_TCP_ENABLED, true);
     _settings.lora_enabled = prefs.getBool(KEY_LORA_ENABLED, false);
@@ -772,6 +835,10 @@ void SettingsScreen::save_settings() {
     prefs.putUShort(KEY_TIMEOUT, _settings.screen_timeout);
     prefs.putUInt(KEY_ANNOUNCE_INT, _settings.announce_interval);
     prefs.putBool(KEY_GPS_SYNC, _settings.gps_time_sync);
+
+    // Notification settings
+    prefs.putBool(KEY_NOTIF_SND, _settings.notification_sound);
+    prefs.putUChar(KEY_NOTIF_VOL, _settings.notification_volume);
 
     // Interface settings
     prefs.putBool(KEY_TCP_ENABLED, _settings.tcp_enabled);
@@ -826,6 +893,22 @@ void SettingsScreen::update_ui_from_settings() {
             lv_obj_clear_state(_switch_kb_light, LV_STATE_CHECKED);
         }
     }
+
+    // Notification settings
+    if (_switch_notification_sound) {
+        if (_settings.notification_sound) {
+            lv_obj_add_state(_switch_notification_sound, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(_switch_notification_sound, LV_STATE_CHECKED);
+        }
+    }
+    if (_slider_notification_volume) {
+        lv_slider_set_value(_slider_notification_volume, _settings.notification_volume, LV_ANIM_OFF);
+        if (_label_notification_volume_value) {
+            lv_label_set_text(_label_notification_volume_value, String(_settings.notification_volume).c_str());
+        }
+    }
+
     if (_dropdown_timeout) {
         // Map timeout to dropdown index
         int idx = 1;  // default 1 min
@@ -937,6 +1020,15 @@ void SettingsScreen::update_settings_from_ui() {
     if (_switch_kb_light) {
         _settings.keyboard_light = lv_obj_has_state(_switch_kb_light, LV_STATE_CHECKED);
     }
+
+    // Notification settings
+    if (_switch_notification_sound) {
+        _settings.notification_sound = lv_obj_has_state(_switch_notification_sound, LV_STATE_CHECKED);
+    }
+    if (_slider_notification_volume) {
+        _settings.notification_volume = lv_slider_get_value(_slider_notification_volume);
+    }
+
     if (_dropdown_timeout) {
         int idx = lv_dropdown_get_selected(_dropdown_timeout);
         switch (idx) {
@@ -1177,6 +1269,14 @@ void SettingsScreen::on_lora_power_changed(lv_event_t* event) {
     char pwr_str[16];
     snprintf(pwr_str, sizeof(pwr_str), "%d dBm", power);
     lv_label_set_text(screen->_label_lora_power_value, pwr_str);
+}
+
+void SettingsScreen::on_notification_volume_changed(lv_event_t* event) {
+    SettingsScreen* screen = (SettingsScreen*)lv_event_get_user_data(event);
+    uint8_t volume = lv_slider_get_value(screen->_slider_notification_volume);
+
+    // Update label
+    lv_label_set_text(screen->_label_notification_volume_value, String(volume).c_str());
 }
 
 void SettingsScreen::on_propagation_nodes_clicked(lv_event_t* event) {

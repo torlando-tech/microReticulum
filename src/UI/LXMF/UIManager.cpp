@@ -7,6 +7,7 @@
 
 #include <lvgl.h>
 #include "../../Log.h"
+#include "tone/Tone.h"
 
 using namespace RNS;
 
@@ -490,8 +491,17 @@ void UIManager::on_message_received(::LXMF::LXMessage& message) {
     _store.save_message(message);
 
     // Update UI if we're viewing this conversation
-    if (_current_screen == SCREEN_CHAT && _current_peer_hash == message.source_hash()) {
+    bool viewing_this_chat = (_current_screen == SCREEN_CHAT && _current_peer_hash == message.source_hash());
+    if (viewing_this_chat) {
         _chat_screen->add_message(message, false);
+    }
+
+    // Play notification sound if enabled and not viewing this conversation
+    if (_settings_screen) {
+        const auto& settings = _settings_screen->get_settings();
+        if (settings.notification_sound && !viewing_this_chat) {
+            Notification::tone_play(1000, 100, settings.notification_volume);  // 1kHz beep, 100ms
+        }
     }
 
     // Update conversation list unread count
