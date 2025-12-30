@@ -109,11 +109,6 @@ void ComposeScreen::create_content_area() {
     lv_obj_set_style_bg_color(_text_area_dest, lv_color_hex(0x2a2a2a), 0);
     lv_obj_set_style_text_color(_text_area_dest, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_border_color(_text_area_dest, lv_color_hex(0x404040), 0);
-    // Add to input group for keyboard navigation
-    lv_group_t* group = LVGL::LVGLInit::get_default_group();
-    if (group) {
-        lv_group_add_obj(group, _text_area_dest);
-    }
     // Enable paste on long-press
     TextAreaHelper::enable_paste(_text_area_dest);
 
@@ -134,10 +129,6 @@ void ComposeScreen::create_content_area() {
     lv_obj_set_style_bg_color(_text_area_message, lv_color_hex(0x2a2a2a), 0);
     lv_obj_set_style_text_color(_text_area_message, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_border_color(_text_area_message, lv_color_hex(0x404040), 0);
-    // Add to input group for keyboard navigation
-    if (group) {
-        lv_group_add_obj(group, _text_area_message);
-    }
     // Enable paste on long-press
     TextAreaHelper::enable_paste(_text_area_message);
 }
@@ -205,9 +196,31 @@ void ComposeScreen::set_send_callback(SendCallback callback) {
 void ComposeScreen::show() {
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);  // Bring to front for touch events
+
+    // Add widgets to focus group for trackball navigation
+    // Note: text areas in edit mode consume arrow keys, so focus on button first
+    lv_group_t* group = LVGL::LVGLInit::get_default_group();
+    if (group) {
+        if (_btn_back) lv_group_add_obj(group, _btn_back);
+        if (_btn_cancel) lv_group_add_obj(group, _btn_cancel);
+        if (_btn_send) lv_group_add_obj(group, _btn_send);
+
+        // Focus on back button (user can roll to other buttons)
+        if (_btn_back) {
+            lv_group_focus_obj(_btn_back);
+        }
+    }
 }
 
 void ComposeScreen::hide() {
+    // Remove from focus group when hiding
+    lv_group_t* group = LVGL::LVGLInit::get_default_group();
+    if (group) {
+        if (_btn_back) lv_group_remove_obj(_btn_back);
+        if (_btn_cancel) lv_group_remove_obj(_btn_cancel);
+        if (_btn_send) lv_group_remove_obj(_btn_send);
+    }
+
     lv_obj_add_flag(_screen, LV_OBJ_FLAG_HIDDEN);
 }
 

@@ -75,12 +75,20 @@ public:
     static bool is_button_pressed();
 
     /**
-     * LVGL encoder input callback
+     * LVGL input callback
      * Do not call directly - used internally by LVGL
      */
     static void lvgl_read_cb(lv_indev_drv_t* drv, lv_indev_data_t* data);
 
+    /**
+     * Get the LVGL input device for the trackball
+     * @return LVGL input device, or nullptr if not initialized
+     */
+    static lv_indev_t* get_indev();
+
 private:
+    // LVGL input device
+    static lv_indev_t* _indev;
     // Pulse counters (incremented by ISRs)
     static volatile int16_t _pulse_up;
     static volatile int16_t _pulse_down;
@@ -96,11 +104,11 @@ private:
     static State _state;
     static bool _initialized;
 
-    // ISR handlers
-    static void IRAM_ATTR isr_up();
-    static void IRAM_ATTR isr_down();
-    static void IRAM_ATTR isr_left();
-    static void IRAM_ATTR isr_right();
+    // ISR handlers (ESP-IDF gpio_isr_handler signature)
+    static void IRAM_ATTR isr_up(void* arg);
+    static void IRAM_ATTR isr_down(void* arg);
+    static void IRAM_ATTR isr_left(void* arg);
+    static void IRAM_ATTR isr_right(void* arg);
 
     // Button debouncing
     static bool read_button_debounced();

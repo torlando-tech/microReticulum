@@ -40,9 +40,9 @@ namespace Pin {
     constexpr uint8_t TOUCH_INT = -1;     // NOT USED - polling mode only
     constexpr uint8_t TOUCH_RST = -1;     // NOT USED
 
-    // Trackball (GPIO pulses)
-    constexpr uint8_t TRACKBALL_UP = 3;
-    constexpr uint8_t TRACKBALL_DOWN = 15;
+    // Trackball (GPIO pulses) - per ESPP t-deck.hpp
+    constexpr uint8_t TRACKBALL_UP = 15;
+    constexpr uint8_t TRACKBALL_DOWN = 3;
     constexpr uint8_t TRACKBALL_LEFT = 1;
     constexpr uint8_t TRACKBALL_RIGHT = 2;
     constexpr uint8_t TRACKBALL_BUTTON = 0;
@@ -126,6 +126,10 @@ namespace Trk {
 
     // Movement sensitivity
     constexpr uint8_t PIXELS_PER_PULSE = 5;
+
+    // Focus navigation (KEYPAD mode)
+    constexpr uint8_t NAV_THRESHOLD = 1;      // Pulses needed to trigger focus move
+    constexpr uint32_t KEY_REPEAT_MS = 100;   // Min time between repeated key events
 }
 
 namespace Power {

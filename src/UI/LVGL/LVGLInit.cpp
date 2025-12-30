@@ -76,8 +76,12 @@ bool LVGLInit::init() {
 
     // Initialize trackball input
     if (Trackball::init()) {
-        _trackball = lv_indev_get_next(_touch);
-        INFO("  Trackball registered");
+        _trackball = Trackball::get_indev();
+        // Associate trackball with input group for focus navigation
+        if (_trackball) {
+            lv_indev_set_group(_trackball, _default_group);
+            INFO("  Trackball registered with input group");
+        }
     } else {
         WARNING("  Trackball initialization failed");
     }

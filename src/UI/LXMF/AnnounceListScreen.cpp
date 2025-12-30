@@ -10,6 +10,7 @@
 #include "../../Identity.h"
 #include "../../Destination.h"
 #include "../../Utilities/OS.h"
+#include "../LVGL/LVGLInit.h"
 #include <MsgPack.h>
 
 using namespace RNS;
@@ -124,9 +125,10 @@ void AnnounceListScreen::create_list() {
 void AnnounceListScreen::refresh() {
     INFO("Refreshing announce list");
 
-    // Clear existing items
+    // Clear existing items (also removes from focus group when deleted)
     lv_obj_clean(_list);
     _announces.clear();
+    _announce_containers.clear();
     _empty_label = nullptr;
 
     // Get destination table from Transport
@@ -207,10 +209,18 @@ void AnnounceListScreen::create_announce_item(const AnnounceItem& item) {
     lv_obj_add_flag(container, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
 
+    // Focus style for trackball navigation
+    lv_obj_set_style_border_color(container, lv_color_hex(0x42A5F5), LV_STATE_FOCUSED);
+    lv_obj_set_style_border_width(container, 2, LV_STATE_FOCUSED);
+    lv_obj_set_style_bg_color(container, lv_color_hex(0x3E3E3E), LV_STATE_FOCUSED);
+
     // Store destination hash in user data
     Bytes* hash_copy = new Bytes(item.destination_hash);
     lv_obj_set_user_data(container, hash_copy);
     lv_obj_add_event_cb(container, on_announce_clicked, LV_EVENT_CLICKED, this);
+
+    // Track container for focus group management
+    _announce_containers.push_back(container);
 
     // Row 1: Display name (if available) or destination hash
     lv_obj_t* label_name = lv_label_create(container);
@@ -261,9 +271,43 @@ void AnnounceListScreen::set_send_announce_callback(SendAnnounceCallback callbac
 void AnnounceListScreen::show() {
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);
+
+    // Add widgets to focus group for trackball navigation
+    lv_group_t* group = LVGL::LVGLInit::get_default_group();
+    if (group) {
+        // Add header buttons first
+        if (_btn_back) lv_group_add_obj(group, _btn_back);
+        if (_btn_announce) lv_group_add_obj(group, _btn_announce);
+        if (_btn_refresh) lv_group_add_obj(group, _btn_refresh);
+
+        // Add announce containers
+        for (lv_obj_t* container : _announce_containers) {
+            lv_group_add_obj(group, container);
+        }
+
+        // Focus on first announce if available, otherwise back button
+        if (!_announce_containers.empty()) {
+            lv_group_focus_obj(_announce_containers[0]);
+        } else if (_btn_back) {
+            lv_group_focus_obj(_btn_back);
+        }
+    }
 }
 
 void AnnounceListScreen::hide() {
+    // Remove from focus group when hiding
+    lv_group_t* group = LVGL::LVGLInit::get_default_group();
+    if (group) {
+        if (_btn_back) lv_group_remove_obj(_btn_back);
+        if (_btn_announce) lv_group_remove_obj(_btn_announce);
+        if (_btn_refresh) lv_group_remove_obj(_btn_refresh);
+
+        // Remove announce containers
+        for (lv_obj_t* container : _announce_containers) {
+            lv_group_remove_obj(container);
+        }
+    }
+
     lv_obj_add_flag(_screen, LV_OBJ_FLAG_HIDDEN);
 }
 

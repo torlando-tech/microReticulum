@@ -7,6 +7,7 @@
 
 #include <WiFi.h>
 #include "../../Log.h"
+#include "../LVGL/LVGLInit.h"
 
 using namespace RNS;
 
@@ -225,9 +226,22 @@ void StatusScreen::show() {
     refresh();  // Update status when shown
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);
+
+    // Add back button to focus group for trackball navigation
+    lv_group_t* group = LVGL::LVGLInit::get_default_group();
+    if (group && _btn_back) {
+        lv_group_add_obj(group, _btn_back);
+        lv_group_focus_obj(_btn_back);
+    }
 }
 
 void StatusScreen::hide() {
+    // Remove from focus group when hiding
+    lv_group_t* group = LVGL::LVGLInit::get_default_group();
+    if (group && _btn_back) {
+        lv_group_remove_obj(_btn_back);
+    }
+
     lv_obj_add_flag(_screen, LV_OBJ_FLAG_HIDDEN);
 }
 

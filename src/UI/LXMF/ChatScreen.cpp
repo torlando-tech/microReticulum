@@ -427,15 +427,28 @@ void ChatScreen::show() {
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);  // Bring to front for touch events
 
-    // Add text area to default group and auto-focus so typing works immediately
+    // Add buttons to default group for trackball navigation
+    // Note: text area not included since edit mode consumes arrow keys
     lv_group_t* group = LVGL::LVGLInit::get_default_group();
-    if (group && _text_area) {
-        lv_group_add_obj(group, _text_area);
-        lv_group_focus_obj(_text_area);
+    if (group) {
+        if (_btn_back) lv_group_add_obj(group, _btn_back);
+        if (_btn_send) lv_group_add_obj(group, _btn_send);
+
+        // Focus on back button
+        if (_btn_back) {
+            lv_group_focus_obj(_btn_back);
+        }
     }
 }
 
 void ChatScreen::hide() {
+    // Remove from focus group when hiding
+    lv_group_t* group = LVGL::LVGLInit::get_default_group();
+    if (group) {
+        if (_btn_back) lv_group_remove_obj(_btn_back);
+        if (_btn_send) lv_group_remove_obj(_btn_send);
+    }
+
     lv_obj_add_flag(_screen, LV_OBJ_FLAG_HIDDEN);
 }
 

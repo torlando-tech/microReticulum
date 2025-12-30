@@ -9,6 +9,7 @@
 #include "../../Identity.h"
 #include "../../Utilities/OS.h"
 #include "../../Hardware/TDeck/Config.h"
+#include "../LVGL/LVGLInit.h"
 #include <WiFi.h>
 #include <MsgPack.h>
 #include <TinyGPSPlus.h>
@@ -159,9 +160,10 @@ void ConversationListScreen::refresh() {
 
     INFO("Refreshing conversation list");
 
-    // Clear existing items
+    // Clear existing items (also removes from focus group when deleted)
     lv_obj_clean(_list);
     _conversations.clear();
+    _conversation_containers.clear();
 
     // Load conversations from store
     std::vector<Bytes> peer_hashes = _message_store->get_conversations();
@@ -226,11 +228,19 @@ void ConversationListScreen::create_conversation_item(const ConversationItem& it
     lv_obj_add_flag(container, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
 
+    // Focus style for trackball navigation
+    lv_obj_set_style_border_color(container, lv_color_hex(0x42A5F5), LV_STATE_FOCUSED);
+    lv_obj_set_style_border_width(container, 2, LV_STATE_FOCUSED);
+    lv_obj_set_style_bg_color(container, lv_color_hex(0x3E3E3E), LV_STATE_FOCUSED);
+
     // Store peer hash in user data
     Bytes* peer_hash_copy = new Bytes(item.peer_hash);
     lv_obj_set_user_data(container, peer_hash_copy);
     lv_obj_add_event_cb(container, on_conversation_clicked, LV_EVENT_CLICKED, this);
     lv_obj_add_event_cb(container, on_conversation_long_pressed, LV_EVENT_LONG_PRESSED, this);
+
+    // Track container for focus group management
+    _conversation_containers.push_back(container);
 
     // Row 1: Peer hash
     lv_obj_t* label_peer = lv_label_create(container);
@@ -304,9 +314,43 @@ void ConversationListScreen::set_status_callback(StatusCallback callback) {
 void ConversationListScreen::show() {
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);  // Bring to front for touch events
+
+    // Add widgets to focus group for trackball navigation
+    lv_group_t* group = LVGL::LVGLInit::get_default_group();
+    if (group) {
+        // Add conversation containers first (so they come before New button in nav order)
+        for (lv_obj_t* container : _conversation_containers) {
+            lv_group_add_obj(group, container);
+        }
+
+        // Add New button last
+        if (_btn_new) {
+            lv_group_add_obj(group, _btn_new);
+        }
+
+        // Focus first conversation if available, otherwise New button
+        if (!_conversation_containers.empty()) {
+            lv_group_focus_obj(_conversation_containers[0]);
+        } else if (_btn_new) {
+            lv_group_focus_obj(_btn_new);
+        }
+    }
 }
 
 void ConversationListScreen::hide() {
+    // Remove from focus group when hiding
+    lv_group_t* group = LVGL::LVGLInit::get_default_group();
+    if (group) {
+        // Remove conversation containers
+        for (lv_obj_t* container : _conversation_containers) {
+            lv_group_remove_obj(container);
+        }
+
+        if (_btn_new) {
+            lv_group_remove_obj(_btn_new);
+        }
+    }
+
     lv_obj_add_flag(_screen, LV_OBJ_FLAG_HIDDEN);
 }
 

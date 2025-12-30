@@ -8,6 +8,7 @@
 #include "../../Log.h"
 #include "../../LXMF/PropagationNodeManager.h"
 #include "../../Utilities/OS.h"
+#include "../LVGL/LVGLInit.h"
 
 using namespace RNS;
 
@@ -362,9 +363,29 @@ void PropagationNodesScreen::set_auto_select_changed_callback(AutoSelectChangedC
 // Visibility
 void PropagationNodesScreen::show() {
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(_screen);
+
+    // Add buttons to focus group for trackball navigation
+    lv_group_t* group = LVGL::LVGLInit::get_default_group();
+    if (group) {
+        if (_btn_back) lv_group_add_obj(group, _btn_back);
+        if (_btn_sync) lv_group_add_obj(group, _btn_sync);
+
+        // Focus on back button
+        if (_btn_back) {
+            lv_group_focus_obj(_btn_back);
+        }
+    }
 }
 
 void PropagationNodesScreen::hide() {
+    // Remove from focus group when hiding
+    lv_group_t* group = LVGL::LVGLInit::get_default_group();
+    if (group) {
+        if (_btn_back) lv_group_remove_obj(_btn_back);
+        if (_btn_sync) lv_group_remove_obj(_btn_sync);
+    }
+
     lv_obj_add_flag(_screen, LV_OBJ_FLAG_HIDDEN);
 }
 

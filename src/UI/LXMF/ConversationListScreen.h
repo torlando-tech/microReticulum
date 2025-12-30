@@ -177,6 +177,7 @@ private:
 
     ::LXMF::MessageStore* _message_store;
     std::vector<ConversationItem> _conversations;
+    std::vector<lv_obj_t*> _conversation_containers;  // For focus group management
     RNS::Bytes _pending_delete_hash;  // Hash of conversation pending deletion
 
     ConversationSelectedCallback _conversation_selected_callback;

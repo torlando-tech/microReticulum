@@ -1235,9 +1235,28 @@ void SettingsScreen::show() {
     refresh();
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);
+
+    // Add back/save buttons to focus group for trackball navigation
+    lv_group_t* group = LVGL::LVGLInit::get_default_group();
+    if (group) {
+        if (_btn_back) lv_group_add_obj(group, _btn_back);
+        if (_btn_save) lv_group_add_obj(group, _btn_save);
+
+        // Focus on back button
+        if (_btn_back) {
+            lv_group_focus_obj(_btn_back);
+        }
+    }
 }
 
 void SettingsScreen::hide() {
+    // Remove from focus group when hiding
+    lv_group_t* group = LVGL::LVGLInit::get_default_group();
+    if (group) {
+        if (_btn_back) lv_group_remove_obj(_btn_back);
+        if (_btn_save) lv_group_remove_obj(_btn_save);
+    }
+
     lv_obj_add_flag(_screen, LV_OBJ_FLAG_HIDDEN);
 }
 
