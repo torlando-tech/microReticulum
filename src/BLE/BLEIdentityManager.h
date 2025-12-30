@@ -49,6 +49,21 @@ public:
         const Bytes& mac_address,
         const std::string& reason)>;
 
+    /**
+     * @brief Callback when MAC rotation is detected
+     *
+     * Called when an identity we already know appears from a different MAC address.
+     * This is common on Android which rotates BLE MAC addresses every ~15 minutes.
+     *
+     * @param old_mac The previous MAC address for this identity
+     * @param new_mac The new MAC address
+     * @param identity The stable 16-byte identity
+     */
+    using MacRotationCallback = std::function<void(
+        const Bytes& old_mac,
+        const Bytes& new_mac,
+        const Bytes& identity)>;
+
 public:
     BLEIdentityManager();
 
@@ -81,6 +96,11 @@ public:
      * @brief Set callback for failed handshakes
      */
     void setHandshakeFailedCallback(HandshakeFailedCallback callback);
+
+    /**
+     * @brief Set callback for MAC rotation detection
+     */
+    void setMacRotationCallback(MacRotationCallback callback);
 
     //=========================================================================
     // Handshake Operations
@@ -228,6 +248,7 @@ private:
     // Callbacks
     HandshakeCompleteCallback _handshake_complete_callback = nullptr;
     HandshakeFailedCallback _handshake_failed_callback = nullptr;
+    MacRotationCallback _mac_rotation_callback = nullptr;
 };
 
 }} // namespace RNS::BLE

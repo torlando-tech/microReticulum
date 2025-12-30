@@ -123,6 +123,7 @@ public:
     //=========================================================================
 
     void onConnect(NimBLEClient* pClient) override;
+    void onConnectFail(NimBLEClient* pClient, int reason) override;
     void onDisconnect(NimBLEClient* pClient, int reason) override;
 
     //=========================================================================
@@ -130,6 +131,7 @@ public:
     //=========================================================================
 
     void onResult(const NimBLEAdvertisedDevice* advertisedDevice) override;
+    void onScanEnd(const NimBLEScanResults& results, int reason) override;
 
 protected:
     // BLEOperationQueue implementation
@@ -163,6 +165,7 @@ private:
     bool _scanning = false;
     bool _advertising = false;
     Bytes _identity_data;
+    unsigned long _scan_stop_time = 0;  // millis() when to stop continuous scan
 
     // NimBLE objects
     NimBLEServer* _server = nullptr;

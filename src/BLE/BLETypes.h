@@ -238,8 +238,8 @@ struct BLEAddress {
      * as the central role. This provides deterministic connection direction.
      */
     bool isLowerThan(const BLEAddress& other) const {
-        // Compare as 48-bit integers (big-endian comparison)
-        for (int i = 5; i >= 0; i--) {
+        // Compare as 48-bit integers, MSB first (addr[0] is most significant)
+        for (int i = 0; i < 6; i++) {
             if (addr[i] < other.addr[i]) return true;
             if (addr[i] > other.addr[i]) return false;
         }
@@ -248,24 +248,26 @@ struct BLEAddress {
 
     /**
      * @brief Convert to colon-separated hex string (XX:XX:XX:XX:XX:XX)
+     * addr[0] is MSB (first displayed), addr[5] is LSB (last displayed)
      */
     std::string toString() const {
         char buf[18];
         snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
-                 addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]);
+                 addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
         return std::string(buf);
     }
 
     /**
      * @brief Parse from colon-separated hex string
+     * First byte in string goes to addr[0] (MSB)
      */
     static BLEAddress fromString(const std::string& str) {
         BLEAddress result;
         if (str.length() >= 17) {
             unsigned int values[6];
             if (sscanf(str.c_str(), "%02X:%02X:%02X:%02X:%02X:%02X",
-                       &values[5], &values[4], &values[3],
-                       &values[2], &values[1], &values[0]) == 6) {
+                       &values[0], &values[1], &values[2],
+                       &values[3], &values[4], &values[5]) == 6) {
                 for (int i = 0; i < 6; i++) {
                     result.addr[i] = static_cast<uint8_t>(values[i]);
                 }

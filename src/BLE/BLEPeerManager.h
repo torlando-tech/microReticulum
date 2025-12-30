@@ -27,6 +27,7 @@ struct PeerInfo {
     // Addressing (both needed for MAC rotation handling)
     Bytes mac_address;              // Current 6-byte MAC address
     Bytes identity;                 // 16-byte identity hash (stable key)
+    uint8_t address_type = 0;       // BLE address type (0=public, 1=random)
 
     // Connection state
     PeerState state = PeerState::DISCOVERED;
@@ -98,9 +99,10 @@ public:
      *
      * @param mac_address 6-byte MAC address
      * @param rssi Signal strength
+     * @param address_type BLE address type (0=public, 1=random)
      * @return true if peer was added or updated (not blacklisted)
      */
-    bool addDiscoveredPeer(const Bytes& mac_address, int8_t rssi);
+    bool addDiscoveredPeer(const Bytes& mac_address, int8_t rssi, uint8_t address_type = 0);
 
     /**
      * @brief Update peer identity after handshake completion
