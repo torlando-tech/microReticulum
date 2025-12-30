@@ -280,12 +280,6 @@ void TCPClientInterface::handle_disconnect() {
 }
 
 /*virtual*/ void TCPClientInterface::loop() {
-    static int loop_count = 0;
-    loop_count++;
-    if (loop_count % 100 == 1) {
-        DEBUG("TCPClientInterface::loop() #" + std::to_string(loop_count) + ", online=" + std::to_string(_online) + ", socket=" + std::to_string(_socket));
-    }
-
     // Handle reconnection if not connected
     if (!_online) {
         if (_initiator) {

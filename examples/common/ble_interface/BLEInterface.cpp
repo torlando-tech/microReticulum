@@ -101,7 +101,8 @@ bool BLEInterface::start() {
     _last_maintenance = Utilities::OS::time();
 
     INFO("BLEInterface: Started, role: " + std::string(roleToString(_role)) +
-         ", identity: " + _local_identity.toHex().substr(0, 8) + "...");
+         ", identity: " + _local_identity.toHex().substr(0, 8) + "..." +
+         ", localMAC: " + _platform->getLocalAddress().toString());
 
     return true;
 }
@@ -120,11 +121,52 @@ void BLEInterface::stop() {
 }
 
 void BLEInterface::loop() {
+    static double last_loop_log = 0;
+    double now = Utilities::OS::time();
+
+    // Process any pending handshakes (deferred from callback for stack safety)
+    if (!_pending_handshakes.empty()) {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        for (const auto& pending : _pending_handshakes) {
+            DEBUG("BLEInterface: Processing deferred handshake for " +
+                  pending.identity.toHex().substr(0, 8) + "...");
+
+            // Update peer manager with identity
+            _peer_manager.setPeerIdentity(pending.mac, pending.identity);
+            _peer_manager.connectionSucceeded(pending.identity);
+
+            // Create fragmenter for this peer
+            PeerInfo* peer = _peer_manager.getPeerByIdentity(pending.identity);
+            uint16_t mtu = peer ? peer->mtu : MTU::MINIMUM;
+            _fragmenters[pending.identity] = BLEFragmenter(mtu);
+
+            INFO("BLEInterface: Handshake complete with " + pending.identity.toHex().substr(0, 8) +
+                 "... (we are " + (pending.is_central ? "central" : "peripheral") + ")");
+        }
+        _pending_handshakes.clear();
+    }
+
+    // Process any pending data fragments (deferred from callback for stack safety)
+    if (!_pending_data.empty()) {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        for (const auto& pending : _pending_data) {
+            _reassembler.processFragment(pending.identity, pending.data);
+        }
+        _pending_data.clear();
+    }
+
+    // Debug: log loop status every 10 seconds
+    if (now - last_loop_log >= 10.0) {
+        DEBUG("BLEInterface::loop() platform=" + std::string(_platform ? "yes" : "no") +
+              " running=" + std::string(_platform && _platform->isRunning() ? "yes" : "no") +
+              " scanning=" + std::string(_platform && _platform->isScanning() ? "yes" : "no") +
+              " connected=" + std::to_string(_peer_manager.connectedCount()));
+        last_loop_log = now;
+    }
+
     if (!_platform || !_platform->isRunning()) {
         return;
     }
-
-    double now = Utilities::OS::time();
 
     // Platform loop
     _platform->loop();
@@ -302,11 +344,12 @@ void BLEInterface::onScanResult(const ScanResult& result) {
         return;
     }
 
-    // Add to peer manager
-    _peer_manager.addDiscoveredPeer(result.address.toBytes(), result.rssi);
+    // Add to peer manager with address type
+    _peer_manager.addDiscoveredPeer(result.address.toBytes(), result.rssi, result.address.type);
 
-    DEBUG("BLEInterface: Discovered " + result.address.toString() +
-          " RSSI: " + std::to_string(result.rssi));
+    INFO("BLEInterface: Discovered Reticulum peer " + result.address.toString() +
+         " type=" + std::to_string(result.address.type) +
+         " RSSI=" + std::to_string(result.rssi) + " name=" + result.name);
 }
 
 void BLEInterface::onConnected(const ConnectionHandle& conn) {
@@ -328,16 +371,21 @@ void BLEInterface::onConnected(const ConnectionHandle& conn) {
 void BLEInterface::onDisconnected(const ConnectionHandle& conn, uint8_t reason) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
 
-    Bytes identity = _identity_manager.getIdentityForMac(conn.peer_address.toBytes());
+    Bytes mac = conn.peer_address.toBytes();
+    Bytes identity = _identity_manager.getIdentityForMac(mac);
 
     if (identity.size() > 0) {
-        // Clean up
+        // Clean up identity-keyed peer
         _fragmenters.erase(identity);
         _reassembler.clearForPeer(identity);
         _peer_manager.setPeerState(identity, PeerState::DISCOVERED);
+    } else {
+        // Peer might still be in CONNECTING state (no identity yet)
+        // Reset to DISCOVERED so we can try again
+        _peer_manager.connectionFailed(mac);
     }
 
-    _identity_manager.removeMapping(conn.peer_address.toBytes());
+    _identity_manager.removeMapping(mac);
 
     DEBUG("BLEInterface: Disconnected from " + conn.peer_address.toString() +
           " reason: " + std::to_string(reason));
@@ -376,8 +424,41 @@ void BLEInterface::onServicesDiscovered(const ConnectionHandle& conn, bool succe
     // Enable notifications on TX characteristic
     _platform->enableNotifications(conn.handle, true);
 
-    // Initiate handshake (as central)
-    initiateHandshake(conn);
+    // Protocol v2.2: Read peer's identity characteristic before sending ours
+    // This matches the Kotlin implementation's 4-step handshake
+    if (conn.identity_handle != 0) {
+        Bytes mac = conn.peer_address.toBytes();
+        uint16_t handle = conn.handle;
+
+        _platform->read(conn.handle, conn.identity_handle,
+            [this, mac, handle](OperationResult result, const Bytes& identity) {
+                if (result == OperationResult::SUCCESS &&
+                    identity.size() == Limits::IDENTITY_SIZE) {
+                    DEBUG("BLEInterface: Read peer identity: " + identity.toHex().substr(0, 8) + "...");
+
+                    // Store the peer's identity - handshake complete for receiving direction
+                    _identity_manager.completeHandshake(mac, identity, true);
+
+                    // Now send our identity directly (don't use initiateHandshake which
+                    // creates a session that would time out since we already have the mapping)
+                    if (_identity_manager.hasLocalIdentity()) {
+                        _platform->write(handle, _identity_manager.getLocalIdentity(), true);
+                        DEBUG("BLEInterface: Sent identity handshake to peer");
+                    }
+                } else {
+                    WARNING("BLEInterface: Failed to read peer identity, trying write-based handshake");
+                    // Fall back to old behavior - initiate handshake and wait for response
+                    ConnectionHandle conn = _platform->getConnection(handle);
+                    if (conn.handle != 0) {
+                        initiateHandshake(conn);
+                    }
+                }
+            });
+    } else {
+        // No identity characteristic - fall back to write-only handshake (Protocol v1)
+        DEBUG("BLEInterface: No identity characteristic, using v1 fallback");
+        initiateHandshake(conn);
+    }
 }
 
 void BLEInterface::onDataReceived(const ConnectionHandle& conn, const Bytes& data) {
@@ -419,19 +500,14 @@ void BLEInterface::onWriteReceived(const ConnectionHandle& conn, const Bytes& da
 //=============================================================================
 
 void BLEInterface::onHandshakeComplete(const Bytes& mac, const Bytes& identity, bool is_central) {
-    std::lock_guard<std::recursive_mutex> lock(_mutex);
-
-    // Update peer manager with identity
-    _peer_manager.setPeerIdentity(mac, identity);
-    _peer_manager.connectionSucceeded(identity);
-
-    // Create fragmenter for this peer
-    PeerInfo* peer = _peer_manager.getPeerByIdentity(identity);
-    uint16_t mtu = peer ? peer->mtu : MTU::MINIMUM;
-    _fragmenters[identity] = BLEFragmenter(mtu);
-
-    INFO("BLEInterface: Handshake complete with " + identity.toHex().substr(0, 8) +
-         "... (we are " + (is_central ? "central" : "peripheral") + ")");
+    // Queue the handshake for processing in loop() to avoid stack overflow in NimBLE callback
+    // The NimBLE task has limited stack space, so we defer heavy processing
+    PendingHandshake pending;
+    pending.mac = mac;
+    pending.identity = identity;
+    pending.is_central = is_central;
+    _pending_handshakes.push_back(pending);
+    DEBUG("BLEInterface::onHandshakeComplete: Queued handshake for deferred processing");
 }
 
 void BLEInterface::onHandshakeFailed(const Bytes& mac, const std::string& reason) {
@@ -476,15 +552,50 @@ void BLEInterface::performScan() {
 }
 
 void BLEInterface::processDiscoveredPeers() {
+    // Don't try to connect while scanning - BLE stack will return "busy"
+    if (_platform->isScanning()) {
+        return;
+    }
+
     // Find best connection candidate
     PeerInfo* candidate = _peer_manager.getBestConnectionCandidate();
+
+    // Debug: log all peers and why they may not be candidates
+    static double last_peer_log = 0;
+    double now = Utilities::OS::time();
+    if (now - last_peer_log >= 10.0) {
+        auto all_peers = _peer_manager.getAllPeers();
+        DEBUG("BLEInterface: Peer count=" + std::to_string(all_peers.size()) +
+              " localMAC=" + _peer_manager.getLocalMac().toHex());
+        for (PeerInfo* peer : all_peers) {
+            bool should_initiate = _peer_manager.shouldInitiateConnection(peer->mac_address);
+            DEBUG("BLEInterface: Peer " + BLEAddress(peer->mac_address.data()).toString() +
+                  " state=" + std::to_string(static_cast<int>(peer->state)) +
+                  " shouldInitiate=" + std::string(should_initiate ? "yes" : "no") +
+                  " score=" + std::to_string(peer->score));
+        }
+        last_peer_log = now;
+    }
+
+    if (candidate) {
+        DEBUG("BLEInterface: Connection candidate: " + BLEAddress(candidate->mac_address.data()).toString() +
+              " type=" + std::to_string(candidate->address_type) +
+              " canAccept=" + std::string(_peer_manager.canAcceptConnection() ? "yes" : "no"));
+    }
 
     if (candidate && _peer_manager.canAcceptConnection()) {
         _peer_manager.setPeerState(candidate->mac_address, PeerState::CONNECTING);
         candidate->connection_attempts++;
 
-        BLEAddress addr(candidate->mac_address.data());
-        _platform->connect(addr, 10000);
+        // Use stored address type for correct connection
+        BLEAddress addr(candidate->mac_address.data(), candidate->address_type);
+        INFO("BLEInterface: Connecting to " + addr.toString() + " type=" + std::to_string(candidate->address_type));
+
+        // Handle immediate connection failure (resets state for retry)
+        if (!_platform->connect(addr, 10000)) {
+            WARNING("BLEInterface: Connection attempt failed immediately");
+            _peer_manager.connectionFailed(candidate->mac_address);
+        }
     }
 }
 
@@ -529,18 +640,25 @@ void BLEInterface::performMaintenance() {
 }
 
 void BLEInterface::handleIncomingData(const ConnectionHandle& conn, const Bytes& data) {
+    DEBUG("BLEInterface::handleIncomingData: Starting, data size=" + std::to_string(data.size()));
     std::lock_guard<std::recursive_mutex> lock(_mutex);
+    DEBUG("BLEInterface::handleIncomingData: Lock acquired");
 
     Bytes mac = conn.peer_address.toBytes();
+    DEBUG("BLEInterface::handleIncomingData: MAC=" + conn.peer_address.toString());
 
     // Determine our role
     bool is_central = (conn.local_role == Role::CENTRAL);
+    DEBUG("BLEInterface::handleIncomingData: is_central=" + std::string(is_central ? "yes" : "no"));
 
     // First check if this is an identity handshake
+    DEBUG("BLEInterface::handleIncomingData: Calling processReceivedData");
     if (_identity_manager.processReceivedData(mac, data, is_central)) {
         // Was a handshake - consumed
+        DEBUG("BLEInterface::handleIncomingData: Was handshake, returning");
         return;
     }
+    DEBUG("BLEInterface::handleIncomingData: Not a handshake, continuing");
 
     // Check for keepalive (1 byte, value 0x00)
     if (data.size() == 1 && data.data()[0] == 0x00) {
@@ -548,14 +666,18 @@ void BLEInterface::handleIncomingData(const ConnectionHandle& conn, const Bytes&
         return;
     }
 
-    // Regular data - pass to reassembler
+    // Queue data for deferred processing (avoid stack overflow in NimBLE callback)
     Bytes identity = _identity_manager.getIdentityForMac(mac);
     if (identity.size() == 0) {
         WARNING("BLEInterface: Received data from peer without identity");
         return;
     }
 
-    _reassembler.processFragment(identity, data);
+    PendingData pending;
+    pending.identity = identity;
+    pending.data = data;
+    _pending_data.push_back(pending);
+    DEBUG("BLEInterface::handleIncomingData: Queued data for deferred processing");
 }
 
 void BLEInterface::initiateHandshake(const ConnectionHandle& conn) {

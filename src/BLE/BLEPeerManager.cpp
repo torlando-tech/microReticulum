@@ -25,7 +25,7 @@ void BLEPeerManager::setLocalMac(const Bytes& mac) {
 // Peer Discovery
 //=============================================================================
 
-bool BLEPeerManager::addDiscoveredPeer(const Bytes& mac_address, int8_t rssi) {
+bool BLEPeerManager::addDiscoveredPeer(const Bytes& mac_address, int8_t rssi, uint8_t address_type) {
     if (mac_address.size() < Limits::MAC_SIZE) {
         return false;
     }
@@ -48,6 +48,7 @@ bool BLEPeerManager::addDiscoveredPeer(const Bytes& mac_address, int8_t rssi) {
 
             peer.last_seen = now;
             peer.rssi = rssi;
+            peer.address_type = address_type;  // Update address type
             // Exponential moving average for RSSI
             peer.rssi_avg = static_cast<int8_t>(0.7f * peer.rssi_avg + 0.3f * rssi);
 
@@ -67,6 +68,7 @@ bool BLEPeerManager::addDiscoveredPeer(const Bytes& mac_address, int8_t rssi) {
 
         peer.last_seen = now;
         peer.rssi = rssi;
+        peer.address_type = address_type;  // Update address type
         peer.rssi_avg = static_cast<int8_t>(0.7f * peer.rssi_avg + 0.3f * rssi);
 
         return true;
@@ -75,6 +77,7 @@ bool BLEPeerManager::addDiscoveredPeer(const Bytes& mac_address, int8_t rssi) {
     // New peer - add to MAC-only storage
     PeerInfo peer;
     peer.mac_address = mac;
+    peer.address_type = address_type;  // Store address type
     peer.state = PeerState::DISCOVERED;
     peer.discovered_at = now;
     peer.last_seen = now;

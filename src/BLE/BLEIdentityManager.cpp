@@ -116,19 +116,24 @@ bool BLEIdentityManager::isHandshakeData(const Bytes& data, const Bytes& mac_add
 
 void BLEIdentityManager::completeHandshake(const Bytes& mac_address, const Bytes& peer_identity,
                                             bool is_central) {
+    DEBUG("BLEIdentityManager::completeHandshake: Starting");
     if (mac_address.size() < Limits::MAC_SIZE || peer_identity.size() != Limits::IDENTITY_SIZE) {
+        DEBUG("BLEIdentityManager::completeHandshake: Invalid sizes, returning");
         return;
     }
 
     Bytes mac(mac_address.data(), Limits::MAC_SIZE);
     Bytes identity(peer_identity.data(), Limits::IDENTITY_SIZE);
+    DEBUG("BLEIdentityManager::completeHandshake: Created local copies");
 
     // Store bidirectional mapping
     _address_to_identity[mac] = identity;
     _identity_to_address[identity] = mac;
+    DEBUG("BLEIdentityManager::completeHandshake: Stored mappings");
 
     // Remove handshake session
     _handshakes.erase(mac);
+    DEBUG("BLEIdentityManager::completeHandshake: Removed handshake session");
 
     DEBUG("BLEIdentityManager: Handshake complete with " +
           BLEAddress(mac.data()).toString() +
@@ -137,7 +142,11 @@ void BLEIdentityManager::completeHandshake(const Bytes& mac_address, const Bytes
 
     // Invoke callback
     if (_handshake_complete_callback) {
+        DEBUG("BLEIdentityManager::completeHandshake: Calling callback");
         _handshake_complete_callback(mac, identity, is_central);
+        DEBUG("BLEIdentityManager::completeHandshake: Callback returned");
+    } else {
+        DEBUG("BLEIdentityManager::completeHandshake: No callback set");
     }
 }
 

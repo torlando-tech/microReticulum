@@ -199,6 +199,21 @@ private:
     double _last_keepalive = 0;
     double _last_maintenance = 0;
 
+    // Pending handshake completions (deferred from callback to loop for stack safety)
+    struct PendingHandshake {
+        RNS::Bytes mac;
+        RNS::Bytes identity;
+        bool is_central;
+    };
+    std::vector<PendingHandshake> _pending_handshakes;
+
+    // Pending data fragments (deferred from callback to loop for stack safety)
+    struct PendingData {
+        RNS::Bytes identity;
+        RNS::Bytes data;
+    };
+    std::vector<PendingData> _pending_data;
+
     // Thread safety for callbacks from BLE stack
     // Using recursive_mutex because handleIncomingData holds the lock while
     // calling processReceivedData, which can trigger onHandshakeComplete callback
