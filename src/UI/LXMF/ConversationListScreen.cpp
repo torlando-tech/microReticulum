@@ -399,16 +399,13 @@ void ConversationListScreen::on_bottom_nav_clicked(lv_event_t* event) {
                 screen->_status_callback();
             }
             break;
-        case 3: // Settings - not implemented
-        default: {
-            const char* btn_names[] = {"Messages", "Announces", "Status", "Settings"};
-            static const char* close_btn[] = {"OK", ""};
-            lv_obj_t* mbox = lv_msgbox_create(NULL, btn_names[btn_index],
-                "Not implemented yet", close_btn, false);
-            lv_obj_center(mbox);
-            lv_obj_add_event_cb(mbox, msgbox_close_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        case 3: // Settings
+            if (screen->_settings_callback) {
+                screen->_settings_callback();
+            }
             break;
-        }
+        default:
+            break;
     }
 }
 
