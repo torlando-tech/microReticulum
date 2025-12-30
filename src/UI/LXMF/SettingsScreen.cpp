@@ -41,6 +41,7 @@ static const char* KEY_LORA_BW = "lora_bw";
 static const char* KEY_LORA_SF = "lora_sf";
 static const char* KEY_LORA_CR = "lora_cr";
 static const char* KEY_LORA_POWER = "lora_pwr";
+static const char* KEY_AUTO_ENABLED = "auto_en";
 // Propagation settings
 static const char* KEY_PROP_AUTO = "prop_auto";
 static const char* KEY_PROP_NODE = "prop_node";
@@ -61,7 +62,7 @@ SettingsScreen::SettingsScreen(lv_obj_t* parent)
       _ta_lora_frequency(nullptr), _dropdown_lora_bandwidth(nullptr),
       _dropdown_lora_sf(nullptr), _dropdown_lora_cr(nullptr),
       _slider_lora_power(nullptr), _label_lora_power_value(nullptr),
-      _lora_params_container(nullptr),
+      _lora_params_container(nullptr), _switch_auto_enabled(nullptr),
       _ta_announce_interval(nullptr), _switch_gps_sync(nullptr),
       _btn_propagation_nodes(nullptr), _switch_prop_fallback(nullptr), _switch_prop_only(nullptr),
       _gps(nullptr) {
@@ -426,6 +427,27 @@ void SettingsScreen::create_notifications_section(lv_obj_t* parent) {
 
 void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     create_section_header(parent, "== Interfaces ==");
+
+    // Auto Discovery row
+    lv_obj_t* auto_row = lv_obj_create(parent);
+    lv_obj_set_width(auto_row, LV_PCT(100));
+    lv_obj_set_height(auto_row, 28);
+    lv_obj_set_style_bg_opa(auto_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(auto_row, 0, 0);
+    lv_obj_set_style_pad_all(auto_row, 0, 0);
+    lv_obj_clear_flag(auto_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* auto_label = lv_label_create(auto_row);
+    lv_label_set_text(auto_label, "Auto Discovery:");
+    lv_obj_align(auto_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(auto_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_font(auto_label, &lv_font_montserrat_14, 0);
+
+    _switch_auto_enabled = lv_switch_create(auto_row);
+    lv_obj_set_size(_switch_auto_enabled, 40, 20);
+    lv_obj_align(_switch_auto_enabled, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(_switch_auto_enabled, lv_color_hex(0x404040), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_auto_enabled, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
 
     // TCP Enable row
     lv_obj_t* tcp_row = lv_obj_create(parent);
@@ -807,6 +829,7 @@ void SettingsScreen::load_settings() {
     _settings.lora_sf = prefs.getUChar(KEY_LORA_SF, 7);
     _settings.lora_cr = prefs.getUChar(KEY_LORA_CR, 5);
     _settings.lora_power = prefs.getChar(KEY_LORA_POWER, 17);
+    _settings.auto_enabled = prefs.getBool(KEY_AUTO_ENABLED, false);
 
     // Propagation settings
     _settings.prop_auto_select = prefs.getBool(KEY_PROP_AUTO, true);
@@ -848,6 +871,7 @@ void SettingsScreen::save_settings() {
     prefs.putUChar(KEY_LORA_SF, _settings.lora_sf);
     prefs.putUChar(KEY_LORA_CR, _settings.lora_cr);
     prefs.putChar(KEY_LORA_POWER, _settings.lora_power);
+    prefs.putBool(KEY_AUTO_ENABLED, _settings.auto_enabled);
 
     // Propagation settings
     prefs.putBool(KEY_PROP_AUTO, _settings.prop_auto_select);
@@ -980,6 +1004,13 @@ void SettingsScreen::update_ui_from_settings() {
             lv_label_set_text(_label_lora_power_value, pwr_str);
         }
     }
+    if (_switch_auto_enabled) {
+        if (_settings.auto_enabled) {
+            lv_obj_add_state(_switch_auto_enabled, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(_switch_auto_enabled, LV_STATE_CHECKED);
+        }
+    }
 
     // Propagation settings
     if (_switch_prop_fallback) {
@@ -1073,6 +1104,9 @@ void SettingsScreen::update_settings_from_ui() {
     }
     if (_slider_lora_power) {
         _settings.lora_power = lv_slider_get_value(_slider_lora_power);
+    }
+    if (_switch_auto_enabled) {
+        _settings.auto_enabled = lv_obj_has_state(_switch_auto_enabled, LV_STATE_CHECKED);
     }
 
     // Propagation settings

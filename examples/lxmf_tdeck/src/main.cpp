@@ -25,6 +25,9 @@
 // LoRa Interface
 #include "SX1262Interface.h"
 
+// Auto Interface (IPv6 peer discovery)
+#include "AutoInterface.h"
+
 // LXMF
 #include <LXMF/LXMRouter.h>
 #include <LXMF/MessageStore.h>
@@ -69,6 +72,8 @@ TCPClientInterface* tcp_interface_impl = nullptr;
 Interface* tcp_interface = nullptr;
 SX1262Interface* lora_interface_impl = nullptr;
 Interface* lora_interface = nullptr;
+AutoInterface* auto_interface_impl = nullptr;
+Interface* auto_interface = nullptr;
 
 // Timing
 uint32_t last_ui_update = 0;
@@ -348,6 +353,7 @@ void load_app_settings() {
     app_settings.lora_sf = prefs.getUChar("lora_sf", 7);
     app_settings.lora_cr = prefs.getUChar("lora_cr", 5);
     app_settings.lora_power = prefs.getChar("lora_pwr", 17);
+    app_settings.auto_enabled = prefs.getBool("auto_en", false);
 
     // Advanced
     app_settings.announce_interval = prefs.getULong("announce", 60);
@@ -566,6 +572,25 @@ void setup_reticulum() {
         INFO("LoRa interface disabled in settings");
     }
 
+    // Add Auto interface (if enabled and WiFi connected)
+    if (app_settings.auto_enabled && WiFi.status() == WL_CONNECTED) {
+        INFO("Initializing AutoInterface (IPv6 peer discovery)...");
+
+        auto_interface_impl = new AutoInterface("Auto");
+        auto_interface = new Interface(auto_interface_impl);
+
+        if (!auto_interface->start()) {
+            ERROR("Failed to initialize AutoInterface!");
+        } else {
+            INFO("AutoInterface started");
+            Transport::register_interface(*auto_interface);
+        }
+    } else if (app_settings.auto_enabled) {
+        WARNING("AutoInterface enabled but WiFi not connected - skipping");
+    } else {
+        INFO("AutoInterface disabled in settings");
+    }
+
     // Start Transport (initializes Transport identity and enables packet processing)
     reticulum->start();
 }
@@ -723,6 +748,7 @@ void setup_ui_manager() {
                                         (new_settings.lora_sf != app_settings.lora_sf) ||
                                         (new_settings.lora_cr != app_settings.lora_cr) ||
                                         (new_settings.lora_power != app_settings.lora_power);
+            bool auto_settings_changed = (new_settings.auto_enabled != app_settings.auto_enabled);
 
             app_settings = new_settings;
 
@@ -785,6 +811,37 @@ void setup_ui_manager() {
                     }
                 } else {
                     INFO("LoRa interface disabled");
+                }
+            }
+
+            // Handle Auto interface changes at runtime
+            if (auto_settings_changed) {
+                if (auto_interface_impl) {
+                    INFO("Stopping AutoInterface...");
+                    auto_interface_impl->stop();
+                }
+
+                if (new_settings.auto_enabled && WiFi.status() == WL_CONNECTED) {
+                    INFO("Starting AutoInterface...");
+
+                    // Create interface if it doesn't exist yet
+                    if (!auto_interface_impl) {
+                        INFO("Creating new AutoInterface...");
+                        auto_interface_impl = new AutoInterface("Auto");
+                        auto_interface = new Interface(auto_interface_impl);
+                    }
+
+                    if (auto_interface->start()) {
+                        INFO("AutoInterface started");
+                        // Register with transport if not already registered
+                        Transport::register_interface(*auto_interface);
+                    } else {
+                        ERROR("Failed to start AutoInterface!");
+                    }
+                } else if (new_settings.auto_enabled) {
+                    WARNING("AutoInterface enabled but WiFi not connected");
+                } else {
+                    INFO("AutoInterface disabled");
                 }
             }
 
