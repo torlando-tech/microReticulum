@@ -337,6 +337,55 @@ MessageStore::MessageMetadata MessageStore::load_message_metadata(const Bytes& m
 	}
 }
 
+// Update message state in storage
+bool MessageStore::update_message_state(const Bytes& message_hash, Type::Message::State state) {
+	if (!_initialized) {
+		ERROR("MessageStore not initialized");
+		return false;
+	}
+
+	std::string message_path = get_message_path(message_hash);
+
+	if (!Utilities::OS::file_exists(message_path.c_str())) {
+		WARNING("Message file not found: " + message_path);
+		return false;
+	}
+
+	try {
+		// Read existing JSON
+		Bytes data;
+		if (Utilities::OS::read_file(message_path.c_str(), data) == 0) {
+			ERROR("Failed to read message file: " + message_path);
+			return false;
+		}
+
+		JsonDocument doc;
+		DeserializationError error = deserializeJson(doc, data.data(), data.size());
+		if (error) {
+			ERROR("Failed to parse message file: " + std::string(error.c_str()));
+			return false;
+		}
+
+		// Update state
+		doc["state"] = static_cast<int>(state);
+
+		// Write back
+		std::string json_str;
+		serializeJson(doc, json_str);
+		if (!Utilities::OS::write_file(message_path.c_str(), Bytes((uint8_t*)json_str.c_str(), json_str.length()))) {
+			ERROR("Failed to write message file: " + message_path);
+			return false;
+		}
+
+		INFO("Message state updated to " + std::to_string(static_cast<int>(state)));
+		return true;
+
+	} catch (const std::exception& e) {
+		ERROR("Exception updating message state: " + std::string(e.what()));
+		return false;
+	}
+}
+
 // Delete message from storage
 bool MessageStore::delete_message(const Bytes& message_hash) {
 	if (!_initialized) {

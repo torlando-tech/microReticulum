@@ -100,6 +100,17 @@ namespace LXMF {
 		MessageMetadata load_message_metadata(const RNS::Bytes& message_hash);
 
 		/**
+		 * @brief Update message state in storage
+		 *
+		 * Updates just the state field of a stored message.
+		 *
+		 * @param message_hash Hash of the message to update
+		 * @param state New state value
+		 * @return True if updated successfully
+		 */
+		bool update_message_state(const RNS::Bytes& message_hash, Type::Message::State state);
+
+		/**
 		 * @brief Delete a message from storage
 		 *
 		 * Removes the message file and updates the conversation index.

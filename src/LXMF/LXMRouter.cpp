@@ -14,6 +14,13 @@ using namespace RNS;
 // Static router registry for callback dispatch
 static std::map<Bytes, LXMRouter*> _router_registry;
 
+// Static pending proofs map (packet_hash -> message_hash)
+std::map<Bytes, Bytes> LXMRouter::_pending_proofs;
+
+// Static pending outbound resources map (resource_hash -> message_hash)
+// Used to track DIRECT delivery completion
+static std::map<Bytes, Bytes> _pending_outbound_resources;
+
 // Static packet callback for destination
 static void static_packet_callback(const Bytes& data, const Packet& packet) {
 	// Look up router by destination hash
@@ -49,7 +56,7 @@ static void static_delivery_link_established_callback(Link& link) {
 	}
 }
 
-// Static callback for resource concluded on delivery links
+// Static callback for resource concluded on delivery links (receiving)
 static void static_resource_concluded_callback(const Resource& resource) {
 	Link link = resource.link();
 	if (!link) {
@@ -61,6 +68,68 @@ static void static_resource_concluded_callback(const Resource& resource) {
 	auto it = _router_registry.find(link.destination().hash());
 	if (it != _router_registry.end()) {
 		it->second->on_resource_concluded(resource);
+	}
+}
+
+// Static callback for outbound resource concluded (sending)
+// Called when our resource transfer completes (receiver sent RESOURCE_PRF)
+static void static_outbound_resource_concluded(const Resource& resource) {
+	Bytes resource_hash = resource.hash();
+	DEBUG("Outbound resource concluded: " + resource_hash.toHex().substr(0, 16) + "...");
+	DEBUG("  Status: " + std::to_string((int)resource.status()));
+
+	// Check if this resource is one we're tracking
+	auto it = _pending_outbound_resources.find(resource_hash);
+	if (it == _pending_outbound_resources.end()) {
+		DEBUG("  Resource not in pending outbound map");
+		return;
+	}
+
+	Bytes message_hash = it->second;
+
+	// Check if resource completed successfully
+	if (resource.status() == RNS::Type::Resource::COMPLETE) {
+		INFO("DIRECT delivery confirmed for message " + message_hash.toHex().substr(0, 16) + "...");
+
+		// Use the public static method to trigger delivered callback
+		LXMRouter::handle_direct_proof(message_hash);
+	} else {
+		WARNING("DIRECT resource transfer failed with status " + std::to_string((int)resource.status()));
+	}
+
+	// Remove from pending map
+	_pending_outbound_resources.erase(it);
+}
+
+// Static proof callback - called when delivery proof is received
+void LXMRouter::static_proof_callback(const PacketReceipt& receipt) {
+	// Get packet hash from receipt
+	Bytes packet_hash = receipt.hash();
+
+	// Look up message hash for this packet
+	auto it = _pending_proofs.find(packet_hash);
+	if (it != _pending_proofs.end()) {
+		Bytes message_hash = it->second;
+		INFO("Delivery proof received for message " + message_hash.toHex().substr(0, 16) + "...");
+
+		// Find the router that sent this message and call its delivered callback
+		for (auto& router_entry : _router_registry) {
+			LXMRouter* router = router_entry.second;
+			if (router && router->_delivered_callback) {
+				// Create a minimal message with just the hash for the callback
+				// The callback can look up full message from storage if needed
+				Bytes empty_hash;
+				LXMessage msg(empty_hash, empty_hash);
+				msg.hash(message_hash);
+				msg.state(Type::Message::DELIVERED);
+				router->_delivered_callback(msg);
+			}
+		}
+
+		// Remove from pending proofs
+		_pending_proofs.erase(it);
+	} else {
+		DEBUG("Received proof for unknown packet: " + packet_hash.toHex().substr(0, 16) + "...");
 	}
 }
 
@@ -230,6 +299,15 @@ void LXMRouter::process_outbound() {
 		} else {
 			// DIRECT delivery - need a link for large messages
 			DEBUG("  Using DIRECT delivery (via link)");
+
+			// Check if we have a path to the destination
+			if (!Transport::has_path(message.destination_hash())) {
+				// Request path from network
+				INFO("  No path to destination, requesting...");
+				Transport::request_path(message.destination_hash());
+				_next_outbound_process_time = now + PATH_REQUEST_WAIT;
+				return;
+			}
 
 			// Get or establish link
 			Link link = get_link_for_destination(message.destination_hash());
@@ -570,14 +648,52 @@ bool LXMRouter::send_via_link(LXMessage& message, Link& link) {
 	DEBUG("  Representation: " + std::to_string((uint8_t)message.representation()));
 
 	try {
-		// Use LXMessage's send_via_link method
-		bool success = message.send_via_link(link);
-
-		if (success) {
-			message.state(Type::Message::SENT);
+		// Ensure message is packed
+		if (!message.packed_size()) {
+			message.pack();
 		}
 
-		return success;
+		// Check that link is active
+		if (!link || link.status() != RNS::Type::Link::ACTIVE) {
+			ERROR("Cannot send message - link is not active");
+			return false;
+		}
+
+		message.state(Type::Message::SENDING);
+
+		if (message.representation() == Type::Message::PACKET) {
+			// Send as single packet over link
+			INFO("  Sending as single packet (" + std::to_string(message.packed_size()) + " bytes)");
+
+			Packet packet(link, message.packed());
+			packet.send();
+
+			message.state(Type::Message::SENT);
+			INFO("Message sent successfully as packet");
+			return true;
+
+		} else if (message.representation() == Type::Message::RESOURCE) {
+			// Send as resource over link with concluded callback
+			INFO("  Sending as resource (" + std::to_string(message.packed_size()) + " bytes)");
+
+			// Create resource with our callback to track completion
+			Resource resource(message.packed(), link, true, true, static_outbound_resource_concluded);
+
+			// Track this resource so we can match the callback to the message
+			if (resource.hash()) {
+				_pending_outbound_resources[resource.hash()] = message.hash();
+				DEBUG("  Tracking resource " + resource.hash().toHex().substr(0, 16) + " for message " + message.hash().toHex().substr(0, 16));
+			}
+
+			message.state(Type::Message::SENT);
+			INFO("Message resource transfer initiated");
+			return true;
+
+		} else {
+			ERROR("Unknown message representation");
+			message.state(Type::Message::FAILED);
+			return false;
+		}
 
 	} catch (const std::exception& e) {
 		ERROR("Failed to send message: " + std::string(e.what()));
@@ -615,7 +731,14 @@ bool LXMRouter::send_opportunistic(LXMessage& message, const Identity& dest_iden
 
 		// Create and send packet
 		Packet packet(destination, packet_data, RNS::Type::Packet::DATA);
-		packet.send();
+		PacketReceipt receipt = packet.send();
+
+		// Register proof callback to track delivery confirmation
+		if (receipt) {
+			receipt.set_delivery_callback(static_proof_callback);
+			_pending_proofs[receipt.hash()] = message.hash();
+			DEBUG("  Registered proof callback for packet " + receipt.hash().toHex().substr(0, 16) + "...");
+		}
 
 		message.state(Type::Message::SENT);
 		INFO("  OPPORTUNISTIC packet sent");
@@ -628,11 +751,28 @@ bool LXMRouter::send_opportunistic(LXMessage& message, const Identity& dest_iden
 	}
 }
 
+// Handle delivery proof for DIRECT messages
+void LXMRouter::handle_direct_proof(const Bytes& message_hash) {
+	INFO("Processing DIRECT delivery proof for message " + message_hash.toHex().substr(0, 16) + "...");
+
+	// Call delivered callback for all routers
+	for (auto& router_entry : _router_registry) {
+		LXMRouter* router = router_entry.second;
+		if (router && router->_delivered_callback) {
+			Bytes empty_hash;
+			LXMessage msg(empty_hash, empty_hash);
+			msg.hash(message_hash);
+			msg.state(Type::Message::DELIVERED);
+			router->_delivered_callback(msg);
+		}
+	}
+}
+
 // Link established callback
 void LXMRouter::on_link_established(const Link& link) {
 	INFO("Link established to " + link.destination().hash().toHex());
-
 	// Link is now active, process_outbound() will pick it up
+	// Note: Delivery confirmation comes from Resource completed callback
 }
 
 // Link closed callback
@@ -699,6 +839,10 @@ void LXMRouter::on_resource_concluded(const RNS::Resource& resource) {
 				return;
 			}
 		}
+
+		// Note: We don't need to send a custom delivery proof here.
+		// The sender gets delivery confirmation when the Resource completes
+		// (via RESOURCE_PRF from RNS layer), which triggers their callback.
 
 		// Add to inbound queue for processing
 		_pending_inbound.push_back(message);

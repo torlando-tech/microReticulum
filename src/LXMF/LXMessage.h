@@ -130,6 +130,11 @@ namespace LXMF {
 		inline const RNS::Bytes& hash() const { return _hash; }
 
 		/**
+		 * @brief Set message hash (for delivery confirmation callbacks)
+		 */
+		inline void hash(const RNS::Bytes& hash) { _hash = hash; }
+
+		/**
 		 * @brief Get message content
 		 */
 		inline const RNS::Bytes& content() const { return _content; }

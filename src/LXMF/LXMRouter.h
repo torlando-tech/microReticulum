@@ -6,6 +6,7 @@
 #include "../Identity.h"
 #include "../Destination.h"
 #include "../Link.h"
+#include "../Packet.h"
 
 #include <map>
 #include <vector>
@@ -322,6 +323,17 @@ namespace LXMF {
 		std::map<RNS::Bytes, RNS::Link> _direct_links;  // dest_hash -> Link
 		std::map<RNS::Bytes, double> _link_creation_times;  // dest_hash -> creation timestamp
 		static constexpr double LINK_ESTABLISHMENT_TIMEOUT = 30.0;  // Seconds to wait for pending links
+
+		// Proof tracking for delivery confirmation
+		// Maps packet hash -> message hash so we can update message state when proof arrives
+		static std::map<RNS::Bytes, RNS::Bytes> _pending_proofs;  // packet_hash -> message_hash
+		static void static_proof_callback(const RNS::PacketReceipt& receipt);
+
+	public:
+		// Handle delivery proof for DIRECT messages (called from link packet callback)
+		static void handle_direct_proof(const RNS::Bytes& message_hash);
+
+	private:
 
 		// Callbacks
 		DeliveryCallback _delivery_callback;

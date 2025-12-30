@@ -779,6 +779,26 @@ void setup() {
     // Initialize UI manager
     setup_ui_manager();
 
+    // Register delivered callback to update message status in storage and UI
+    router->register_delivered_callback([](LXMF::LXMessage& msg) {
+        RNS::Bytes msg_hash = msg.hash();
+        INFO("Delivery confirmed for message: " + msg_hash.toHex().substr(0, 16) + "...");
+
+        // Update message state in storage
+        if (message_store) {
+            message_store->update_message_state(msg_hash, LXMF::Type::Message::DELIVERED);
+
+            // Load full message for UI update (need destination_hash)
+            LXMF::LXMessage full_msg = message_store->load_message(msg_hash);
+            if (full_msg.hash()) {
+                full_msg.state(LXMF::Type::Message::DELIVERED);
+                if (ui_manager) {
+                    ui_manager->on_message_delivered(full_msg);
+                }
+            }
+        }
+    });
+
     INFO("\n");
     INFO("╔══════════════════════════════════════╗");
     INFO("║     System Ready - Enjoy!            ║");
