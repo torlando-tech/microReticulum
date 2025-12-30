@@ -6,6 +6,7 @@
 #include "../Resource.h"
 
 #include <map>
+#include <set>
 #include <MsgPack.h>
 
 using namespace LXMF;
@@ -112,10 +113,14 @@ void LXMRouter::static_proof_callback(const PacketReceipt& receipt) {
 		Bytes message_hash = it->second;
 		INFO("Delivery proof received for message " + message_hash.toHex().substr(0, 16) + "...");
 
+		// Use set to avoid calling callback multiple times for same router
+		std::set<LXMRouter*> notified_routers;
+
 		// Find the router that sent this message and call its delivered callback
 		for (auto& router_entry : _router_registry) {
 			LXMRouter* router = router_entry.second;
-			if (router && router->_delivered_callback) {
+			if (router && router->_delivered_callback && notified_routers.find(router) == notified_routers.end()) {
+				notified_routers.insert(router);
 				// Create a minimal message with just the hash for the callback
 				// The callback can look up full message from storage if needed
 				Bytes empty_hash;
@@ -755,10 +760,15 @@ bool LXMRouter::send_opportunistic(LXMessage& message, const Identity& dest_iden
 void LXMRouter::handle_direct_proof(const Bytes& message_hash) {
 	INFO("Processing DIRECT delivery proof for message " + message_hash.toHex().substr(0, 16) + "...");
 
-	// Call delivered callback for all routers
+	// Use set to avoid calling callback multiple times for same router
+	// (router may be registered under multiple keys in registry)
+	std::set<LXMRouter*> notified_routers;
+
+	// Call delivered callback for all unique routers
 	for (auto& router_entry : _router_registry) {
 		LXMRouter* router = router_entry.second;
-		if (router && router->_delivered_callback) {
+		if (router && router->_delivered_callback && notified_routers.find(router) == notified_routers.end()) {
+			notified_routers.insert(router);
 			Bytes empty_hash;
 			LXMessage msg(empty_hash, empty_hash);
 			msg.hash(message_hash);
