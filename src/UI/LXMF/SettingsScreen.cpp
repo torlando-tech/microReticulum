@@ -11,6 +11,7 @@
 #include "../../Log.h"
 #include "../../Utilities/OS.h"
 #include "../LVGL/LVGLInit.h"
+#include "../TextAreaHelper.h"
 
 using namespace RNS;
 
@@ -210,6 +211,8 @@ lv_obj_t* SettingsScreen::create_text_input(lv_obj_t* parent, const char* placeh
     if (group) {
         lv_group_add_obj(group, ta);
     }
+    // Enable paste on long-press
+    TextAreaHelper::enable_paste(ta);
     return ta;
 }
 
@@ -258,6 +261,8 @@ void SettingsScreen::create_network_section(lv_obj_t* parent) {
     if (group) {
         lv_group_add_obj(group, _ta_tcp_port);
     }
+    // Enable paste on long-press
+    TextAreaHelper::enable_paste(_ta_tcp_port);
 
     _btn_reconnect = lv_btn_create(port_row);
     lv_obj_set_size(_btn_reconnect, 80, 26);
@@ -423,6 +428,8 @@ void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     lv_obj_set_style_radius(_ta_lora_frequency, 4, 0);
     lv_obj_set_style_pad_all(_ta_lora_frequency, 4, 0);
     lv_obj_set_style_text_font(_ta_lora_frequency, &lv_font_montserrat_14, 0);
+    // Enable paste on long-press
+    TextAreaHelper::enable_paste(_ta_lora_frequency);
 
     lv_obj_t* mhz_label = lv_label_create(freq_row);
     lv_label_set_text(mhz_label, "MHz");
@@ -656,6 +663,8 @@ void SettingsScreen::create_advanced_section(lv_obj_t* parent) {
     if (grp) {
         lv_group_add_obj(grp, _ta_announce_interval);
     }
+    // Enable paste on long-press
+    TextAreaHelper::enable_paste(_ta_announce_interval);
 
     lv_obj_t* sec_label = lv_label_create(announce_row);
     lv_label_set_text(sec_label, "sec");

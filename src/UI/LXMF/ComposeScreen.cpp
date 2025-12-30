@@ -7,6 +7,7 @@
 
 #include "../../Log.h"
 #include "../LVGL/LVGLInit.h"
+#include "../TextAreaHelper.h"
 
 using namespace RNS;
 
@@ -113,6 +114,8 @@ void ComposeScreen::create_content_area() {
     if (group) {
         lv_group_add_obj(group, _text_area_dest);
     }
+    // Enable paste on long-press
+    TextAreaHelper::enable_paste(_text_area_dest);
 
     // "Message:" label
     lv_obj_t* label_message = lv_label_create(_content_area);
@@ -135,6 +138,8 @@ void ComposeScreen::create_content_area() {
     if (group) {
         lv_group_add_obj(group, _text_area_message);
     }
+    // Enable paste on long-press
+    TextAreaHelper::enable_paste(_text_area_message);
 }
 
 void ComposeScreen::create_button_area() {
