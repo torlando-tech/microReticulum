@@ -16,7 +16,7 @@ namespace LXMF {
 
 StatusScreen::StatusScreen(lv_obj_t* parent)
     : _screen(nullptr), _header(nullptr), _content(nullptr), _btn_back(nullptr),
-      _label_identity_value(nullptr), _label_lxmf_value(nullptr),
+      _btn_share(nullptr), _label_identity_value(nullptr), _label_lxmf_value(nullptr),
       _label_wifi_status(nullptr), _label_wifi_ip(nullptr), _label_wifi_rssi(nullptr),
       _label_rns_status(nullptr), _rns_connected(false) {
 
@@ -79,13 +79,26 @@ void StatusScreen::create_header() {
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 60, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+
+    // Share button (QR code icon) on the right
+    _btn_share = lv_btn_create(_header);
+    lv_obj_set_size(_btn_share, 60, 28);
+    lv_obj_align(_btn_share, LV_ALIGN_RIGHT_MID, -2, 0);
+    lv_obj_set_style_bg_color(_btn_share, lv_color_hex(0x2196F3), 0);
+    lv_obj_set_style_bg_color(_btn_share, lv_color_hex(0x1976D2), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(_btn_share, on_share_clicked, LV_EVENT_CLICKED, this);
+
+    lv_obj_t* label_share = lv_label_create(_btn_share);
+    lv_label_set_text(label_share, "Share");
+    lv_obj_center(label_share);
+    lv_obj_set_style_text_color(label_share, lv_color_hex(0xffffff), 0);
 }
 
 void StatusScreen::create_content() {
     _content = lv_obj_create(_screen);
     lv_obj_set_size(_content, LV_PCT(100), 204);  // 240 - 36 header
     lv_obj_align(_content, LV_ALIGN_TOP_MID, 0, 36);
-    lv_obj_set_style_pad_all(_content, 6, 0);
+    lv_obj_set_style_pad_all(_content, 8, 0);
     lv_obj_set_style_bg_color(_content, lv_color_hex(0x121212), 0);
     lv_obj_set_style_border_width(_content, 0, 0);
     lv_obj_set_style_radius(_content, 0, 0);
@@ -95,8 +108,8 @@ void StatusScreen::create_content() {
     lv_obj_set_scrollbar_mode(_content, LV_SCROLLBAR_MODE_AUTO);
 
     int y_pos = 0;
-    const int line_height = 18;
-    const int section_gap = 12;
+    const int line_height = 20;
+    const int section_gap = 14;
 
     // Identity section
     lv_obj_t* label_identity = lv_label_create(_content);
@@ -150,12 +163,12 @@ void StatusScreen::create_content() {
     lv_label_set_text(_label_rns_status, "RNS: Checking...");
     lv_obj_align(_label_rns_status, LV_ALIGN_TOP_LEFT, 0, y_pos);
     lv_obj_set_style_text_color(_label_rns_status, lv_color_hex(0xffffff), 0);
-    lv_obj_set_width(_label_rns_status, lv_pct(95));  // Set width for text wrapping
+    lv_obj_set_width(_label_rns_status, lv_pct(100));
     lv_label_set_long_mode(_label_rns_status, LV_LABEL_LONG_WRAP);
 }
 
-void StatusScreen::set_identity(const Identity& identity) {
-    _identity_hash = identity.hash();
+void StatusScreen::set_identity_hash(const Bytes& hash) {
+    _identity_hash = hash;
     update_labels();
 }
 
@@ -222,15 +235,24 @@ void StatusScreen::set_back_callback(BackCallback callback) {
     _back_callback = callback;
 }
 
+void StatusScreen::set_share_callback(ShareCallback callback) {
+    _share_callback = callback;
+}
+
 void StatusScreen::show() {
     refresh();  // Update status when shown
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);
 
-    // Add back button to focus group for trackball navigation
+    // Add buttons to focus group for trackball navigation
     lv_group_t* group = LVGL::LVGLInit::get_default_group();
-    if (group && _btn_back) {
-        lv_group_add_obj(group, _btn_back);
+    if (group) {
+        if (_btn_back) {
+            lv_group_add_obj(group, _btn_back);
+        }
+        if (_btn_share) {
+            lv_group_add_obj(group, _btn_share);
+        }
         lv_group_focus_obj(_btn_back);
     }
 }
@@ -238,8 +260,13 @@ void StatusScreen::show() {
 void StatusScreen::hide() {
     // Remove from focus group when hiding
     lv_group_t* group = LVGL::LVGLInit::get_default_group();
-    if (group && _btn_back) {
-        lv_group_remove_obj(_btn_back);
+    if (group) {
+        if (_btn_back) {
+            lv_group_remove_obj(_btn_back);
+        }
+        if (_btn_share) {
+            lv_group_remove_obj(_btn_share);
+        }
     }
 
     lv_obj_add_flag(_screen, LV_OBJ_FLAG_HIDDEN);
@@ -254,6 +281,14 @@ void StatusScreen::on_back_clicked(lv_event_t* event) {
 
     if (screen->_back_callback) {
         screen->_back_callback();
+    }
+}
+
+void StatusScreen::on_share_clicked(lv_event_t* event) {
+    StatusScreen* screen = (StatusScreen*)lv_event_get_user_data(event);
+
+    if (screen->_share_callback) {
+        screen->_share_callback();
     }
 }
 

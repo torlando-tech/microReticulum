@@ -22,6 +22,7 @@ UIManager::UIManager(Reticulum& reticulum, ::LXMF::LXMRouter& router, ::LXMF::Me
       _compose_screen(nullptr),
       _announce_list_screen(nullptr),
       _status_screen(nullptr),
+      _qr_screen(nullptr),
       _settings_screen(nullptr),
       _propagation_nodes_screen(nullptr),
       _propagation_manager(nullptr),
@@ -44,6 +45,9 @@ UIManager::~UIManager() {
     if (_status_screen) {
         delete _status_screen;
     }
+    if (_qr_screen) {
+        delete _qr_screen;
+    }
     if (_settings_screen) {
         delete _settings_screen;
     }
@@ -65,6 +69,7 @@ bool UIManager::init() {
     _compose_screen = new ComposeScreen();
     _announce_list_screen = new AnnounceListScreen();
     _status_screen = new StatusScreen();
+    _qr_screen = new QRScreen();
     _settings_screen = new SettingsScreen();
     _propagation_nodes_screen = new PropagationNodesScreen();
 
@@ -130,6 +135,15 @@ bool UIManager::init() {
         [this]() { on_back_from_status(); }
     );
 
+    _status_screen->set_share_callback(
+        [this]() { on_share_from_status(); }
+    );
+
+    // Set up callbacks for QR screen
+    _qr_screen->set_back_callback(
+        [this]() { on_back_from_qr(); }
+    );
+
     // Set up callbacks for settings screen
     _settings_screen->set_back_callback(
         [this]() { on_back_from_settings(); }
@@ -168,9 +182,13 @@ bool UIManager::init() {
         [this]() { show_status(); }
     );
 
-    // Set identity and LXMF address on status screen
-    _status_screen->set_identity(_router.identity());
+    // Set identity hash and LXMF address on status screen
+    _status_screen->set_identity_hash(_router.identity().hash());
     _status_screen->set_lxmf_address(_router.delivery_destination().hash());
+
+    // Set identity and LXMF address on QR screen
+    _qr_screen->set_identity(_router.identity());
+    _qr_screen->set_lxmf_address(_router.delivery_destination().hash());
 
     // Register LXMF delivery callback
     _router.register_delivery_callback(
@@ -386,6 +404,18 @@ void UIManager::on_back_from_announces() {
 
 void UIManager::on_back_from_status() {
     show_conversation_list();
+}
+
+void UIManager::on_share_from_status() {
+    _status_screen->hide();
+    _qr_screen->show();
+    _current_screen = SCREEN_QR;
+}
+
+void UIManager::on_back_from_qr() {
+    _qr_screen->hide();
+    _status_screen->show();
+    _current_screen = SCREEN_STATUS;
 }
 
 void UIManager::on_back_from_settings() {

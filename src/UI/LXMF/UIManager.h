@@ -12,6 +12,7 @@
 #include "ComposeScreen.h"
 #include "AnnounceListScreen.h"
 #include "StatusScreen.h"
+#include "QRScreen.h"
 #include "SettingsScreen.h"
 #include "PropagationNodesScreen.h"
 #include "../../LXMF/LXMRouter.h"
@@ -156,6 +157,7 @@ private:
         SCREEN_COMPOSE,
         SCREEN_ANNOUNCES,
         SCREEN_STATUS,
+        SCREEN_QR,
         SCREEN_SETTINGS,
         SCREEN_PROPAGATION_NODES
     };
@@ -172,6 +174,7 @@ private:
     ComposeScreen* _compose_screen;
     AnnounceListScreen* _announce_list_screen;
     StatusScreen* _status_screen;
+    QRScreen* _qr_screen;
     SettingsScreen* _settings_screen;
     PropagationNodesScreen* _propagation_nodes_screen;
 
@@ -190,6 +193,8 @@ private:
     void on_announce_selected(const RNS::Bytes& dest_hash);
     void on_back_from_announces();
     void on_back_from_status();
+    void on_share_from_status();
+    void on_back_from_qr();
     void on_back_from_settings();
     void on_back_from_propagation_nodes();
     void on_propagation_node_selected(const RNS::Bytes& node_hash);

@@ -43,6 +43,7 @@ namespace LXMF {
 class StatusScreen {
 public:
     using BackCallback = std::function<void()>;
+    using ShareCallback = std::function<void()>;
 
     /**
      * Create status screen
@@ -56,10 +57,10 @@ public:
     ~StatusScreen();
 
     /**
-     * Set identity to display
-     * @param identity The identity
+     * Set identity hash to display
+     * @param hash The identity hash
      */
-    void set_identity(const RNS::Identity& identity);
+    void set_identity_hash(const RNS::Bytes& hash);
 
     /**
      * Set LXMF delivery destination hash
@@ -86,6 +87,12 @@ public:
     void set_back_callback(BackCallback callback);
 
     /**
+     * Set callback for share button
+     * @param callback Function to call when share is pressed
+     */
+    void set_share_callback(ShareCallback callback);
+
+    /**
      * Show the screen
      */
     void show();
@@ -105,6 +112,7 @@ private:
     lv_obj_t* _header;
     lv_obj_t* _content;
     lv_obj_t* _btn_back;
+    lv_obj_t* _btn_share;
 
     // Labels for dynamic content
     lv_obj_t* _label_identity_value;
@@ -120,12 +128,14 @@ private:
     String _rns_server;
 
     BackCallback _back_callback;
+    ShareCallback _share_callback;
 
     void create_header();
     void create_content();
     void update_labels();
 
     static void on_back_clicked(lv_event_t* event);
+    static void on_share_clicked(lv_event_t* event);
 };
 
 } // namespace LXMF
