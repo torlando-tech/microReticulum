@@ -285,8 +285,12 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
         wait_count++;
     }
 
-    // Give BLE stack extra time to settle
-    delay(100);
+    // Give BLE stack extra time to settle - ESP32-S3 may need more time
+    delay(300);
+
+    DEBUG("NimBLEPlatform: Post-delay GAP state: adv=" + std::to_string(ble_gap_adv_active()) +
+          " disc=" + std::to_string(ble_gap_disc_active()) +
+          " conn=" + std::to_string(ble_gap_conn_active()));
 
     // Mark scan as inactive
     _scanning = false;
@@ -323,15 +327,12 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
     int clientCount = NimBLEDevice::getCreatedClientCount();
     DEBUG("NimBLEPlatform: Current client count before cleanup: " + std::to_string(clientCount));
 
-    // Try to reuse a disconnected client first
-    NimBLEClient* client = NimBLEDevice::getDisconnectedClient();
-    if (client) {
-        DEBUG("NimBLEPlatform: Reusing disconnected client");
-    } else {
-        DEBUG("NimBLEPlatform: Creating new client, total clients=" +
-              std::to_string(NimBLEDevice::getCreatedClientCount()));
-        client = NimBLEDevice::createClient();
-    }
+    // Create client with peer address (recommended approach for direct connections)
+    // Using createClient(peerAddress) instead of createClient() + connect(addr)
+    // This can help with address type handling
+    DEBUG("NimBLEPlatform: Creating client for address " +
+          std::string(nimAddr.toString().c_str()) + " type=" + std::to_string(nimAddr.getType()));
+    NimBLEClient* client = NimBLEDevice::createClient(nimAddr);
     if (!client) {
         ERROR("NimBLEPlatform: Failed to create client");
         if (was_advertising) startAdvertising();
@@ -362,12 +363,19 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
           " type=" + std::to_string(address.type) +
           " timeout=" + std::to_string(timeout_ms / 1000) + "s");
 
-    // Set connection parameters for better compatibility
-    // min/max interval: 15-30ms, latency: 0, timeout: 4000ms
-    client->setConnectionParams(12, 24, 0, 400);
+    // Use default connection parameters - custom params might cause issues
+    // Default: min 24 (30ms), max 40 (50ms), latency 0, timeout 200 (2000ms)
+    // client->setConnectionParams(12, 24, 0, 400);
 
-    // Try to connect - use async mode (false = don't refresh services)
-    bool connected = client->connect(nimAddr, false);
+    // Log the NimBLE address we're about to use
+    DEBUG("NimBLEPlatform: Calling connect with NimBLE addr=" +
+          std::string(nimAddr.toString().c_str()) +
+          " nimType=" + std::to_string(nimAddr.getType()) +
+          " client->getPeerAddress=" + std::string(client->getPeerAddress().toString().c_str()));
+
+    // Try to connect - client already has peer address from createClient()
+    // Use deleteAttributes=true to perform full GATT discovery (might help with Linux peripherals)
+    bool connected = client->connect(true);
     if (!connected) {
         int lastError = client->getLastError();
 
@@ -376,8 +384,22 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
         bool disc_after = ble_gap_disc_active();
         bool conn_after = ble_gap_conn_active();
 
+        // Decode error codes for better debugging
+        const char* errorStr = "UNKNOWN";
+        switch (lastError) {
+            case 0: errorStr = "SUCCESS"; break;
+            case 1: errorStr = "EDONE"; break;
+            case 2: errorStr = "EBUSY"; break;
+            case 3: errorStr = "ESTALLED"; break;
+            case 4: errorStr = "ENOTCONN"; break;
+            case 5: errorStr = "EREQREJ"; break;
+            case 13: errorStr = "ETIMEOUT"; break;
+            case 14: errorStr = "ENOENT"; break;
+            case 17: errorStr = "ENOMEM"; break;
+        }
+
         ERROR("NimBLEPlatform: Connection failed to " + address.toString() +
-              " error=" + std::to_string(lastError) +
+              " error=" + std::to_string(lastError) + " (" + errorStr + ")" +
               " GAP_after: adv=" + std::to_string(adv_after) +
               " disc=" + std::to_string(disc_after) +
               " conn=" + std::to_string(conn_after));
@@ -1089,11 +1111,15 @@ BLEAddress NimBLEPlatform::fromNimBLE(const NimBLEAddress& addr) {
 }
 
 NimBLEAddress NimBLEPlatform::toNimBLE(const BLEAddress& addr) {
-    uint8_t reversed[6];
-    for (int i = 0; i < 6; i++) {
-        reversed[i] = addr.addr[5 - i];
-    }
-    return NimBLEAddress(reversed, addr.type);
+    // NimBLE stores addresses in little-endian format (LSB first)
+    // Our BLEAddress stores in display order (MSB first, matching NimBLE's toString())
+    // So we just copy bytes directly - no reversal needed
+    NimBLEAddress nimAddr(addr.addr, addr.type);
+    DEBUG("NimBLEPlatform::toNimBLE: input=" + addr.toString() +
+          " type=" + std::to_string(addr.type) +
+          " -> nimAddr=" + std::string(nimAddr.toString().c_str()) +
+          " nimType=" + std::to_string(nimAddr.getType()));
+    return nimAddr;
 }
 
 NimBLEClient* NimBLEPlatform::findClient(uint16_t conn_handle) {
