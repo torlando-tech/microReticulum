@@ -164,6 +164,7 @@ private:
     static void on_copy_dialog_action(lv_event_t* event);
     static void on_textarea_long_pressed(lv_event_t* event);
     static void on_paste_dialog_action(lv_event_t* event);
+    static void on_textarea_key(lv_event_t* event);
 
     // Copy/paste state
     String _pending_copy_text;
