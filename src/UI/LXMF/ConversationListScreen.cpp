@@ -334,7 +334,7 @@ void ConversationListScreen::update_status() {
 
     String battery_text;
     if (charging) {
-        battery_text = String(LV_SYMBOL_CHARGE) + " " + String(percent) + "%";
+        battery_text = String(LV_SYMBOL_CHARGE);
     } else {
         battery_text = String(LV_SYMBOL_BATTERY_FULL) + " " + String(percent) + "%";
     }
