@@ -314,10 +314,11 @@ void ChatScreen::show() {
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);  // Bring to front for touch events
 
-    // Add text area to default group so keyboard works when tapped
+    // Add text area to default group and auto-focus so typing works immediately
     lv_group_t* group = LVGL::LVGLInit::get_default_group();
     if (group && _text_area) {
         lv_group_add_obj(group, _text_area);
+        lv_group_focus_obj(_text_area);
     }
 }
 
