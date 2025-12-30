@@ -26,6 +26,7 @@ static const char* KEY_TCP_HOST = "tcp_host";
 static const char* KEY_TCP_PORT = "tcp_port";
 static const char* KEY_DISPLAY_NAME = "disp_name";
 static const char* KEY_BRIGHTNESS = "brightness";
+static const char* KEY_KB_LIGHT = "kb_light";
 static const char* KEY_TIMEOUT = "timeout";
 static const char* KEY_ANNOUNCE_INT = "announce";
 static const char* KEY_GPS_SYNC = "gps_sync";
@@ -49,7 +50,7 @@ SettingsScreen::SettingsScreen(lv_obj_t* parent)
       _ta_wifi_ssid(nullptr), _ta_wifi_password(nullptr),
       _ta_tcp_host(nullptr), _ta_tcp_port(nullptr), _btn_reconnect(nullptr),
       _ta_display_name(nullptr),
-      _slider_brightness(nullptr), _label_brightness_value(nullptr), _dropdown_timeout(nullptr),
+      _slider_brightness(nullptr), _label_brightness_value(nullptr), _switch_kb_light(nullptr), _dropdown_timeout(nullptr),
       _label_gps_sats(nullptr), _label_gps_coords(nullptr), _label_gps_alt(nullptr), _label_gps_hdop(nullptr),
       _label_identity_hash(nullptr), _label_lxmf_address(nullptr), _label_firmware(nullptr),
       _label_storage(nullptr), _label_ram(nullptr),
@@ -317,6 +318,27 @@ void SettingsScreen::create_display_section(lv_obj_t* parent) {
     lv_obj_align(_label_brightness_value, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_text_color(_label_brightness_value, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_text_font(_label_brightness_value, &lv_font_montserrat_14, 0);
+
+    // Keyboard light row
+    lv_obj_t* kb_light_row = lv_obj_create(parent);
+    lv_obj_set_width(kb_light_row, LV_PCT(100));
+    lv_obj_set_height(kb_light_row, 28);
+    lv_obj_set_style_bg_opa(kb_light_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(kb_light_row, 0, 0);
+    lv_obj_set_style_pad_all(kb_light_row, 0, 0);
+    lv_obj_clear_flag(kb_light_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* kb_light_label = lv_label_create(kb_light_row);
+    lv_label_set_text(kb_light_label, "Keyboard Light:");
+    lv_obj_align(kb_light_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(kb_light_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_font(kb_light_label, &lv_font_montserrat_14, 0);
+
+    _switch_kb_light = lv_switch_create(kb_light_row);
+    lv_obj_set_size(_switch_kb_light, 40, 20);
+    lv_obj_align(_switch_kb_light, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(_switch_kb_light, lv_color_hex(0x404040), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_kb_light, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
 
     // Timeout row
     lv_obj_t* timeout_row = lv_obj_create(parent);
@@ -704,6 +726,7 @@ void SettingsScreen::load_settings() {
     _settings.tcp_port = prefs.getUShort(KEY_TCP_PORT, 4965);
     _settings.display_name = prefs.getString(KEY_DISPLAY_NAME, "");
     _settings.brightness = prefs.getUChar(KEY_BRIGHTNESS, 180);
+    _settings.keyboard_light = prefs.getBool(KEY_KB_LIGHT, false);
     _settings.screen_timeout = prefs.getUShort(KEY_TIMEOUT, 60);
     _settings.announce_interval = prefs.getUInt(KEY_ANNOUNCE_INT, 60);
     _settings.gps_time_sync = prefs.getBool(KEY_GPS_SYNC, true);
@@ -745,6 +768,7 @@ void SettingsScreen::save_settings() {
     prefs.putUShort(KEY_TCP_PORT, _settings.tcp_port);
     prefs.putString(KEY_DISPLAY_NAME, _settings.display_name);
     prefs.putUChar(KEY_BRIGHTNESS, _settings.brightness);
+    prefs.putBool(KEY_KB_LIGHT, _settings.keyboard_light);
     prefs.putUShort(KEY_TIMEOUT, _settings.screen_timeout);
     prefs.putUInt(KEY_ANNOUNCE_INT, _settings.announce_interval);
     prefs.putBool(KEY_GPS_SYNC, _settings.gps_time_sync);
@@ -793,6 +817,13 @@ void SettingsScreen::update_ui_from_settings() {
         lv_slider_set_value(_slider_brightness, _settings.brightness, LV_ANIM_OFF);
         if (_label_brightness_value) {
             lv_label_set_text(_label_brightness_value, String(_settings.brightness).c_str());
+        }
+    }
+    if (_switch_kb_light) {
+        if (_settings.keyboard_light) {
+            lv_obj_add_state(_switch_kb_light, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(_switch_kb_light, LV_STATE_CHECKED);
         }
     }
     if (_dropdown_timeout) {
@@ -902,6 +933,9 @@ void SettingsScreen::update_settings_from_ui() {
     }
     if (_slider_brightness) {
         _settings.brightness = lv_slider_get_value(_slider_brightness);
+    }
+    if (_switch_kb_light) {
+        _settings.keyboard_light = lv_obj_has_state(_switch_kb_light, LV_STATE_CHECKED);
     }
     if (_dropdown_timeout) {
         int idx = lv_dropdown_get_selected(_dropdown_timeout);

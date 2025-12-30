@@ -20,6 +20,7 @@ uint8_t Keyboard::_buffer_head = 0;
 uint8_t Keyboard::_buffer_tail = 0;
 uint8_t Keyboard::_buffer_count = 0;
 uint32_t Keyboard::_last_poll_time = 0;
+uint32_t Keyboard::_last_key_time = 0;
 
 bool Keyboard::init(TwoWire& wire) {
     if (_initialized) {
@@ -144,6 +145,26 @@ uint8_t Keyboard::get_firmware_version() {
     return version;
 }
 
+void Keyboard::set_backlight(uint8_t brightness) {
+    if (!_wire || !_initialized) {
+        return;
+    }
+
+    // Command 0x01 = LILYGO_KB_BRIGHTNESS_CMD
+    _wire->beginTransmission(I2C::KEYBOARD_ADDR);
+    _wire->write(0x01);
+    _wire->write(brightness);
+    _wire->endTransmission();
+}
+
+void Keyboard::backlight_on() {
+    set_backlight(255);
+}
+
+void Keyboard::backlight_off() {
+    set_backlight(0);
+}
+
 void Keyboard::lvgl_read_cb(lv_indev_drv_t* drv, lv_indev_data_t* data) {
     // Safety check - LVGL should never pass null but be defensive
     if (!data) {
@@ -247,6 +268,11 @@ void Keyboard::buffer_push(char key) {
     _key_buffer[_buffer_tail] = key;
     _buffer_tail = (_buffer_tail + 1) % Kbd::MAX_KEYS_BUFFERED;
     _buffer_count++;
+    _last_key_time = millis();
+}
+
+uint32_t Keyboard::get_last_key_time() {
+    return _last_key_time;
 }
 
 char Keyboard::buffer_pop() {

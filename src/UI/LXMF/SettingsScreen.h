@@ -34,6 +34,7 @@ struct AppSettings {
     // Display
     uint8_t brightness;
     uint16_t screen_timeout;  // seconds, 0 = never
+    bool keyboard_light;      // Enable keyboard backlight on keypress
 
     // Interfaces
     bool tcp_enabled;
@@ -60,6 +61,7 @@ struct AppSettings {
         tcp_port(4965),
         brightness(180),
         screen_timeout(60),
+        keyboard_light(false),
         tcp_enabled(true),
         lora_enabled(false),
         lora_frequency(927.25f),
@@ -233,6 +235,7 @@ private:
     // Display section
     lv_obj_t* _slider_brightness;
     lv_obj_t* _label_brightness_value;
+    lv_obj_t* _switch_kb_light;
     lv_obj_t* _dropdown_timeout;
 
     // GPS status labels (read-only)

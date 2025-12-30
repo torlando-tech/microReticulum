@@ -91,6 +91,28 @@ public:
      */
     static lv_indev_t* get_indev();
 
+    /**
+     * Set keyboard backlight brightness
+     * @param brightness 0-255 (0 = off, 255 = max)
+     */
+    static void set_backlight(uint8_t brightness);
+
+    /**
+     * Turn keyboard backlight on (max brightness)
+     */
+    static void backlight_on();
+
+    /**
+     * Turn keyboard backlight off
+     */
+    static void backlight_off();
+
+    /**
+     * Get time of last key press
+     * @return millis() timestamp of last key press, or 0 if never
+     */
+    static uint32_t get_last_key_time();
+
 private:
     // Special key codes
     enum SpecialKey : uint8_t {
@@ -125,6 +147,7 @@ private:
     static uint8_t _buffer_tail;
     static uint8_t _buffer_count;
     static uint32_t _last_poll_time;
+    static uint32_t _last_key_time;
 
     // I2C communication
     static bool write_register(uint8_t reg, uint8_t value);

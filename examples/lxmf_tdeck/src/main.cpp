@@ -80,6 +80,11 @@ bool last_rns_online = false;
 bool screen_off = false;
 uint8_t saved_brightness = 180;  // Save brightness before turning off
 
+// Keyboard backlight timeout (5 seconds)
+static const uint32_t KB_LIGHT_TIMEOUT_MS = 5000;
+static uint32_t last_keypress_time = 0;
+static bool kb_light_on = false;
+
 // GPS
 TinyGPSPlus gps;
 HardwareSerial GPSSerial(1);  // UART1 for GPS
@@ -324,6 +329,7 @@ void load_app_settings() {
 
     // Display
     app_settings.brightness = prefs.getUChar("brightness", 180);
+    app_settings.keyboard_light = prefs.getBool("kb_light", false);
     app_settings.screen_timeout = prefs.getUShort("timeout", 60);
 
     // Interfaces
@@ -576,13 +582,18 @@ void setup_lxmf() {
     router->set_propagation_node_manager(propagation_manager);
     router->set_fallback_to_propagation(app_settings.prop_fallback_enabled);
     router->set_propagation_only(app_settings.prop_only);
-    if (!app_settings.prop_auto_select && !app_settings.prop_selected_node.isEmpty()) {
+    if (!app_settings.prop_selected_node.isEmpty()) {
+        // Use stored node (works for both manual and auto-select as initial/fallback)
         Bytes selected_node;
         selected_node.assignHex(app_settings.prop_selected_node.c_str());
         router->set_outbound_propagation_node(selected_node);
-        INFO(("  Selected propagation node: " + app_settings.prop_selected_node.substring(0, 16) + "...").c_str());
+        if (app_settings.prop_auto_select) {
+            INFO(("  Propagation node: auto-select (using last known: " + app_settings.prop_selected_node.substring(0, 16) + "...)").c_str());
+        } else {
+            INFO(("  Selected propagation node: " + app_settings.prop_selected_node.substring(0, 16) + "...").c_str());
+        }
     } else {
-        INFO("  Propagation node: auto-select");
+        INFO("  Propagation node: auto-select (no cached node)");
     }
     INFO(("  Fallback to propagation: " + String(app_settings.prop_fallback_enabled ? "enabled" : "disabled")).c_str());
     INFO(("  Propagation only: " + String(app_settings.prop_only ? "enabled" : "disabled")).c_str());
@@ -760,6 +771,20 @@ void setup_ui_manager() {
             if (router) {
                 router->set_fallback_to_propagation(new_settings.prop_fallback_enabled);
                 router->set_propagation_only(new_settings.prop_only);
+
+                // When auto-select is enabled, save the current effective node for next boot
+                if (new_settings.prop_auto_select && propagation_manager) {
+                    Bytes effective = propagation_manager->get_effective_node();
+                    if (effective.size() > 0) {
+                        app_settings.prop_selected_node = String(effective.toHex().c_str());
+                        // Also persist to NVS
+                        Preferences prefs;
+                        prefs.begin("lxmf", false);
+                        prefs.putString("prop_node", app_settings.prop_selected_node);
+                        prefs.end();
+                        INFO(("  Cached effective propagation node: " + app_settings.prop_selected_node.substring(0, 16) + "...").c_str());
+                    }
+                }
             }
 
             INFO("Settings saved");
@@ -950,6 +975,31 @@ void loop() {
             ledcWrite(0, saved_brightness);
             screen_off = false;
             DEBUG("Activity detected - backlight on");
+        }
+    }
+
+    // Keyboard backlight timeout handling
+    if (app_settings.keyboard_light) {
+        uint32_t key_time = Keyboard::get_last_key_time();
+        if (key_time > 0 && key_time > last_keypress_time) {
+            // New key detected
+            last_keypress_time = key_time;
+            if (!kb_light_on) {
+                Keyboard::backlight_on();
+                kb_light_on = true;
+            }
+        }
+
+        // Check for timeout
+        if (kb_light_on && (millis() - last_keypress_time > KB_LIGHT_TIMEOUT_MS)) {
+            Keyboard::backlight_off();
+            kb_light_on = false;
+        }
+    } else {
+        // Ensure light is off when setting disabled
+        if (kb_light_on) {
+            Keyboard::backlight_off();
+            kb_light_on = false;
         }
     }
 
