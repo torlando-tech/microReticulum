@@ -19,7 +19,7 @@ namespace LXMF {
 ChatScreen::ChatScreen(lv_obj_t* parent)
     : _screen(nullptr), _header(nullptr), _message_list(nullptr), _input_area(nullptr),
       _text_area(nullptr), _btn_send(nullptr), _btn_back(nullptr), _btn_info(nullptr),
-      _message_store(nullptr) {
+      _message_store(nullptr), _display_start_idx(0), _loading_more(false) {
 
     // Create screen object
     if (parent) {
@@ -107,6 +107,9 @@ void ChatScreen::create_message_list() {
     lv_obj_set_style_radius(_message_list, 0, 0);
     lv_obj_set_flex_flow(_message_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(_message_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+    // Add scroll event for infinite scroll (load more when at top)
+    lv_obj_add_event_cb(_message_list, on_scroll, LV_EVENT_SCROLL_END, this);
 }
 
 void ChatScreen::create_input_area() {
@@ -183,12 +186,22 @@ void ChatScreen::refresh() {
     lv_obj_clean(_message_list);
     _messages.clear();
 
-    // Load messages from store
-    std::vector<Bytes> message_hashes = _message_store->get_messages_for_conversation(_peer_hash);
+    // Load all message hashes from store (sorted by timestamp)
+    _all_message_hashes = _message_store->get_messages_for_conversation(_peer_hash);
 
-    INFO(("  Found " + String(message_hashes.size()) + " messages").c_str());
+    // Start displaying from the most recent messages
+    if (_all_message_hashes.size() > MESSAGES_PER_PAGE) {
+        _display_start_idx = _all_message_hashes.size() - MESSAGES_PER_PAGE;
+    } else {
+        _display_start_idx = 0;
+    }
 
-    for (const auto& msg_hash : message_hashes) {
+    INFO(("  Found " + String(_all_message_hashes.size()) + " messages, displaying last " +
+          String(_all_message_hashes.size() - _display_start_idx)).c_str());
+
+    for (size_t i = _display_start_idx; i < _all_message_hashes.size(); i++) {
+        const auto& msg_hash = _all_message_hashes[i];
+
         // Use fast metadata loader (no msgpack unpacking)
         ::LXMF::MessageStore::MessageMetadata meta = _message_store->load_message_metadata(msg_hash);
 
@@ -210,6 +223,74 @@ void ChatScreen::refresh() {
 
     // Scroll to bottom
     lv_obj_scroll_to_y(_message_list, LV_COORD_MAX, LV_ANIM_OFF);
+}
+
+void ChatScreen::load_more_messages() {
+    if (_loading_more || _display_start_idx == 0 || !_message_store) {
+        return;  // Already at the beginning or already loading
+    }
+
+    _loading_more = true;
+    INFO("Loading more messages...");
+
+    // Calculate how many more to load
+    size_t load_count = MESSAGES_PER_PAGE;
+    if (_display_start_idx < load_count) {
+        load_count = _display_start_idx;
+    }
+    size_t new_start_idx = _display_start_idx - load_count;
+
+    INFO(("  Loading messages " + String(new_start_idx) + " to " + String(_display_start_idx - 1)).c_str());
+
+    // Build list of new items to prepend
+    std::vector<MessageItem> new_items;
+    for (size_t i = new_start_idx; i < _display_start_idx; i++) {
+        const auto& msg_hash = _all_message_hashes[i];
+
+        ::LXMF::MessageStore::MessageMetadata meta = _message_store->load_message_metadata(msg_hash);
+        if (!meta.valid) {
+            continue;
+        }
+
+        MessageItem item;
+        item.message_hash = msg_hash;
+        item.content = String(meta.content.c_str());
+        item.timestamp_str = format_timestamp(meta.timestamp);
+        item.outgoing = !meta.incoming;
+        item.delivered = (meta.state == static_cast<int>(::LXMF::Type::Message::DELIVERED));
+        item.failed = (meta.state == static_cast<int>(::LXMF::Type::Message::FAILED));
+        new_items.push_back(item);
+    }
+
+    // Create bubbles at the top (prepend by inserting at index 0)
+    for (size_t i = 0; i < new_items.size(); i++) {
+        const auto& item = new_items[i];
+
+        // Create bubble
+        create_message_bubble(item);
+
+        // Move it to the correct position at the top
+        lv_obj_t* bubble_row = lv_obj_get_child(_message_list, lv_obj_get_child_cnt(_message_list) - 1);
+        lv_obj_move_to_index(bubble_row, i);
+    }
+
+    // Prepend to our messages vector
+    _messages.insert(_messages.begin(), new_items.begin(), new_items.end());
+    _display_start_idx = new_start_idx;
+
+    _loading_more = false;
+    INFO(("  Now displaying " + String(_messages.size()) + " messages").c_str());
+}
+
+void ChatScreen::on_scroll(lv_event_t* event) {
+    ChatScreen* screen = (ChatScreen*)lv_event_get_user_data(event);
+
+    // Check if scrolled to top
+    lv_coord_t scroll_y = lv_obj_get_scroll_y(screen->_message_list);
+
+    if (scroll_y <= 5) {  // Near top (with small threshold)
+        screen->load_more_messages();
+    }
 }
 
 void ChatScreen::create_message_bubble(const MessageItem& item) {

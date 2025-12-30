@@ -168,6 +168,16 @@ private:
     // Copy/paste state
     String _pending_copy_text;
 
+    // Pagination state for infinite scroll
+    std::vector<RNS::Bytes> _all_message_hashes;  // All message hashes in conversation
+    size_t _display_start_idx;                     // Index into _all_message_hashes where display starts
+    static constexpr size_t MESSAGES_PER_PAGE = 20;
+    bool _loading_more;                            // Prevent concurrent loads
+
+    // Load more messages (for infinite scroll)
+    void load_more_messages();
+    static void on_scroll(lv_event_t* event);
+
     // Utility
     static String format_timestamp(double timestamp);
     static String get_delivery_indicator(bool outgoing, bool delivered, bool failed);
