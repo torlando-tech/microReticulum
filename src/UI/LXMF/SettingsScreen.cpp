@@ -299,8 +299,8 @@ void SettingsScreen::create_display_section(lv_obj_t* parent) {
     lv_obj_set_style_text_font(bright_label, &lv_font_montserrat_14, 0);
 
     _slider_brightness = lv_slider_create(brightness_row);
-    lv_obj_set_size(_slider_brightness, 140, 10);
-    lv_obj_align(_slider_brightness, LV_ALIGN_LEFT_MID, 70, 0);
+    lv_obj_set_size(_slider_brightness, 120, 10);
+    lv_obj_align(_slider_brightness, LV_ALIGN_LEFT_MID, 95, 0);
     lv_slider_set_range(_slider_brightness, 10, 255);
     lv_obj_set_style_bg_color(_slider_brightness, lv_color_hex(0x404040), LV_PART_MAIN);
     lv_obj_set_style_bg_color(_slider_brightness, lv_color_hex(0x42A5F5), LV_PART_INDICATOR);
