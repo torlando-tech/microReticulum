@@ -461,8 +461,9 @@ void ChatScreen::on_send_clicked(lv_event_t* event) {
     if (message.length() > 0 && screen->_send_message_callback) {
         screen->_send_message_callback(message);
 
-        // Clear text area
+        // Clear text area and keep focus for next message
         lv_textarea_set_text(screen->_text_area, "");
+        lv_group_focus_obj(screen->_text_area);
     }
 }
 
