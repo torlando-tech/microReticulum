@@ -123,6 +123,7 @@ public:
     //=========================================================================
 
     void onConnect(NimBLEClient* pClient) override;
+    void onConnectFail(NimBLEClient* pClient, int reason) override;
     void onDisconnect(NimBLEClient* pClient, int reason) override;
 
     //=========================================================================

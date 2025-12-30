@@ -327,12 +327,11 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
     int clientCount = NimBLEDevice::getCreatedClientCount();
     DEBUG("NimBLEPlatform: Current client count before cleanup: " + std::to_string(clientCount));
 
-    // Create client with peer address (recommended approach for direct connections)
-    // Using createClient(peerAddress) instead of createClient() + connect(addr)
-    // This can help with address type handling
-    DEBUG("NimBLEPlatform: Creating client for address " +
-          std::string(nimAddr.toString().c_str()) + " type=" + std::to_string(nimAddr.getType()));
-    NimBLEClient* client = NimBLEDevice::createClient(nimAddr);
+    // Create client without address, then connect with address explicitly
+    // This uses the connect(NimBLEAddress&) overload which may handle things differently
+    DEBUG("NimBLEPlatform: Creating client (will connect to " +
+          std::string(nimAddr.toString().c_str()) + " type=" + std::to_string(nimAddr.getType()) + ")");
+    NimBLEClient* client = NimBLEDevice::createClient();
     if (!client) {
         ERROR("NimBLEPlatform: Failed to create client");
         if (was_advertising) startAdvertising();
@@ -368,14 +367,16 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
     // client->setConnectionParams(12, 24, 0, 400);
 
     // Log the NimBLE address we're about to use
-    DEBUG("NimBLEPlatform: Calling connect with NimBLE addr=" +
+    DEBUG("NimBLEPlatform: Calling connect(nimAddr) with addr=" +
           std::string(nimAddr.toString().c_str()) +
-          " nimType=" + std::to_string(nimAddr.getType()) +
-          " client->getPeerAddress=" + std::string(client->getPeerAddress().toString().c_str()));
+          " nimType=" + std::to_string(nimAddr.getType()));
 
-    // Try to connect - client already has peer address from createClient()
-    // Use deleteAttributes=true to perform full GATT discovery (might help with Linux peripherals)
-    bool connected = client->connect(true);
+    // Try to connect using explicit address overload (sync mode)
+    // NOTE: On ESP32-S3, outgoing connections fail immediately with error=13 (ETIMEOUT).
+    // Incoming connections (peripheral mode) work correctly. This appears to be an
+    // ESP32-S3/NimBLE controller-level issue. Investigation ongoing.
+    // Parameters: address, deleteAttributes=true, asyncConnect=false, exchangeMTU=true
+    bool connected = client->connect(nimAddr, true, false, true);
     if (!connected) {
         int lastError = client->getLastError();
 
@@ -913,6 +914,13 @@ void NimBLEPlatform::onConnect(NimBLEClient* pClient) {
     if (_on_connected) {
         _on_connected(conn);
     }
+}
+
+void NimBLEPlatform::onConnectFail(NimBLEClient* pClient, int reason) {
+    BLEAddress peer_addr = fromNimBLE(pClient->getPeerAddress());
+    ERROR("NimBLEPlatform: onConnectFail to " + peer_addr.toString() +
+          " reason=" + std::to_string(reason));
+    // Note: The client is typically deleted by NimBLE if deleteOnConnectFail is set
 }
 
 void NimBLEPlatform::onDisconnect(NimBLEClient* pClient, int reason) {
