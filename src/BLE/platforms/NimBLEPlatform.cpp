@@ -808,8 +808,9 @@ void NimBLEPlatform::onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) 
         _on_central_connected(conn);
     }
 
-    // Continue advertising to accept more connections
-    if (_config.role == Role::DUAL && getConnectionCount() < _config.max_connections) {
+    // Continue advertising to accept more connections (peripheral or dual mode)
+    if ((_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) &&
+        getConnectionCount() < _config.max_connections) {
         startAdvertising();
     }
 }
@@ -832,6 +833,12 @@ void NimBLEPlatform::onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInf
 
     // Clear operation queue for this connection
     BLEOperationQueue::clearForConnection(conn_handle);
+
+    // Restart advertising after disconnect (peripheral or dual mode)
+    if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
+        DEBUG("NimBLEPlatform: Restarting advertising after disconnect");
+        startAdvertising();
+    }
 }
 
 void NimBLEPlatform::onMTUChange(uint16_t MTU, NimBLEConnInfo& connInfo) {

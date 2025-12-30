@@ -602,8 +602,8 @@ void setup_reticulum() {
         INFO("Initializing BLE Mesh interface...");
 
         ble_interface_impl = new BLEInterface("BLE");
-        // ESP32-S3 has broken central mode (error=13), use peripheral only
-        // Other devices (Columba, Pi) can connect to us as centrals
+        // ESP32-S3 central mode broken (error=13) even without WiFi - use peripheral only
+        // Other devices (Columba, Pi) connect to T-Deck as centrals
         ble_interface_impl->setRole(RNS::BLE::Role::PERIPHERAL);
         ble_interface_impl->setLocalIdentity(identity->get_public_key().left(16));
         // Set device name to RNS-XXXXXX format (last 6 hex chars of identity)
@@ -890,7 +890,7 @@ void setup_ui_manager() {
                     if (!ble_interface_impl) {
                         INFO("Creating new BLE interface...");
                         ble_interface_impl = new BLEInterface("BLE");
-                        // ESP32-S3 has broken central mode (error=13), use peripheral only
+                        // ESP32-S3 central mode broken - use peripheral only
                         ble_interface_impl->setRole(RNS::BLE::Role::PERIPHERAL);
                         ble_interface_impl->setLocalIdentity(identity->get_public_key().left(16));
                         std::string ble_name = "RNS-" + identity->get_public_key().toHex().substr(26, 6);
