@@ -73,22 +73,22 @@ void ConversationListScreen::create_header() {
     // Status indicators (WiFi RSSI, LoRa RSSI, GPS, Battery) - positioned in center-right area
     _label_wifi = lv_label_create(_header);
     lv_label_set_text(_label_wifi, LV_SYMBOL_WIFI " --");
-    lv_obj_align(_label_wifi, LV_ALIGN_LEFT_MID, 78, 0);
+    lv_obj_align(_label_wifi, LV_ALIGN_LEFT_MID, 63, 0);
     lv_obj_set_style_text_color(_label_wifi, lv_color_hex(0x808080), 0);
 
     _label_lora = lv_label_create(_header);
     lv_label_set_text(_label_lora, LV_SYMBOL_CALL " --");  // Antenna-like symbol
-    lv_obj_align(_label_lora, LV_ALIGN_LEFT_MID, 130, 0);
+    lv_obj_align(_label_lora, LV_ALIGN_LEFT_MID, 115, 0);
     lv_obj_set_style_text_color(_label_lora, lv_color_hex(0x808080), 0);
 
     _label_gps = lv_label_create(_header);
     lv_label_set_text(_label_gps, LV_SYMBOL_GPS " --");
-    lv_obj_align(_label_gps, LV_ALIGN_LEFT_MID, 178, 0);
+    lv_obj_align(_label_gps, LV_ALIGN_LEFT_MID, 163, 0);
     lv_obj_set_style_text_color(_label_gps, lv_color_hex(0x808080), 0);
 
     _label_battery = lv_label_create(_header);
     lv_label_set_text(_label_battery, LV_SYMBOL_BATTERY_FULL " --%");
-    lv_obj_align(_label_battery, LV_ALIGN_LEFT_MID, 215, 0);
+    lv_obj_align(_label_battery, LV_ALIGN_LEFT_MID, 200, 0);
     lv_obj_set_style_text_color(_label_battery, lv_color_hex(0x808080), 0);
 
     // New message button (right corner)
