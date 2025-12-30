@@ -79,10 +79,10 @@ void ConversationListScreen::create_header() {
     lv_obj_align(_label_battery, LV_ALIGN_LEFT_MID, 145, 0);
     lv_obj_set_style_text_color(_label_battery, lv_color_hex(0x808080), 0);
 
-    // New message button
+    // New message button (right corner)
     _btn_new = lv_btn_create(_header);
     lv_obj_set_size(_btn_new, 55, 28);
-    lv_obj_align(_btn_new, LV_ALIGN_RIGHT_MID, -48, 0);
+    lv_obj_align(_btn_new, LV_ALIGN_RIGHT_MID, -4, 0);
     lv_obj_set_style_bg_color(_btn_new, lv_color_hex(0x2e7d32), 0);
     lv_obj_set_style_bg_color(_btn_new, lv_color_hex(0x388e3c), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_new, on_new_message_clicked, LV_EVENT_CLICKED, this);
@@ -91,19 +91,6 @@ void ConversationListScreen::create_header() {
     lv_label_set_text(label_new, "New");
     lv_obj_center(label_new);
     lv_obj_set_style_text_color(label_new, lv_color_hex(0xffffff), 0);
-
-    // Settings button
-    _btn_settings = lv_btn_create(_header);
-    lv_obj_set_size(_btn_settings, 40, 28);
-    lv_obj_align(_btn_settings, LV_ALIGN_RIGHT_MID, -4, 0);
-    lv_obj_set_style_bg_color(_btn_settings, lv_color_hex(0x333333), 0);
-    lv_obj_set_style_bg_color(_btn_settings, lv_color_hex(0x444444), LV_STATE_PRESSED);
-    lv_obj_add_event_cb(_btn_settings, on_settings_clicked, LV_EVENT_CLICKED, this);
-
-    lv_obj_t* label_settings = lv_label_create(_btn_settings);
-    lv_label_set_text(label_settings, LV_SYMBOL_SETTINGS);
-    lv_obj_center(label_settings);
-    lv_obj_set_style_text_color(label_settings, lv_color_hex(0xe0e0e0), 0);
 }
 
 void ConversationListScreen::create_list() {
