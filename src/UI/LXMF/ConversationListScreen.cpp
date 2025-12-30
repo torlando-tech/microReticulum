@@ -328,11 +328,22 @@ void ConversationListScreen::update_status() {
     int percent = (int)((voltage - Power::BATTERY_EMPTY) / (Power::BATTERY_FULL - Power::BATTERY_EMPTY) * 100);
     percent = constrain(percent, 0, 100);
 
-    String battery_text = String(LV_SYMBOL_BATTERY_FULL) + " " + String(percent) + "%";
+    // Detect charging: voltage > 4.1V indicates USB power connected
+    // (battery alone under load won't maintain this voltage)
+    bool charging = (voltage > 4.1);
+
+    String battery_text;
+    if (charging) {
+        battery_text = String(LV_SYMBOL_CHARGE) + " " + String(percent) + "%";
+    } else {
+        battery_text = String(LV_SYMBOL_BATTERY_FULL) + " " + String(percent) + "%";
+    }
     lv_label_set_text(_label_battery, battery_text.c_str());
 
-    // Color based on battery level
-    if (percent > 50) {
+    // Color based on battery level (cyan when charging)
+    if (charging) {
+        lv_obj_set_style_text_color(_label_battery, lv_color_hex(0x00BCD4), 0);  // Cyan
+    } else if (percent > 50) {
         lv_obj_set_style_text_color(_label_battery, lv_color_hex(0x4CAF50), 0);  // Green
     } else if (percent > 20) {
         lv_obj_set_style_text_color(_label_battery, lv_color_hex(0xFFEB3B), 0);  // Yellow
