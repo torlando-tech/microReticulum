@@ -604,6 +604,9 @@ void setup_reticulum() {
         ble_interface_impl = new BLEInterface("BLE");
         ble_interface_impl->setRole(RNS::BLE::Role::DUAL);  // Both central and peripheral
         ble_interface_impl->setLocalIdentity(identity->get_public_key().left(16));
+        // Set device name to RNS-XXXXXX format (last 6 hex chars of identity)
+        std::string ble_name = "RNS-" + identity->get_public_key().toHex().substr(26, 6);
+        ble_interface_impl->setDeviceName(ble_name);
         ble_interface = new Interface(ble_interface_impl);
 
         if (!ble_interface->start()) {
@@ -887,6 +890,8 @@ void setup_ui_manager() {
                         ble_interface_impl = new BLEInterface("BLE");
                         ble_interface_impl->setRole(RNS::BLE::Role::DUAL);
                         ble_interface_impl->setLocalIdentity(identity->get_public_key().left(16));
+                        std::string ble_name = "RNS-" + identity->get_public_key().toHex().substr(26, 6);
+                        ble_interface_impl->setDeviceName(ble_name);
                         ble_interface = new Interface(ble_interface_impl);
                     }
 
