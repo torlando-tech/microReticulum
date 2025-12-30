@@ -136,9 +136,6 @@ void ChatScreen::create_input_area() {
     // Add long-press for paste
     lv_obj_add_event_cb(_text_area, on_textarea_long_pressed, LV_EVENT_LONG_PRESSED, this);
 
-    // Add key handler for Enter to send
-    lv_obj_add_event_cb(_text_area, on_textarea_key, LV_EVENT_KEY, this);
-
     // Send button
     _btn_send = lv_btn_create(_input_area);
     lv_obj_set_size(_btn_send, 67, 40);
@@ -618,28 +615,6 @@ void ChatScreen::on_paste_dialog_action(lv_event_t* event) {
     }
 
     lv_msgbox_close(mbox);
-}
-
-void ChatScreen::on_textarea_key(lv_event_t* event) {
-    ChatScreen* screen = (ChatScreen*)lv_event_get_user_data(event);
-    uint32_t key = lv_event_get_key(event);
-
-    // Enter key sends the message
-    if (key == LV_KEY_ENTER) {
-        const char* text = lv_textarea_get_text(screen->_text_area);
-        String message(text);
-
-        if (message.length() > 0 && screen->_send_message_callback) {
-            screen->_send_message_callback(message);
-
-            // Clear text area and keep focus
-            lv_textarea_set_text(screen->_text_area, "");
-            lv_group_focus_obj(screen->_text_area);
-        }
-
-        // Stop event propagation to prevent newline insertion
-        lv_event_stop_processing(event);
-    }
 }
 
 } // namespace LXMF
