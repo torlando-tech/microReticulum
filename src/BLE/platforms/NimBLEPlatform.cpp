@@ -1034,13 +1034,16 @@ bool NimBLEPlatform::setupServer() {
         UUID::RX_CHAR,
         NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
     );
+    _rx_char->setValue((uint8_t*)"\x00", 1);  // Initialize to 0x00
     _rx_char->setCallbacks(this);
 
-    // Create TX characteristic (notify to central)
+    // Create TX characteristic (notify/indicate to central)
+    // Note: indicate property required for compatibility with ble-reticulum/Columba
     _tx_char = _service->createCharacteristic(
         UUID::TX_CHAR,
-        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::INDICATE
     );
+    _tx_char->setValue((uint8_t*)"\x00", 1);  // Initialize to 0x00 (matches Columba)
     _tx_char->setCallbacks(this);
 
     // Create Identity characteristic (read only)
@@ -1063,23 +1066,19 @@ bool NimBLEPlatform::setupAdvertising() {
         return false;
     }
 
+    // CRITICAL: Reset advertising state before configuring
+    // Without this, the advertising data may not be properly updated on ESP32-S3
+    _advertising_obj->reset();
+
     _advertising_obj->setMinInterval(_config.adv_interval_min_ms * 1000 / 625);  // Convert to 0.625ms units
     _advertising_obj->setMaxInterval(_config.adv_interval_max_ms * 1000 / 625);
 
-    // NimBLE 2.x: Explicitly build advertising data with service UUID
-    // This ensures the UUID appears in the main advertising packet (not just scan response)
-    // Required for Android ScanFilter.setServiceUuid() to detect the device
-    NimBLEAdvertisementData advertiseData;
-    advertiseData.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
-    advertiseData.setCompleteServices(BLEUUID(UUID::SERVICE));
-    _advertising_obj->setAdvertisementData(advertiseData);
+    // NimBLE 2.x: Use addServiceUUID to include service in advertising packet
+    // The name goes in scan response automatically when enableScanResponse is used
+    _advertising_obj->addServiceUUID(NimBLEUUID(UUID::SERVICE));
+    _advertising_obj->setName(_config.device_name);
 
-    // Set scan response data with device name (separate 31-byte payload)
-    NimBLEAdvertisementData scanResponseData;
-    scanResponseData.setName(_config.device_name);
-    _advertising_obj->setScanResponseData(scanResponseData);
-
-    DEBUG("NimBLEPlatform: Advertising configured with service UUID in main packet");
+    DEBUG("NimBLEPlatform: Advertising configured with service UUID: " + std::string(UUID::SERVICE));
 
     return true;
 }
