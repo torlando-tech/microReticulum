@@ -54,12 +54,12 @@ bool NimBLEPlatform::initialize(const PlatformConfig& config) {
     NimBLEDevice::setSecurityAuth(false, false, false);  // No bonding, no MITM, no SC
     NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);  // Just works / no auth
 
-    // Use random static address type - ESP32-S3 may have issues with public address in central mode
-    // This helps with address resolution and connection establishment
-    if (!NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM)) {
-        WARNING("NimBLEPlatform: Failed to set random address type, using public");
-    } else {
-        DEBUG("NimBLEPlatform: Using random address type for connections");
+    // Use public address for consistent device identity
+    // Random addresses change when BLE stack reinitializes (e.g., when WiFi starts),
+    // which breaks peer tracking. The async connect fixes central mode issues, so
+    // random address is no longer needed.
+    if (!NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_PUBLIC)) {
+        WARNING("NimBLEPlatform: Failed to set public address type");
     }
 
     // Set power level (ESP32)
@@ -953,14 +953,16 @@ void NimBLEPlatform::onConnectFail(NimBLEClient* pClient, int reason) {
         _clients.erase(pending_it);
     }
 
+    // Delete the client to free up the slot for future connections
+    // With async connect, NimBLE doesn't automatically delete the client on failure
+    NimBLEDevice::deleteClient(pClient);
+
     // Restart advertising if we're in dual/peripheral mode
     if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
         if (!isAdvertising()) {
             startAdvertising();
         }
     }
-
-    // Note: The client is deleted by NimBLE since we set deleteOnConnectFail in connect()
 }
 
 void NimBLEPlatform::onDisconnect(NimBLEClient* pClient, int reason) {
