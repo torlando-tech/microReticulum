@@ -368,9 +368,12 @@ struct PlatformConfig {
     std::string device_name = "RNS-Node";
 
     // Scan parameters (central mode)
-    uint16_t scan_interval_ms = 100;
-    uint16_t scan_window_ms = 50;
-    ScanMode scan_mode = ScanMode::ACTIVE;
+    // WiFi/BLE Coexistence: With software coexistence, scan interval must not exceed 160ms.
+    // Use lower duty cycle (25%) to give WiFi more RF access time.
+    // Passive scanning reduces TX interference with WiFi.
+    uint16_t scan_interval_ms = 120;  // 120ms interval (within 160ms coex limit)
+    uint16_t scan_window_ms = 30;     // 30ms window (25% duty cycle for WiFi breathing room)
+    ScanMode scan_mode = ScanMode::PASSIVE;  // Passive scan reduces RF contention
     uint16_t scan_duration_ms = 10000;  // 0 = continuous
 
     // Connection parameters
