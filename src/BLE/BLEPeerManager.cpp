@@ -306,20 +306,16 @@ bool BLEPeerManager::shouldInitiateConnection(const Bytes& our_mac, const Bytes&
         return false;
     }
 
-    // Check if our MAC is a random address (first byte >= 0xC0)
-    // Random addresses have the two MSBs of the first byte set (0b11xxxxxx)
-    // When using random addresses, MAC comparison is unreliable because our
-    // random MAC changes between restarts. In this case, always initiate
-    // connections and let the identity layer handle duplicate connections.
-    if (our_mac.data()[0] >= 0xC0) {
-        return true;  // Always initiate with random address
-    }
-
-    // Lower MAC initiates connection (standard behavior for public addresses)
+    // Lower MAC initiates connection - standard ble-reticulum behavior
+    // This works for both public and random addresses since both devices
+    // see each other's advertised address and can make the same decision.
     BLEAddress our_addr(our_mac.data());
     BLEAddress peer_addr(peer_mac.data());
 
-    return our_addr.isLowerThan(peer_addr);
+    bool result = our_addr.isLowerThan(peer_addr);
+    DEBUG("BLEPeerManager::shouldInitiateConnection: our=" + our_addr.toString() +
+          " peer=" + peer_addr.toString() + " result=" + std::string(result ? "yes" : "no"));
+    return result;
 }
 
 void BLEPeerManager::connectionSucceeded(const Bytes& identifier) {
