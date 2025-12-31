@@ -980,13 +980,8 @@ void setup() {
         INFO("GPS time sync disabled in settings");
     }
 
-    // Initialize WiFi (or disable if BLE enabled for testing)
-    if (app_settings.ble_enabled) {
-        WiFi.mode(WIFI_OFF);  // Completely disable WiFi radio
-        INFO("WiFi radio disabled - testing BLE without WiFi coexistence");
-    } else {
-        setup_wifi();
-    }
+    // Initialize WiFi
+    setup_wifi();
 
     // Initialize LVGL and hardware drivers
     setup_lvgl_and_ui();
