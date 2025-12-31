@@ -602,9 +602,8 @@ void setup_reticulum() {
         INFO("Initializing BLE Mesh interface...");
 
         ble_interface_impl = new BLEInterface("BLE");
-        // ESP32-S3 central mode broken (error=13) even without WiFi - use peripheral only
-        // Other devices (Columba, Pi) connect to T-Deck as centrals
-        ble_interface_impl->setRole(RNS::BLE::Role::PERIPHERAL);
+        // Testing: DUAL mode with WiFi radio completely disabled
+        ble_interface_impl->setRole(RNS::BLE::Role::DUAL);
         ble_interface_impl->setLocalIdentity(identity->get_public_key().left(16));
         // Set device name to RNS-XXXXXX format (last 6 hex chars of identity)
         std::string ble_name = "RNS-" + identity->get_public_key().toHex().substr(26, 6);
@@ -890,8 +889,8 @@ void setup_ui_manager() {
                     if (!ble_interface_impl) {
                         INFO("Creating new BLE interface...");
                         ble_interface_impl = new BLEInterface("BLE");
-                        // ESP32-S3 central mode broken - use peripheral only
-                        ble_interface_impl->setRole(RNS::BLE::Role::PERIPHERAL);
+                        // Testing: DUAL mode with WiFi radio completely disabled
+                        ble_interface_impl->setRole(RNS::BLE::Role::DUAL);
                         ble_interface_impl->setLocalIdentity(identity->get_public_key().left(16));
                         std::string ble_name = "RNS-" + identity->get_public_key().toHex().substr(26, 6);
                         ble_interface_impl->setDeviceName(ble_name);
@@ -981,8 +980,13 @@ void setup() {
         INFO("GPS time sync disabled in settings");
     }
 
-    // Initialize WiFi
-    setup_wifi();
+    // Initialize WiFi (or disable if BLE enabled for testing)
+    if (app_settings.ble_enabled) {
+        WiFi.mode(WIFI_OFF);  // Completely disable WiFi radio
+        INFO("WiFi radio disabled - testing BLE without WiFi coexistence");
+    } else {
+        setup_wifi();
+    }
 
     // Initialize LVGL and hardware drivers
     setup_lvgl_and_ui();

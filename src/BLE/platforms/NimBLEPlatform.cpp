@@ -40,6 +40,28 @@ bool NimBLEPlatform::initialize(const PlatformConfig& config) {
     // Initialize NimBLE
     NimBLEDevice::init(_config.device_name);
 
+    // Clear all bonds to prevent stale bond information from causing connection failures
+    // This is especially important on ESP32-S3 where stale bonds can cause error=13 (ETIMEOUT)
+    // when attempting central mode connections
+    int numBonds = NimBLEDevice::getNumBonds();
+    if (numBonds > 0) {
+        DEBUG("NimBLEPlatform: Clearing " + std::to_string(numBonds) + " stale bonds from NVS");
+        NimBLEDevice::deleteAllBonds();
+    }
+
+    // Disable security requirements - we use open GATT connections, no pairing needed
+    // This helps avoid connection failures due to security negotiation issues on ESP32-S3
+    NimBLEDevice::setSecurityAuth(false, false, false);  // No bonding, no MITM, no SC
+    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);  // Just works / no auth
+
+    // Use random static address type - ESP32-S3 may have issues with public address in central mode
+    // This helps with address resolution and connection establishment
+    if (!NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM)) {
+        WARNING("NimBLEPlatform: Failed to set random address type, using public");
+    } else {
+        DEBUG("NimBLEPlatform: Using random address type for connections");
+    }
+
     // Set power level (ESP32)
     NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
@@ -371,49 +393,32 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
           std::string(nimAddr.toString().c_str()) +
           " nimType=" + std::to_string(nimAddr.getType()));
 
-    // Try to connect using explicit address overload (sync mode)
-    // NOTE: On ESP32-S3, outgoing connections fail immediately with error=13 (ETIMEOUT).
-    // Incoming connections (peripheral mode) work correctly. This appears to be an
-    // ESP32-S3/NimBLE controller-level issue. Investigation ongoing.
-    // Parameters: address, deleteAttributes=true, asyncConnect=false, exchangeMTU=true
-    bool connected = client->connect(nimAddr, true, false, true);
-    if (!connected) {
+    // Use async connect to avoid blocking the main loop
+    // Parameters: address, deleteAttributes=true, asyncConnect=true, exchangeMTU=true
+    // The onConnect/onConnectFail callbacks will handle the result
+    bool connectStarted = client->connect(nimAddr, true, true, true);
+    if (!connectStarted) {
         int lastError = client->getLastError();
-
-        // Check GAP state after failed connect
-        bool adv_after = ble_gap_adv_active();
-        bool disc_after = ble_gap_disc_active();
-        bool conn_after = ble_gap_conn_active();
-
-        // Decode error codes for better debugging
-        const char* errorStr = "UNKNOWN";
-        switch (lastError) {
-            case 0: errorStr = "SUCCESS"; break;
-            case 1: errorStr = "EDONE"; break;
-            case 2: errorStr = "EBUSY"; break;
-            case 3: errorStr = "ESTALLED"; break;
-            case 4: errorStr = "ENOTCONN"; break;
-            case 5: errorStr = "EREQREJ"; break;
-            case 13: errorStr = "ETIMEOUT"; break;
-            case 14: errorStr = "ENOENT"; break;
-            case 17: errorStr = "ENOMEM"; break;
-        }
-
-        ERROR("NimBLEPlatform: Connection failed to " + address.toString() +
-              " error=" + std::to_string(lastError) + " (" + errorStr + ")" +
-              " GAP_after: adv=" + std::to_string(adv_after) +
-              " disc=" + std::to_string(disc_after) +
-              " conn=" + std::to_string(conn_after));
-
+        ERROR("NimBLEPlatform: Failed to start async connect to " + address.toString() +
+              " error=" + std::to_string(lastError));
         NimBLEDevice::deleteClient(client);
         if (was_advertising) startAdvertising();
         return false;
     }
 
-    // Connection successful - setup tracked in onConnect callback
-    // Advertising will be restarted based on role after connection is established
-    return true;
+    // Store the client for tracking - connection result will come via callbacks
+    _clients[0xFFFF] = client;  // Temporary handle until connection completes
+
+    DEBUG("NimBLEPlatform: Async connect started to " + address.toString());
+
+    // Restart advertising while connecting (if we were advertising and are in dual mode)
+    if (was_advertising && _config.role == Role::DUAL) {
+        startAdvertising();
+    }
+
+    return true;  // Connection in progress
 }
+
 
 bool NimBLEPlatform::disconnect(uint16_t conn_handle) {
     auto conn_it = _connections.find(conn_handle);
@@ -681,11 +686,19 @@ bool NimBLEPlatform::enableNotifications(uint16_t conn_handle, bool enable) {
 
 bool NimBLEPlatform::notify(uint16_t conn_handle, const Bytes& data) {
     if (!_tx_char) {
+        ERROR("NimBLEPlatform::notify: _tx_char is null");
         return false;
     }
 
+    DEBUG("NimBLEPlatform::notify: conn=" + std::to_string(conn_handle) +
+          " data=" + std::to_string(data.size()) + " bytes");
+
     _tx_char->setValue(data.data(), data.size());
-    return _tx_char->notify(true);
+    bool result = _tx_char->notify(conn_handle);  // Notify specific connection
+    if (!result) {
+        ERROR("NimBLEPlatform::notify: notify() returned false for conn=" + std::to_string(conn_handle));
+    }
+    return result;
 }
 
 bool NimBLEPlatform::notifyAll(const Bytes& data) {
@@ -906,6 +919,12 @@ void NimBLEPlatform::onConnect(NimBLEClient* pClient) {
     uint16_t conn_handle = pClient->getConnHandle();
     BLEAddress peer_addr = fromNimBLE(pClient->getPeerAddress());
 
+    // Remove temporary pending connection entry if it exists
+    auto pending_it = _clients.find(0xFFFF);
+    if (pending_it != _clients.end() && pending_it->second == pClient) {
+        _clients.erase(pending_it);
+    }
+
     ConnectionHandle conn;
     conn.handle = conn_handle;
     conn.peer_address = peer_addr;
@@ -927,7 +946,21 @@ void NimBLEPlatform::onConnectFail(NimBLEClient* pClient, int reason) {
     BLEAddress peer_addr = fromNimBLE(pClient->getPeerAddress());
     ERROR("NimBLEPlatform: onConnectFail to " + peer_addr.toString() +
           " reason=" + std::to_string(reason));
-    // Note: The client is typically deleted by NimBLE if deleteOnConnectFail is set
+
+    // Remove temporary pending connection entry if it exists
+    auto pending_it = _clients.find(0xFFFF);
+    if (pending_it != _clients.end() && pending_it->second == pClient) {
+        _clients.erase(pending_it);
+    }
+
+    // Restart advertising if we're in dual/peripheral mode
+    if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
+        if (!isAdvertising()) {
+            startAdvertising();
+        }
+    }
+
+    // Note: The client is deleted by NimBLE since we set deleteOnConnectFail in connect()
 }
 
 void NimBLEPlatform::onDisconnect(NimBLEClient* pClient, int reason) {

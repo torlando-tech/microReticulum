@@ -306,7 +306,7 @@ bool BLEPeerManager::shouldInitiateConnection(const Bytes& our_mac, const Bytes&
         return false;
     }
 
-    // Lower MAC initiates connection
+    // Lower MAC initiates connection to avoid both sides trying to connect
     BLEAddress our_addr(our_mac.data());
     BLEAddress peer_addr(peer_mac.data());
 
