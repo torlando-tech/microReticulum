@@ -9,8 +9,20 @@
 
 #include "../../Log.h"
 
-// NimBLE low-level GAP functions for checking stack state
+// WiFi coexistence: Check if WiFi is available and connected
+// This is used to add extra delays before BLE connection attempts
+#if __has_include(<WiFi.h>)
+    #include <WiFi.h>
+    #define HAS_WIFI_COEX 1
+#else
+    #define HAS_WIFI_COEX 0
+#endif
+
+// NimBLE low-level GAP functions for checking stack state and native connections
 extern "C" {
+    #include "nimble/nimble/host/include/host/ble_gap.h"
+    #include "nimble/nimble/host/include/host/ble_hs.h"
+
     int ble_gap_adv_active(void);
     int ble_gap_disc_active(void);
     int ble_gap_conn_active(void);
@@ -54,13 +66,13 @@ bool NimBLEPlatform::initialize(const PlatformConfig& config) {
     NimBLEDevice::setSecurityAuth(false, false, false);  // No bonding, no MITM, no SC
     NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);  // Just works / no auth
 
-    // Use public address for consistent device identity
-    // Random addresses change when BLE stack reinitializes (e.g., when WiFi starts),
-    // which breaks peer tracking. The async connect fixes central mode issues, so
-    // random address is no longer needed.
-    if (!NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_PUBLIC)) {
-        WARNING("NimBLEPlatform: Failed to set public address type");
-    }
+    // Address type for ESP32-S3:
+    // - BLE_OWN_ADDR_PUBLIC fails with error 13 (ETIMEOUT) for client connections
+    // - BLE_OWN_ADDR_RPA_PUBLIC_DEFAULT also fails with error 13
+    // - BLE_OWN_ADDR_RANDOM works for client connections
+    // Using RANDOM address allows connections to work. Role negotiation is handled
+    // by always initiating connections and using identity-based duplicate detection.
+    NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM);
 
     // Set power level (ESP32)
     NimBLEDevice::setPower(ESP_PWR_LVL_P9);
@@ -161,6 +173,7 @@ void NimBLEPlatform::shutdown() {
     }
     _clients.clear();
     _connections.clear();
+    _discovered_devices.clear();
 
     // Deinit NimBLE
     if (_initialized) {
@@ -184,6 +197,86 @@ bool NimBLEPlatform::isRunning() const {
 }
 
 //=============================================================================
+// BLE Stack Recovery
+//=============================================================================
+
+bool NimBLEPlatform::recoverBLEStack() {
+    WARNING("NimBLEPlatform: Starting BLE stack recovery...");
+
+    // Save identity data to restore after reinit
+    Bytes saved_identity = _identity_data;
+
+    // Stop all BLE operations
+    _scanning = false;
+    _advertising = false;
+    _scan_stop_time = 0;
+
+    // Clear all clients and connections
+    for (auto& kv : _clients) {
+        if (kv.second) {
+            if (kv.second->isConnected()) {
+                kv.second->disconnect();
+            }
+            NimBLEDevice::deleteClient(kv.second);
+        }
+    }
+    _clients.clear();
+    _connections.clear();
+    _discovered_devices.clear();
+
+    // Clear pointers before deinit
+    _server = nullptr;
+    _service = nullptr;
+    _rx_char = nullptr;
+    _tx_char = nullptr;
+    _identity_char = nullptr;
+    _scan = nullptr;
+    _advertising_obj = nullptr;
+
+    // Deinitialize NimBLE completely
+    INFO("NimBLEPlatform: Deinitializing NimBLE...");
+    NimBLEDevice::deinit(true);
+    delay(200);  // Give hardware time to reset
+
+    // Reinitialize NimBLE
+    INFO("NimBLEPlatform: Reinitializing NimBLE...");
+    NimBLEDevice::init(_config.device_name);
+    NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM);
+    NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+    NimBLEDevice::setMTU(_config.preferred_mtu);
+
+    // Re-setup server if needed
+    if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
+        if (!setupServer()) {
+            ERROR("NimBLEPlatform: Failed to setup server during recovery");
+            return false;
+        }
+    }
+
+    // Re-setup scan if needed
+    if (_config.role == Role::CENTRAL || _config.role == Role::DUAL) {
+        if (!setupScan()) {
+            ERROR("NimBLEPlatform: Failed to setup scan during recovery");
+            return false;
+        }
+    }
+
+    // Restore identity data
+    if (saved_identity.size() > 0) {
+        setIdentityData(saved_identity);
+    }
+
+    // Start advertising if in peripheral/dual mode
+    if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
+        startAdvertising();
+    }
+
+    _scan_fail_count = 0;
+    INFO("NimBLEPlatform: BLE stack recovery complete");
+    return true;
+}
+
+//=============================================================================
 // Central Mode - Scanning
 //=============================================================================
 
@@ -194,6 +287,7 @@ bool NimBLEPlatform::startScan(uint16_t duration_ms) {
     }
 
     if (_scanning) {
+        _scan_fail_count = 0;  // Reset on successful state
         return true;
     }
 
@@ -226,13 +320,34 @@ bool NimBLEPlatform::startScan(uint16_t duration_ms) {
 
     if (started) {
         _scanning = true;
+        _scan_fail_count = 0;  // Reset failure counter on success
         _scan_stop_time = millis() + duration_ms;  // Schedule when to stop
         DEBUG("NimBLEPlatform: Scan started, will stop at " + std::to_string(_scan_stop_time) +
               " (in " + std::to_string(duration_ms) + "ms)");
         return true;
     }
 
-    ERROR("NimBLEPlatform: Failed to start scan");
+    // Scan failed - track failures and attempt recovery if needed
+    _scan_fail_count++;
+    ERROR("NimBLEPlatform: Failed to start scan (attempt " + std::to_string(_scan_fail_count) + ")");
+
+    if (_scan_fail_count >= SCAN_FAIL_RECOVERY_THRESHOLD) {
+        WARNING("NimBLEPlatform: Too many scan failures, attempting BLE stack recovery");
+        if (recoverBLEStack()) {
+            INFO("NimBLEPlatform: BLE stack recovered, retrying scan");
+            // Try scan one more time after recovery
+            _scan->clearResults();
+            started = _scan->start(0, false);
+            if (started) {
+                _scanning = true;
+                _scan_fail_count = 0;
+                _scan_stop_time = millis() + duration_ms;
+                INFO("NimBLEPlatform: Scan started after recovery");
+                return true;
+            }
+        }
+    }
+
     return false;
 }
 
@@ -270,7 +385,6 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
     }
 
     // Stop scanning and advertising before connecting
-    bool was_scanning = _scanning;
     bool was_advertising = isAdvertising();
 
     // Use low-level GAP cancel functions for reliable cleanup
@@ -349,74 +463,229 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
     int clientCount = NimBLEDevice::getCreatedClientCount();
     DEBUG("NimBLEPlatform: Current client count before cleanup: " + std::to_string(clientCount));
 
-    // Create client without address, then connect with address explicitly
-    // This uses the connect(NimBLEAddress&) overload which may handle things differently
-    DEBUG("NimBLEPlatform: Creating client (will connect to " +
-          std::string(nimAddr.toString().c_str()) + " type=" + std::to_string(nimAddr.getType()) + ")");
-    NimBLEClient* client = NimBLEDevice::createClient();
-    if (!client) {
-        ERROR("NimBLEPlatform: Failed to create client");
-        if (was_advertising) startAdvertising();
-        return false;
-    }
-
-    client->setClientCallbacks(this, false);
-    client->setConnectTimeout(timeout_ms / 1000);
-
-    // Check current connection state
-    size_t serverConnCount = _server ? _server->getConnectedCount() : 0;
-    size_t clientConnCount = 0;
-    for (const auto& kv : _clients) {
-        if (kv.second && kv.second->isConnected()) clientConnCount++;
-    }
-
-    // Check GAP state right before connect
-    bool adv_before = ble_gap_adv_active();
-    bool disc_before = ble_gap_disc_active();
-    bool conn_before = ble_gap_conn_active();
-
-    DEBUG("NimBLEPlatform: Pre-connect state: GAP adv=" + std::to_string(adv_before) +
-          " disc=" + std::to_string(disc_before) + " conn=" + std::to_string(conn_before) +
-          " serverConns=" + std::to_string(serverConnCount) +
-          " clientConns=" + std::to_string(clientConnCount));
-
     DEBUG("NimBLEPlatform: Connecting to " + address.toString() +
-          " type=" + std::to_string(address.type) +
-          " timeout=" + std::to_string(timeout_ms / 1000) + "s");
+          " timeout=" + std::to_string(timeout_ms / 1000) + "s" +
+          " addrType=" + std::to_string(nimAddr.getType()));
 
-    // Use default connection parameters - custom params might cause issues
-    // Default: min 24 (30ms), max 40 (50ms), latency 0, timeout 200 (2000ms)
-    // client->setConnectionParams(12, 24, 0, 400);
+    // Use native NimBLE connection instead of NimBLE-Arduino wrapper
+    // This bypasses potential issues in NimBLEClient::connect() on ESP32-S3
+    DEBUG("NimBLEPlatform: Using native ble_gap_connect()");
+    bool connected = connectNative(address, timeout_ms);
 
-    // Log the NimBLE address we're about to use
-    DEBUG("NimBLEPlatform: Calling connect(nimAddr) with addr=" +
-          std::string(nimAddr.toString().c_str()) +
-          " nimType=" + std::to_string(nimAddr.getType()));
-
-    // Use async connect to avoid blocking the main loop
-    // Parameters: address, deleteAttributes=true, asyncConnect=true, exchangeMTU=true
-    // The onConnect/onConnectFail callbacks will handle the result
-    bool connectStarted = client->connect(nimAddr, true, true, true);
-    if (!connectStarted) {
-        int lastError = client->getLastError();
-        ERROR("NimBLEPlatform: Failed to start async connect to " + address.toString() +
-              " error=" + std::to_string(lastError));
-        NimBLEDevice::deleteClient(client);
+    if (!connected) {
+        ERROR("NimBLEPlatform: Native connection failed to " + address.toString());
         if (was_advertising) startAdvertising();
         return false;
     }
 
-    // Store the client for tracking - connection result will come via callbacks
-    _clients[0xFFFF] = client;  // Temporary handle until connection completes
-
-    DEBUG("NimBLEPlatform: Async connect started to " + address.toString());
-
-    // Restart advertising while connecting (if we were advertising and are in dual mode)
-    if (was_advertising && _config.role == Role::DUAL) {
-        startAdvertising();
+    // Remove from discovered devices cache
+    std::string addrKey = nimAddr.toString().c_str();
+    auto cachedIt = _discovered_devices.find(addrKey);
+    if (cachedIt != _discovered_devices.end()) {
+        _discovered_devices.erase(cachedIt);
+        DEBUG("NimBLEPlatform: Removed connected device from cache");
     }
 
-    return true;  // Connection in progress
+    DEBUG("NimBLEPlatform: Connection established successfully");
+    return true;
+}
+
+//=============================================================================
+// Native NimBLE Connection (bypasses NimBLE-Arduino wrapper)
+//=============================================================================
+
+int NimBLEPlatform::nativeGapEventHandler(struct ble_gap_event* event, void* arg) {
+    NimBLEPlatform* platform = static_cast<NimBLEPlatform*>(arg);
+
+    switch (event->type) {
+        case BLE_GAP_EVENT_CONNECT:
+            DEBUG("NimBLEPlatform::nativeGapEventHandler: BLE_GAP_EVENT_CONNECT status=" +
+                  std::to_string(event->connect.status) +
+                  " handle=" + std::to_string(event->connect.conn_handle));
+
+            platform->_native_connect_result = event->connect.status;
+            if (event->connect.status == 0) {
+                platform->_native_connect_success = true;
+                platform->_native_connect_handle = event->connect.conn_handle;
+            } else {
+                platform->_native_connect_success = false;
+            }
+            platform->_native_connect_pending = false;
+            break;
+
+        case BLE_GAP_EVENT_DISCONNECT: {
+            uint16_t disc_handle = event->disconnect.conn.conn_handle;
+            int disc_reason = event->disconnect.reason;
+
+            DEBUG("NimBLEPlatform::nativeGapEventHandler: BLE_GAP_EVENT_DISCONNECT reason=" +
+                  std::to_string(disc_reason) +
+                  " handle=" + std::to_string(disc_handle));
+
+            // If we were still waiting for connection, this is a failure
+            if (platform->_native_connect_pending) {
+                platform->_native_connect_result = disc_reason;
+                platform->_native_connect_success = false;
+                platform->_native_connect_pending = false;
+            }
+
+            // Clean up established connections (handles MAC rotation, out of range, etc.)
+            auto conn_it = platform->_connections.find(disc_handle);
+            if (conn_it != platform->_connections.end()) {
+                ConnectionHandle conn = conn_it->second;
+                platform->_connections.erase(conn_it);
+
+                INFO("NimBLEPlatform: Native connection lost to " + conn.peer_address.toString() +
+                     " reason=" + std::to_string(disc_reason));
+
+                // Clean up client object
+                auto client_it = platform->_clients.find(disc_handle);
+                if (client_it != platform->_clients.end()) {
+                    if (client_it->second) {
+                        NimBLEDevice::deleteClient(client_it->second);
+                    }
+                    platform->_clients.erase(client_it);
+                }
+
+                // Clear operation queue for this connection
+                platform->clearForConnection(disc_handle);
+
+                // Notify higher layers
+                if (platform->_on_disconnected) {
+                    platform->_on_disconnected(conn, static_cast<uint8_t>(disc_reason));
+                }
+
+                // Restart advertising if in peripheral/dual mode
+                if ((platform->_config.role == Role::PERIPHERAL || platform->_config.role == Role::DUAL) &&
+                    !platform->_advertising) {
+                    platform->startAdvertising();
+                }
+            }
+            break;
+        }
+
+        default:
+            DEBUG("NimBLEPlatform::nativeGapEventHandler: event type=" + std::to_string(event->type));
+            break;
+    }
+
+    return 0;
+}
+
+bool NimBLEPlatform::connectNative(const BLEAddress& address, uint16_t timeout_ms) {
+    DEBUG("NimBLEPlatform::connectNative: Starting native connection to " + address.toString());
+
+    // Build the peer address structure
+    ble_addr_t peer_addr;
+    peer_addr.type = address.type;
+    // NimBLE stores addresses in little-endian: val[0]=LSB, val[5]=MSB
+    // Our BLEAddress stores in big-endian display order: addr[0]=MSB, addr[5]=LSB
+    for (int i = 0; i < 6; i++) {
+        peer_addr.val[i] = address.addr[5 - i];
+    }
+
+    DEBUG("NimBLEPlatform::connectNative: peer_addr type=" + std::to_string(peer_addr.type) +
+          " val=" + std::to_string(peer_addr.val[5]) + ":" +
+          std::to_string(peer_addr.val[4]) + ":" +
+          std::to_string(peer_addr.val[3]) + ":" +
+          std::to_string(peer_addr.val[2]) + ":" +
+          std::to_string(peer_addr.val[1]) + ":" +
+          std::to_string(peer_addr.val[0]));
+
+    // Connection parameters - use reasonable defaults
+    struct ble_gap_conn_params conn_params;
+    memset(&conn_params, 0, sizeof(conn_params));
+    conn_params.scan_itvl = 16;           // 10ms in 0.625ms units
+    conn_params.scan_window = 16;         // 10ms in 0.625ms units
+    conn_params.itvl_min = 24;            // 30ms in 1.25ms units
+    conn_params.itvl_max = 40;            // 50ms in 1.25ms units
+    conn_params.latency = 0;
+    conn_params.supervision_timeout = 256; // 2560ms in 10ms units
+    conn_params.min_ce_len = 0;
+    conn_params.max_ce_len = 0;
+
+    // Reset connection state
+    _native_connect_pending = true;
+    _native_connect_success = false;
+    _native_connect_result = 0;
+    _native_connect_handle = 0;
+    _native_connect_address = address;
+
+    // Use RANDOM own address type (same as what NimBLEDevice is configured with)
+    uint8_t own_addr_type = BLE_OWN_ADDR_RANDOM;
+
+    DEBUG("NimBLEPlatform::connectNative: Trying with own_addr_type=" + std::to_string(own_addr_type));
+
+    int rc = ble_gap_connect(own_addr_type,
+                              &peer_addr,
+                              timeout_ms,
+                              &conn_params,
+                              nativeGapEventHandler,
+                              this);
+
+    DEBUG("NimBLEPlatform::connectNative: ble_gap_connect returned " + std::to_string(rc));
+
+    if (rc != 0) {
+        ERROR("NimBLEPlatform::connectNative: ble_gap_connect failed with rc=" + std::to_string(rc));
+        _native_connect_pending = false;
+        return false;
+    }
+
+    // Wait for connection to complete
+    unsigned long start = millis();
+    while (_native_connect_pending && (millis() - start) < timeout_ms) {
+        delay(10);
+    }
+
+    if (_native_connect_pending) {
+        // Timeout - cancel the connection attempt
+        WARNING("NimBLEPlatform::connectNative: Connection timed out, cancelling");
+        ble_gap_conn_cancel();
+        _native_connect_pending = false;
+        return false;
+    }
+
+    if (!_native_connect_success) {
+        ERROR("NimBLEPlatform::connectNative: Connection failed with result=" +
+              std::to_string(_native_connect_result));
+        return false;
+    }
+
+    // Copy volatile to local variable
+    uint16_t conn_handle = _native_connect_handle;
+
+    INFO("NimBLEPlatform::connectNative: Connection succeeded! handle=" +
+         std::to_string(conn_handle));
+
+    // Now create an NimBLEClient for this connection to use for GATT operations
+    // The connection already exists, so we just need to wrap it
+    NimBLEClient* client = NimBLEDevice::getClientByHandle(conn_handle);
+    if (!client) {
+        // Create a new client and associate it with this connection
+        NimBLEAddress nimAddr(peer_addr);
+        client = NimBLEDevice::createClient(nimAddr);
+        if (client) {
+            client->setClientCallbacks(this, false);
+        }
+    }
+
+    if (client) {
+        // Track the connection
+        ConnectionHandle conn;
+        conn.handle = conn_handle;
+        conn.peer_address = address;
+        conn.local_role = Role::CENTRAL;
+        conn.state = ConnectionState::CONNECTED;
+        conn.mtu = client->getMTU();
+
+        _connections[conn_handle] = conn;
+        _clients[conn_handle] = client;
+
+        if (_on_connected) {
+            _on_connected(conn);
+        }
+    }
+
+    return true;
 }
 
 
@@ -935,7 +1204,12 @@ void NimBLEPlatform::onConnect(NimBLEClient* pClient) {
     _connections[conn_handle] = conn;
     _clients[conn_handle] = pClient;
 
-    DEBUG("NimBLEPlatform: Connected to peripheral: " + peer_addr.toString());
+    DEBUG("NimBLEPlatform: Connected to peripheral: " + peer_addr.toString() +
+          " handle=" + std::to_string(conn_handle) + " mtu=" + std::to_string(conn.mtu));
+
+    // Signal async connect completion
+    _async_connect_pending = false;
+    _async_connect_failed = false;
 
     if (_on_connected) {
         _on_connected(conn);
@@ -1003,6 +1277,12 @@ void NimBLEPlatform::onResult(const NimBLEAdvertisedDevice* advertisedDevice) {
               " type=" + std::to_string(advertisedDevice->getAddress().getType()) +
               " RSSI=" + std::to_string(advertisedDevice->getRSSI()) +
               " name=" + advertisedDevice->getName());
+
+        // Cache the full device info for later connection
+        // Using string key since NimBLEAdvertisedDevice stores all connection metadata
+        std::string addrKey = advertisedDevice->getAddress().toString().c_str();
+        _discovered_devices[addrKey] = *advertisedDevice;
+        DEBUG("NimBLEPlatform: Cached device for connection: " + addrKey);
     }
 
     if (hasService && _on_scan_result) {
@@ -1162,15 +1442,11 @@ BLEAddress NimBLEPlatform::fromNimBLE(const NimBLEAddress& addr) {
 }
 
 NimBLEAddress NimBLEPlatform::toNimBLE(const BLEAddress& addr) {
-    // Our BLEAddress stores in big-endian display order: addr[0]=MSB, addr[5]=LSB
-    // NimBLE expects little-endian: val[0]=LSB, val[5]=MSB
-    // Need to reverse the byte order
-    uint8_t reversed[6];
-    for (int i = 0; i < 6; i++) {
-        reversed[i] = addr.addr[5 - i];
-    }
-    NimBLEAddress nimAddr(reversed, addr.type);
-    DEBUG("NimBLEPlatform::toNimBLE: input=" + addr.toString() +
+    // Use NimBLEAddress string constructor - it parses "XX:XX:XX:XX:XX:XX" format
+    // and handles the byte order internally
+    std::string addrStr = addr.toString();
+    NimBLEAddress nimAddr(addrStr.c_str(), addr.type);
+    DEBUG("NimBLEPlatform::toNimBLE: input=" + addrStr +
           " type=" + std::to_string(addr.type) +
           " -> nimAddr=" + std::string(nimAddr.toString().c_str()) +
           " nimType=" + std::to_string(nimAddr.getType()));

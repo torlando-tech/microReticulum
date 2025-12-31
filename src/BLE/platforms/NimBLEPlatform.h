@@ -167,6 +167,11 @@ private:
     Bytes _identity_data;
     unsigned long _scan_stop_time = 0;  // millis() when to stop continuous scan
 
+    // BLE stack recovery
+    uint8_t _scan_fail_count = 0;
+    static constexpr uint8_t SCAN_FAIL_RECOVERY_THRESHOLD = 5;
+    bool recoverBLEStack();
+
     // NimBLE objects
     NimBLEServer* _server = nullptr;
     NimBLEService* _service = nullptr;
@@ -182,8 +187,28 @@ private:
     // Connection tracking
     std::map<uint16_t, ConnectionHandle> _connections;
 
+    // Cached scan results for connection (stores full device info from scan)
+    // Key: MAC address as string (e.g., "b8:27:eb:43:04:bc")
+    std::map<std::string, NimBLEAdvertisedDevice> _discovered_devices;
+
     // Connection handle allocator (NimBLE uses its own, we wrap for consistency)
     uint16_t _next_conn_handle = 1;
+
+    // Async connection tracking
+    volatile bool _async_connect_pending = false;
+    volatile bool _async_connect_failed = false;
+    volatile int _async_connect_error = 0;
+
+    // Native GAP connection tracking
+    volatile bool _native_connect_pending = false;
+    volatile bool _native_connect_success = false;
+    volatile int _native_connect_result = 0;
+    volatile uint16_t _native_connect_handle = 0;
+    BLEAddress _native_connect_address;
+
+    // Native GAP event handler
+    static int nativeGapEventHandler(struct ble_gap_event* event, void* arg);
+    bool connectNative(const BLEAddress& address, uint16_t timeout_ms);
 
     // Callbacks
     Callbacks::OnScanResult _on_scan_result;

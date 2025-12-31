@@ -306,7 +306,16 @@ bool BLEPeerManager::shouldInitiateConnection(const Bytes& our_mac, const Bytes&
         return false;
     }
 
-    // Lower MAC initiates connection to avoid both sides trying to connect
+    // Check if our MAC is a random address (first byte >= 0xC0)
+    // Random addresses have the two MSBs of the first byte set (0b11xxxxxx)
+    // When using random addresses, MAC comparison is unreliable because our
+    // random MAC changes between restarts. In this case, always initiate
+    // connections and let the identity layer handle duplicate connections.
+    if (our_mac.data()[0] >= 0xC0) {
+        return true;  // Always initiate with random address
+    }
+
+    // Lower MAC initiates connection (standard behavior for public addresses)
     BLEAddress our_addr(our_mac.data());
     BLEAddress peer_addr(peer_mac.data());
 
