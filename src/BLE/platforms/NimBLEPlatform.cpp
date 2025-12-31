@@ -331,21 +331,28 @@ bool NimBLEPlatform::startScan(uint16_t duration_ms) {
     _scan_fail_count++;
     ERROR("NimBLEPlatform: Failed to start scan (attempt " + std::to_string(_scan_fail_count) + ")");
 
+    // Lightweight recovery: cancel any pending GAP operations that might be blocking
+    // Full recoverBLEStack() causes heap corruption, but this simpler approach is safe
     if (_scan_fail_count >= SCAN_FAIL_RECOVERY_THRESHOLD) {
-        WARNING("NimBLEPlatform: Too many scan failures, attempting BLE stack recovery");
-        if (recoverBLEStack()) {
-            INFO("NimBLEPlatform: BLE stack recovered, retrying scan");
-            // Try scan one more time after recovery
-            _scan->clearResults();
-            started = _scan->start(0, false);
-            if (started) {
-                _scanning = true;
-                _scan_fail_count = 0;
-                _scan_stop_time = millis() + duration_ms;
-                INFO("NimBLEPlatform: Scan started after recovery");
-                return true;
-            }
+        WARNING("NimBLEPlatform: Too many scan failures, attempting GAP reset");
+
+        // Cancel any pending GAP operations
+        ble_gap_disc_cancel();   // Cancel any ongoing discovery
+        ble_gap_conn_cancel();   // Cancel any pending connection
+        delay(100);              // Let BLE stack settle
+
+        // Try to start scan again immediately
+        _scan->clearResults();
+        bool retry = _scan->start(0, false);
+        if (retry) {
+            INFO("NimBLEPlatform: Scan started after GAP reset");
+            _scanning = true;
+            _scan_fail_count = 0;
+            _scan_stop_time = millis() + duration_ms;
+            return true;
         }
+
+        _scan_fail_count = 0;  // Reset counter to avoid spamming warnings
     }
 
     return false;
