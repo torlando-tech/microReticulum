@@ -9,6 +9,8 @@
 
 #include <list>
 #include <memory>
+#include <map>
+#include <string>
 #include <cassert>
 #include <stdint.h>
 
@@ -51,6 +53,9 @@ namespace RNS {
 		// Radio stats (overridden by LoRa interfaces)
 		virtual float get_rssi() const { return 0.0f; }
 		virtual float get_snr() const { return 0.0f; }
+
+		// Interface-specific stats (overridden by BLE interface for connection counts)
+		virtual std::map<std::string, float> get_stats() const { return {}; }
 
 		// CBA Virtual override method for custom interface to send outgoing data
 		virtual void send_outgoing(const Bytes& data) = 0;
@@ -209,6 +214,9 @@ namespace RNS {
 		// Radio stats (forwarded to impl)
 		inline float get_rssi() const { assert(_impl); return _impl->get_rssi(); }
 		inline float get_snr() const { assert(_impl); return _impl->get_snr(); }
+
+		// Interface-specific stats (forwarded to impl)
+		inline std::map<std::string, float> get_stats() const { assert(_impl); return _impl->get_stats(); }
 
 		virtual inline std::string toString() const { if (!_impl) return ""; return _impl->toString(); }
 

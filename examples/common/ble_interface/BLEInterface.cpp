@@ -273,6 +273,30 @@ size_t BLEInterface::peerCount() const {
     return _peer_manager.connectedCount();
 }
 
+std::map<std::string, float> BLEInterface::get_stats() const {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    std::map<std::string, float> stats;
+
+    // Count central vs peripheral connections
+    int central_count = 0;
+    int peripheral_count = 0;
+
+    // Cast away const for read-only access to non-const getConnectedPeers()
+    auto& mutable_peer_manager = const_cast<BLE::BLEPeerManager&>(_peer_manager);
+    auto connected_peers = mutable_peer_manager.getConnectedPeers();
+    for (const auto* peer : connected_peers) {
+        if (peer->is_central) {
+            central_count++;
+        } else {
+            peripheral_count++;
+        }
+    }
+
+    stats["central_connections"] = (float)central_count;
+    stats["peripheral_connections"] = (float)peripheral_count;
+    return stats;
+}
+
 //=============================================================================
 // Platform Callbacks
 //=============================================================================
@@ -580,12 +604,17 @@ void BLEInterface::processDiscoveredPeers() {
         return;
     }
 
+    // Cooldown after connection attempts to let BLE stack settle
+    double now = Utilities::OS::time();
+    if (now - _last_connection_attempt < CONNECTION_COOLDOWN) {
+        return;  // Still in cooldown period
+    }
+
     // Find best connection candidate
     PeerInfo* candidate = _peer_manager.getBestConnectionCandidate();
 
     // Debug: log all peers and why they may not be candidates
     static double last_peer_log = 0;
-    double now = Utilities::OS::time();
     if (now - last_peer_log >= 10.0) {
         auto all_peers = _peer_manager.getAllPeers();
         DEBUG("BLEInterface: Peer count=" + std::to_string(all_peers.size()) +
@@ -613,6 +642,9 @@ void BLEInterface::processDiscoveredPeers() {
         // Use stored address type for correct connection
         BLEAddress addr(candidate->mac_address.data(), candidate->address_type);
         INFO("BLEInterface: Connecting to " + addr.toString() + " type=" + std::to_string(candidate->address_type));
+
+        // Mark connection attempt time for cooldown
+        _last_connection_attempt = now;
 
         // Handle immediate connection failure (resets state for retry)
         if (!_platform->connect(addr, 10000)) {

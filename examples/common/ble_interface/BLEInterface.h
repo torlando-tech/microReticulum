@@ -45,6 +45,7 @@ public:
     static constexpr double SCAN_INTERVAL = 5.0;        // Seconds between scans
     static constexpr double KEEPALIVE_INTERVAL = 15.0;  // Seconds between keepalives
     static constexpr double MAINTENANCE_INTERVAL = 1.0; // Seconds between maintenance
+    static constexpr double CONNECTION_COOLDOWN = 3.0;  // Seconds to wait after connection failure
 
 public:
     /**
@@ -98,6 +99,12 @@ public:
     virtual std::string toString() const override {
         return "BLEInterface[" + _name + "/" + _device_name + "]";
     }
+
+    /**
+     * @brief Get interface statistics
+     * @return Map with central_connections and peripheral_connections counts
+     */
+    virtual std::map<std::string, float> get_stats() const override;
 
     //=========================================================================
     // Status
@@ -199,6 +206,7 @@ private:
     double _last_scan = 0;
     double _last_keepalive = 0;
     double _last_maintenance = 0;
+    double _last_connection_attempt = 0;  // Cooldown after connection failures
 
     // Pending handshake completions (deferred from callback to loop for stack safety)
     struct PendingHandshake {
