@@ -103,65 +103,55 @@ void StatusScreen::create_content() {
     lv_obj_set_style_border_width(_content, 0, 0);
     lv_obj_set_style_radius(_content, 0, 0);
 
-    // Enable vertical scrolling
+    // Enable vertical scrolling with flex layout
+    lv_obj_set_flex_flow(_content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(_content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_scroll_dir(_content, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(_content, LV_SCROLLBAR_MODE_AUTO);
-
-    int y_pos = 0;
-    const int line_height = 20;
-    const int section_gap = 14;
 
     // Identity section
     lv_obj_t* label_identity = lv_label_create(_content);
     lv_label_set_text(label_identity, "Identity:");
-    lv_obj_align(label_identity, LV_ALIGN_TOP_LEFT, 0, y_pos);
     lv_obj_set_style_text_color(label_identity, lv_color_hex(0x808080), 0);
-    y_pos += line_height;
 
     _label_identity_value = lv_label_create(_content);
     lv_label_set_text(_label_identity_value, "Loading...");
-    lv_obj_align(_label_identity_value, LV_ALIGN_TOP_LEFT, 8, y_pos);
     lv_obj_set_style_text_color(_label_identity_value, lv_color_hex(0x42A5F5), 0);
     lv_obj_set_style_text_font(_label_identity_value, &lv_font_montserrat_12, 0);
-    y_pos += line_height + section_gap;
+    lv_obj_set_style_pad_left(_label_identity_value, 8, 0);
+    lv_obj_set_style_pad_bottom(_label_identity_value, 8, 0);
 
     // LXMF Address section
     lv_obj_t* label_lxmf = lv_label_create(_content);
     lv_label_set_text(label_lxmf, "LXMF Address:");
-    lv_obj_align(label_lxmf, LV_ALIGN_TOP_LEFT, 0, y_pos);
     lv_obj_set_style_text_color(label_lxmf, lv_color_hex(0x808080), 0);
-    y_pos += line_height;
 
     _label_lxmf_value = lv_label_create(_content);
     lv_label_set_text(_label_lxmf_value, "Loading...");
-    lv_obj_align(_label_lxmf_value, LV_ALIGN_TOP_LEFT, 8, y_pos);
     lv_obj_set_style_text_color(_label_lxmf_value, lv_color_hex(0x4CAF50), 0);
     lv_obj_set_style_text_font(_label_lxmf_value, &lv_font_montserrat_12, 0);
-    y_pos += line_height + section_gap;
+    lv_obj_set_style_pad_left(_label_lxmf_value, 8, 0);
+    lv_obj_set_style_pad_bottom(_label_lxmf_value, 8, 0);
 
     // WiFi section
     _label_wifi_status = lv_label_create(_content);
     lv_label_set_text(_label_wifi_status, "WiFi: Checking...");
-    lv_obj_align(_label_wifi_status, LV_ALIGN_TOP_LEFT, 0, y_pos);
     lv_obj_set_style_text_color(_label_wifi_status, lv_color_hex(0xffffff), 0);
-    y_pos += line_height;
 
     _label_wifi_ip = lv_label_create(_content);
     lv_label_set_text(_label_wifi_ip, "");
-    lv_obj_align(_label_wifi_ip, LV_ALIGN_TOP_LEFT, 8, y_pos);
     lv_obj_set_style_text_color(_label_wifi_ip, lv_color_hex(0xb0b0b0), 0);
-    y_pos += line_height;
+    lv_obj_set_style_pad_left(_label_wifi_ip, 8, 0);
 
     _label_wifi_rssi = lv_label_create(_content);
     lv_label_set_text(_label_wifi_rssi, "");
-    lv_obj_align(_label_wifi_rssi, LV_ALIGN_TOP_LEFT, 8, y_pos);
     lv_obj_set_style_text_color(_label_wifi_rssi, lv_color_hex(0xb0b0b0), 0);
-    y_pos += line_height + section_gap;
+    lv_obj_set_style_pad_left(_label_wifi_rssi, 8, 0);
+    lv_obj_set_style_pad_bottom(_label_wifi_rssi, 8, 0);
 
     // RNS section
     _label_rns_status = lv_label_create(_content);
     lv_label_set_text(_label_rns_status, "RNS: Checking...");
-    lv_obj_align(_label_rns_status, LV_ALIGN_TOP_LEFT, 0, y_pos);
     lv_obj_set_style_text_color(_label_rns_status, lv_color_hex(0xffffff), 0);
     lv_obj_set_width(_label_rns_status, lv_pct(100));
     lv_label_set_long_mode(_label_rns_status, LV_LABEL_LONG_WRAP);

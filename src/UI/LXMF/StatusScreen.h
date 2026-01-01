@@ -8,6 +8,7 @@
 #include <Arduino.h>
 #include <lvgl.h>
 #include <functional>
+#include <vector>
 #include "../../Bytes.h"
 #include "../../Identity.h"
 

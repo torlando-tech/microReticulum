@@ -7,6 +7,7 @@
 #ifdef ARDUINO
 #include <Arduino.h>
 #include <lvgl.h>
+#include <functional>
 #include "ConversationListScreen.h"
 #include "ChatScreen.h"
 #include "ComposeScreen.h"

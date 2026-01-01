@@ -215,10 +215,14 @@ void UIManager::update() {
     // Update status indicators (WiFi/battery) on conversation list
     static uint32_t last_status_update = 0;
     uint32_t now = millis();
-    if (now - last_status_update > 5000) {  // Update every 5 seconds
+    if (now - last_status_update > 3000) {  // Update every 3 seconds
         last_status_update = now;
         if (_conversation_list_screen) {
             _conversation_list_screen->update_status();
+        }
+        // Update status screen if visible
+        if (_current_screen == SCREEN_STATUS && _status_screen) {
+            _status_screen->refresh();
         }
     }
 }

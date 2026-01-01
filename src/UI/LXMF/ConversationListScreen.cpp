@@ -76,29 +76,29 @@ void ConversationListScreen::create_header() {
     // Status indicators - compact layout: WiFi, LoRa, GPS, BLE, Battery(vertical)
     _label_wifi = lv_label_create(_header);
     lv_label_set_text(_label_wifi, LV_SYMBOL_WIFI " --");
-    lv_obj_align(_label_wifi, LV_ALIGN_LEFT_MID, 50, 0);
+    lv_obj_align(_label_wifi, LV_ALIGN_LEFT_MID, 54, 0);
     lv_obj_set_style_text_color(_label_wifi, lv_color_hex(0x808080), 0);
 
     _label_lora = lv_label_create(_header);
     lv_label_set_text(_label_lora, LV_SYMBOL_CALL " --");  // Antenna-like symbol
-    lv_obj_align(_label_lora, LV_ALIGN_LEFT_MID, 95, 0);
+    lv_obj_align(_label_lora, LV_ALIGN_LEFT_MID, 100, 0);
     lv_obj_set_style_text_color(_label_lora, lv_color_hex(0x808080), 0);
 
     _label_gps = lv_label_create(_header);
     lv_label_set_text(_label_gps, LV_SYMBOL_GPS " --");
-    lv_obj_align(_label_gps, LV_ALIGN_LEFT_MID, 135, 0);
+    lv_obj_align(_label_gps, LV_ALIGN_LEFT_MID, 142, 0);
     lv_obj_set_style_text_color(_label_gps, lv_color_hex(0x808080), 0);
 
     // BLE status: Bluetooth icon with central|peripheral counts
     _label_ble = lv_label_create(_header);
     lv_label_set_text(_label_ble, LV_SYMBOL_BLUETOOTH " -|-");
-    lv_obj_align(_label_ble, LV_ALIGN_LEFT_MID, 175, 0);
+    lv_obj_align(_label_ble, LV_ALIGN_LEFT_MID, 179, 0);
     lv_obj_set_style_text_color(_label_ble, lv_color_hex(0x808080), 0);
 
     // Battery: vertical layout (icon on top, percentage below) to save horizontal space
     _battery_container = lv_obj_create(_header);
     lv_obj_set_size(_battery_container, 30, 34);
-    lv_obj_align(_battery_container, LV_ALIGN_LEFT_MID, 215, 0);
+    lv_obj_align(_battery_container, LV_ALIGN_LEFT_MID, 219, 0);
     lv_obj_set_style_bg_opa(_battery_container, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_battery_container, 0, 0);
     lv_obj_set_style_pad_all(_battery_container, 0, 0);
@@ -154,7 +154,7 @@ void ConversationListScreen::create_bottom_nav() {
     lv_obj_set_flex_align(_bottom_nav, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     // Bottom navigation buttons: Messages, Announces, Status, Settings
-    const char* icons[] = {LV_SYMBOL_ENVELOPE, LV_SYMBOL_LIST, LV_SYMBOL_WIFI, LV_SYMBOL_SETTINGS};
+    const char* icons[] = {LV_SYMBOL_ENVELOPE, LV_SYMBOL_BELL, LV_SYMBOL_BARS, LV_SYMBOL_SETTINGS};
 
     for (int i = 0; i < 4; i++) {
         lv_obj_t* btn = lv_btn_create(_bottom_nav);
