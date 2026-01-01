@@ -232,12 +232,12 @@ bool try_l76k_init() {
         GPSSerial.write("$PCAS03,0,0,0,0,0,0,0,0,0,0,,,0,0*02\r\n");
         delay(50);
 
-        // Drain buffer
-        uint32_t timeout = millis() + 2000;
+        // Drain buffer with timeout
+        uint32_t timeout = millis() + 500;
         while (GPSSerial.available() && millis() < timeout) {
             GPSSerial.read();
         }
-        GPSSerial.flush();
+        // Note: Avoid flush() - blocks indefinitely in Arduino Core 3.x if TX can't complete
         delay(100);
 
         // Request version
@@ -271,6 +271,9 @@ void setup_gps() {
     String gps_msg = "  GPS UART: ESP32 RX=" + String(Pin::GPS_RX) + ", TX=" + String(Pin::GPS_TX);
     INFO(gps_msg.c_str());
 
+    // Set timeout to prevent blocking (Arduino Core 3.x can hang on serial ops)
+    GPSSerial.setTimeout(500);
+
     delay(500);  // Give GPS time to start up
 
     bool gps_found = false;
@@ -289,7 +292,9 @@ void setup_gps() {
     } else {
         // Try u-blox m10q at 38400 baud
         INFO("  L76K not found, trying u-blox at 38400...");
-        GPSSerial.updateBaudRate(38400);
+        GPSSerial.end();
+        GPSSerial.begin(38400, SERIAL_8N1, Pin::GPS_RX, Pin::GPS_TX);
+        GPSSerial.setTimeout(500);
         delay(100);
 
         // Check if we get any data
@@ -303,7 +308,9 @@ void setup_gps() {
             gps_found = true;
         } else {
             // Try 9600 again for u-blox
-            GPSSerial.updateBaudRate(9600);
+            GPSSerial.end();
+            GPSSerial.begin(9600, SERIAL_8N1, Pin::GPS_RX, Pin::GPS_TX);
+            GPSSerial.setTimeout(500);
             delay(100);
             timeout = millis() + 1000;
             while (!GPSSerial.available() && millis() < timeout) {
@@ -605,8 +612,8 @@ void setup_reticulum() {
         // Testing: DUAL mode with WiFi radio completely disabled
         ble_interface_impl->setRole(RNS::BLE::Role::DUAL);
         ble_interface_impl->setLocalIdentity(identity->get_public_key().left(16));
-        // Set device name to RNS-XXXXXX format (last 6 hex chars of identity)
-        std::string ble_name = "RNS-" + identity->get_public_key().toHex().substr(26, 6);
+        // Set device name to TD-XXXXXX format (last 6 hex chars of identity) for T-Deck
+        std::string ble_name = "TD-" + identity->get_public_key().toHex().substr(26, 6);
         ble_interface_impl->setDeviceName(ble_name);
         ble_interface = new Interface(ble_interface_impl);
 
@@ -727,6 +734,11 @@ void setup_ui_manager() {
     // Set LoRa interface for RSSI display
     if (lora_interface) {
         ui_manager->set_lora_interface(lora_interface);
+    }
+
+    // Set BLE interface for connection count display
+    if (ble_interface) {
+        ui_manager->set_ble_interface(ble_interface);
     }
 
     // Set GPS for satellite count display
@@ -892,7 +904,7 @@ void setup_ui_manager() {
                         // Testing: DUAL mode with WiFi radio completely disabled
                         ble_interface_impl->setRole(RNS::BLE::Role::DUAL);
                         ble_interface_impl->setLocalIdentity(identity->get_public_key().left(16));
-                        std::string ble_name = "RNS-" + identity->get_public_key().toHex().substr(26, 6);
+                        std::string ble_name = "TD-" + identity->get_public_key().toHex().substr(26, 6);
                         ble_interface_impl->setDeviceName(ble_name);
                         ble_interface = new Interface(ble_interface_impl);
                     }

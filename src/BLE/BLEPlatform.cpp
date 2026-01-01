@@ -11,6 +11,10 @@
 #include "platforms/NimBLEPlatform.h"
 #endif
 
+#if defined(ESP32) && defined(USE_BLUEDROID)
+#include "platforms/BluedroidPlatform.h"
+#endif
+
 #if defined(ZEPHYR) || defined(CONFIG_BT)
 // Future: #include "platforms/ZephyrPlatform.h"
 #endif
@@ -29,11 +33,10 @@ IBLEPlatform::Ptr BLEPlatformFactory::create(PlatformType type) {
             return std::make_shared<NimBLEPlatform>();
 #endif
 
-#if defined(ESP32) && defined(USE_ESP_IDF_BLE)
+#if defined(ESP32) && defined(USE_BLUEDROID)
         case PlatformType::ESP_IDF:
-            // Future: return std::make_shared<ESPIDFPlatform>();
-            ERROR("BLEPlatformFactory: ESP-IDF platform not yet implemented");
-            return nullptr;
+            INFO("BLEPlatformFactory: Creating Bluedroid platform");
+            return std::make_shared<BluedroidPlatform>();
 #endif
 
 #if defined(ZEPHYR) || defined(CONFIG_BT)
@@ -51,10 +54,11 @@ IBLEPlatform::Ptr BLEPlatformFactory::create(PlatformType type) {
 }
 
 PlatformType BLEPlatformFactory::getDetectedPlatform() {
-#if defined(ESP32) && (defined(USE_NIMBLE) || defined(CONFIG_BT_NIMBLE_ENABLED))
-    return PlatformType::NIMBLE_ARDUINO;
-#elif defined(ESP32) && defined(USE_ESP_IDF_BLE)
+#if defined(ESP32) && defined(USE_BLUEDROID)
+    // Bluedroid takes priority when explicitly selected
     return PlatformType::ESP_IDF;
+#elif defined(ESP32) && (defined(USE_NIMBLE) || defined(CONFIG_BT_NIMBLE_ENABLED))
+    return PlatformType::NIMBLE_ARDUINO;
 #elif defined(ZEPHYR) || defined(CONFIG_BT)
     return PlatformType::ZEPHYR;
 #else
