@@ -78,6 +78,15 @@ namespace RNS { namespace Utilities {
 			return result;
 		}
 
+		// Convert integer to big-endian bytes (inverse of from_bytes_big_endian)
+		// Writes 'len' bytes to 'data', storing the value in big-endian format
+		static inline void to_bytes_big_endian(uint64_t value, uint8_t* data, size_t len) {
+			for (size_t i = 0; i < len; ++i) {
+				data[len - 1 - i] = static_cast<uint8_t>(value & 0xFF);
+				value >>= 8;
+			}
+		}
+
 		// Detect endianness at runtime
 		static int is_big_endian(void) {
 			uint16_t test = 0x0102;

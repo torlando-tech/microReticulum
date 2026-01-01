@@ -252,9 +252,14 @@ Packet Destination::announce(const Bytes& app_data, bool path_response, const In
 	}
 	else {
 		Bytes destination_hash = _object->_hash;
-		//p random_hash = Identity::get_random_hash()[0:5] << int(time.time()).to_bytes(5, "big")
-		// CBA TODO add in time to random hash
-		Bytes random_hash = Cryptography::random(Type::Identity::RANDOM_HASH_LENGTH/8);
+		//p random_hash = Identity::get_random_hash()[0:5] + int(time.time()).to_bytes(5, "big")
+		// Generate 5 random bytes + 5 bytes of current timestamp (big-endian)
+		// This matches Python RNS format for announce emission time tracking
+		Bytes random_bytes = Cryptography::random(5);  // First 5 bytes are random
+		uint8_t time_bytes[5];
+		uint64_t timestamp = static_cast<uint64_t>(OS::time());
+		OS::to_bytes_big_endian(timestamp, time_bytes, 5);  // Last 5 bytes are timestamp
+		Bytes random_hash = random_bytes + Bytes(time_bytes, 5);
 
 		Bytes new_app_data(app_data);
         if (new_app_data.empty() && !_object->_default_app_data.empty()) {
