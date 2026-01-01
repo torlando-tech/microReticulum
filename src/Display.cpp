@@ -70,6 +70,7 @@ bool Display::init() {
     #else
         Wire.begin();
     #endif
+    delay(100);  // Let I2C bus stabilize (required for reliable init)
 
     // Create display object
     #ifdef DISPLAY_TYPE_SH1106
