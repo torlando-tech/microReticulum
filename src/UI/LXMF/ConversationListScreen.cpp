@@ -488,30 +488,33 @@ void ConversationListScreen::update_status() {
     // (calibrated voltage reads ~5V+ when charging, ~4.2V max on battery)
     bool charging = (voltage > 4.4);
 
-    // Update icon
+    // Update icon and percentage display
     if (charging) {
+        // When charging: show charge icon centered, hide percentage (voltage doesn't reflect battery state)
         lv_label_set_text(_label_battery_icon, LV_SYMBOL_CHARGE);
+        lv_obj_align(_label_battery_icon, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_add_flag(_label_battery_pct, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_text_color(_label_battery_icon, lv_color_hex(0x00BCD4), 0);  // Cyan
     } else {
+        // When on battery: show icon at top with percentage below
         lv_label_set_text(_label_battery_icon, LV_SYMBOL_BATTERY_FULL);
-    }
+        lv_obj_align(_label_battery_icon, LV_ALIGN_TOP_MID, 0, 0);
+        lv_obj_clear_flag(_label_battery_pct, LV_OBJ_FLAG_HIDDEN);
+        String pct_text = String(percent) + "%";
+        lv_label_set_text(_label_battery_pct, pct_text.c_str());
 
-    // Update percentage
-    String pct_text = String(percent) + "%";
-    lv_label_set_text(_label_battery_pct, pct_text.c_str());
-
-    // Color based on battery level (cyan when charging)
-    lv_color_t battery_color;
-    if (charging) {
-        battery_color = lv_color_hex(0x00BCD4);  // Cyan
-    } else if (percent > 50) {
-        battery_color = lv_color_hex(0x4CAF50);  // Green
-    } else if (percent > 20) {
-        battery_color = lv_color_hex(0xFFEB3B);  // Yellow
-    } else {
-        battery_color = lv_color_hex(0xF44336);  // Red
+        // Color based on battery level
+        lv_color_t battery_color;
+        if (percent > 50) {
+            battery_color = lv_color_hex(0x4CAF50);  // Green
+        } else if (percent > 20) {
+            battery_color = lv_color_hex(0xFFEB3B);  // Yellow
+        } else {
+            battery_color = lv_color_hex(0xF44336);  // Red
+        }
+        lv_obj_set_style_text_color(_label_battery_icon, battery_color, 0);
+        lv_obj_set_style_text_color(_label_battery_pct, battery_color, 0);
     }
-    lv_obj_set_style_text_color(_label_battery_icon, battery_color, 0);
-    lv_obj_set_style_text_color(_label_battery_pct, battery_color, 0);
 }
 
 void ConversationListScreen::on_conversation_clicked(lv_event_t* event) {
