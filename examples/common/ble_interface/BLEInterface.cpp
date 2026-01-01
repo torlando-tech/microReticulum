@@ -245,6 +245,10 @@ bool BLEInterface::sendToPeer(const Bytes& peer_identity, const Bytes& data) {
     for (const Bytes& fragment : fragments) {
         bool sent = false;
 
+        DEBUG("BLEInterface: Sending fragment to " + peer_identity.toHex().substr(0, 8) +
+              " via conn_handle=" + std::to_string(peer->conn_handle) +
+              " is_central=" + std::string(peer->is_central ? "yes" : "no"));
+
         if (peer->is_central) {
             // We are central - write to peripheral
             sent = _platform->write(peer->conn_handle, fragment, false);
@@ -255,7 +259,8 @@ bool BLEInterface::sendToPeer(const Bytes& peer_identity, const Bytes& data) {
 
         if (!sent) {
             WARNING("BLEInterface: Failed to send fragment to " +
-                    peer_identity.toHex().substr(0, 8));
+                    peer_identity.toHex().substr(0, 8) + " on conn_handle=" +
+                    std::to_string(peer->conn_handle));
             return false;
         }
     }
@@ -389,6 +394,14 @@ void BLEInterface::onConnected(const ConnectionHandle& conn) {
     // Update peer state
     _peer_manager.setPeerState(mac, PeerState::HANDSHAKING);
     _peer_manager.setPeerHandle(mac, conn.handle);
+
+    // Mark as central connection (we initiated the connection)
+    PeerInfo* peer = _peer_manager.getPeerByMac(mac);
+    if (peer) {
+        peer->is_central = true;  // We ARE central in this connection
+        INFO("BLEInterface: Stored conn_handle=" + std::to_string(conn.handle) +
+             " for peer " + conn.peer_address.toString());
+    }
 
     DEBUG("BLEInterface: Connected to " + conn.peer_address.toString() +
           " (we are central)");

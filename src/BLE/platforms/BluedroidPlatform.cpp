@@ -504,8 +504,15 @@ bool BluedroidPlatform::requestMTU(uint16_t conn_handle, uint16_t mtu) {
 }
 
 bool BluedroidPlatform::discoverServices(uint16_t conn_handle) {
+    DEBUG("BluedroidPlatform: discoverServices called for handle " + std::to_string(conn_handle));
+
     auto* conn = findConnection(conn_handle);
-    if (!conn) return false;
+    if (!conn) {
+        ERROR("BluedroidPlatform: discoverServices - connection not found for handle " + std::to_string(conn_handle));
+        return false;
+    }
+
+    DEBUG("BluedroidPlatform: Found connection, conn_id=" + std::to_string(conn->conn_id));
 
     // Parse service UUID for filter
     esp_bt_uuid_t service_uuid;
@@ -529,6 +536,7 @@ bool BluedroidPlatform::discoverServices(uint16_t conn_handle) {
         return false;
     }
 
+    DEBUG("BluedroidPlatform: Service search started for conn_id=" + std::to_string(conn->conn_id));
     return true;
 }
 
@@ -538,11 +546,30 @@ bool BluedroidPlatform::discoverServices(uint16_t conn_handle) {
 
 bool BluedroidPlatform::write(uint16_t conn_handle, const Bytes& data, bool response) {
     auto* conn = findConnection(conn_handle);
-    if (!conn) return false;
+    if (!conn) {
+        WARNING("BluedroidPlatform: write - connection not found for handle " + std::to_string(conn_handle));
+        return false;
+    }
 
     if (conn->rx_char_handle == 0) {
-        ERROR("BluedroidPlatform: RX characteristic not discovered");
+        ERROR("BluedroidPlatform: RX characteristic not discovered for conn " + std::to_string(conn_handle) +
+              " conn_id=" + std::to_string(conn->conn_id) +
+              " discovery_state=" + std::to_string(static_cast<int>(conn->discovery_state)));
         return false;
+    }
+
+    DEBUG("BluedroidPlatform: write handle=" + std::to_string(conn_handle) +
+          " conn_id=" + std::to_string(conn->conn_id) +
+          " rx_char=" + std::to_string(conn->rx_char_handle) +
+          " len=" + std::to_string(data.size()));
+
+    // For write-without-response, add flow control to prevent BLE stack buffer overflow
+    // The Bluedroid stack has limited buffer space for pending writes
+    if (!response) {
+        // Delay to allow BLE stack to process previous writes
+        // This prevents ESP_GATT_WRITE_NOT_PERMIT (143) errors from buffer overflow
+        // 5ms is needed for reliable multi-peer rapid writes (20+ fragments)
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 
     esp_err_t ret = esp_ble_gattc_write_char(
@@ -555,6 +582,9 @@ bool BluedroidPlatform::write(uint16_t conn_handle, const Bytes& data, bool resp
         ESP_GATT_AUTH_REQ_NONE
     );
 
+    if (ret != ESP_OK) {
+        WARNING("BluedroidPlatform: Write failed with err " + std::to_string(ret));
+    }
     return ret == ESP_OK;
 }
 
@@ -579,23 +609,48 @@ bool BluedroidPlatform::read(uint16_t conn_handle, uint16_t char_handle,
 
 bool BluedroidPlatform::enableNotifications(uint16_t conn_handle, bool enable) {
     auto* conn = findConnection(conn_handle);
-    if (!conn) return false;
-
-    if (conn->tx_cccd_handle == 0) {
-        ERROR("BluedroidPlatform: TX CCCD not discovered");
+    if (!conn) {
+        WARNING("BluedroidPlatform: enableNotifications - connection not found");
         return false;
     }
 
-    uint16_t cccd_value = enable ? 0x0001 : 0x0000;
-    esp_err_t ret = esp_ble_gattc_write_char_descr(
+    if (conn->tx_char_handle == 0) {
+        ERROR("BluedroidPlatform: TX char not discovered for conn " + std::to_string(conn_handle));
+        return false;
+    }
+
+    // Step 1: Register for notifications with the Bluedroid stack
+    // This tells ESP-IDF to route ESP_GATTC_NOTIFY_EVT to our handler
+    esp_err_t ret = esp_ble_gattc_register_for_notify(
         _gattc_if,
-        conn->conn_id,
-        conn->tx_cccd_handle,
-        sizeof(cccd_value),
-        reinterpret_cast<uint8_t*>(&cccd_value),
-        ESP_GATT_WRITE_TYPE_RSP,
-        ESP_GATT_AUTH_REQ_NONE
+        conn->peer_addr,
+        conn->tx_char_handle  // The characteristic we want notifications from
     );
+
+    if (ret != ESP_OK) {
+        WARNING("BluedroidPlatform: Failed to register for notify: " + std::to_string(ret));
+        return false;
+    }
+
+    // Step 2: Write to CCCD to enable notifications on the peripheral
+    if (conn->tx_cccd_handle != 0) {
+        DEBUG("BluedroidPlatform: Enabling notifications on CCCD handle " +
+              std::to_string(conn->tx_cccd_handle) + " for conn " + std::to_string(conn_handle));
+
+        uint16_t cccd_value = enable ? 0x0001 : 0x0000;
+        ret = esp_ble_gattc_write_char_descr(
+            _gattc_if,
+            conn->conn_id,
+            conn->tx_cccd_handle,
+            sizeof(cccd_value),
+            reinterpret_cast<uint8_t*>(&cccd_value),
+            ESP_GATT_WRITE_TYPE_RSP,
+            ESP_GATT_AUTH_REQ_NONE
+        );
+    }
+
+    DEBUG("BluedroidPlatform: Notifications " + std::string(enable ? "enabled" : "disabled") +
+          " for conn " + std::to_string(conn_handle));
 
     return ret == ESP_OK;
 }
@@ -653,10 +708,15 @@ bool BluedroidPlatform::executeOperation(const GATTOperation& op) {
                 op.char_handle,
                 ESP_GATT_AUTH_REQ_NONE
             );
-            return ret != ESP_OK;  // If failed, operation is complete
+            if (ret != ESP_OK) {
+                WARNING("BluedroidPlatform: Read char failed: " + std::to_string(ret));
+                return false;  // Failed to start
+            }
+            return true;  // Successfully started, will complete async
         }
         default:
-            return true;  // Unknown operation type - complete it
+            WARNING("BluedroidPlatform: Unknown operation type");
+            return false;  // Unknown operation type - failed to start
     }
 }
 
@@ -1185,7 +1245,14 @@ void BluedroidPlatform::handleGattsConnect(esp_ble_gatts_cb_param_t* param) {
 
     _connections[conn_handle] = conn;
 
-    INFO("BluedroidPlatform: Central connected, handle=" + std::to_string(conn_handle));
+    // Log the mapping for debugging
+    char addr_str[18];
+    snprintf(addr_str, sizeof(addr_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+             param->connect.remote_bda[0], param->connect.remote_bda[1], param->connect.remote_bda[2],
+             param->connect.remote_bda[3], param->connect.remote_bda[4], param->connect.remote_bda[5]);
+    INFO("BluedroidPlatform: GATTS Connected handle=" + std::to_string(conn_handle) +
+         " conn_id=" + std::to_string(param->connect.conn_id) +
+         " addr=" + std::string(addr_str));
 
     if (_on_central_connected) {
         ConnectionHandle ch = getConnection(conn_handle);
@@ -1223,6 +1290,10 @@ void BluedroidPlatform::handleGattsDisconnect(esp_ble_gatts_cb_param_t* param) {
 }
 
 void BluedroidPlatform::handleGattsWrite(esp_ble_gatts_cb_param_t* param) {
+    DEBUG("BluedroidPlatform: GATTS write event, handle=" + std::to_string(param->write.handle) +
+          " len=" + std::to_string(param->write.len) +
+          " is_prep=" + std::to_string(param->write.is_prep));
+
     if (!param->write.is_prep) {
         // Regular write (not prepare write)
         Bytes data(param->write.value, param->write.len);
@@ -1238,9 +1309,12 @@ void BluedroidPlatform::handleGattsWrite(esp_ble_gatts_cb_param_t* param) {
 
         if (param->write.handle == _rx_char_handle) {
             // Data write to RX characteristic
+            DEBUG("BluedroidPlatform: RX write received, " + std::to_string(data.size()) + " bytes");
             if (_on_write_received && conn_handle != 0xFFFF) {
                 ConnectionHandle ch = getConnection(conn_handle);
                 _on_write_received(ch, data);
+            } else {
+                WARNING("BluedroidPlatform: No callback or invalid handle for RX write");
             }
         } else if (param->write.handle == _tx_cccd_handle) {
             // Notification enable/disable
@@ -1266,10 +1340,14 @@ void BluedroidPlatform::handleGattsWrite(esp_ble_gatts_cb_param_t* param) {
 }
 
 void BluedroidPlatform::handleGattsRead(esp_ble_gatts_cb_param_t* param) {
+    DEBUG("BluedroidPlatform: GATTS read event, handle=" + std::to_string(param->read.handle) +
+          " conn_id=" + std::to_string(param->read.conn_id));
+
     esp_gatt_rsp_t rsp;
     memset(&rsp, 0, sizeof(rsp));
 
     if (param->read.handle == _identity_char_handle) {
+        DEBUG("BluedroidPlatform: Central reading identity characteristic");
         // Return identity data
         rsp.attr_value.handle = param->read.handle;
         rsp.attr_value.len = _identity_data.size();
@@ -1332,10 +1410,15 @@ void BluedroidPlatform::handleGattcEvent(esp_gattc_cb_event_t event,
             break;
 
         case ESP_GATTC_SEARCH_RES_EVT:
+            DEBUG("BluedroidPlatform: SEARCH_RES_EVT received, conn_id=" +
+                  std::to_string(param->search_res.conn_id));
             handleGattcSearchResult(param);
             break;
 
         case ESP_GATTC_SEARCH_CMPL_EVT:
+            DEBUG("BluedroidPlatform: SEARCH_CMPL_EVT received, conn_id=" +
+                  std::to_string(param->search_cmpl.conn_id) +
+                  " status=" + std::to_string(param->search_cmpl.status));
             handleGattcSearchComplete(param);
             break;
 
@@ -1350,6 +1433,16 @@ void BluedroidPlatform::handleGattcEvent(esp_gattc_cb_event_t event,
 
         case ESP_GATTC_READ_CHAR_EVT:
             handleGattcRead(param);
+            break;
+
+        case ESP_GATTC_REG_FOR_NOTIFY_EVT:
+            if (param->reg_for_notify.status == ESP_GATT_OK) {
+                DEBUG("BluedroidPlatform: Registered for notifications on handle " +
+                      std::to_string(param->reg_for_notify.handle));
+            } else {
+                WARNING("BluedroidPlatform: Failed to register for notify: " +
+                        std::to_string(param->reg_for_notify.status));
+            }
             break;
 
         default:
@@ -1399,7 +1492,14 @@ void BluedroidPlatform::handleGattcConnect(esp_ble_gattc_cb_param_t* param) {
 
     _connections[conn_handle] = conn;
 
-    INFO("BluedroidPlatform: Connected to peripheral, handle=" + std::to_string(conn_handle));
+    // Log the mapping for debugging
+    char addr_str[18];
+    snprintf(addr_str, sizeof(addr_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+             param->open.remote_bda[0], param->open.remote_bda[1], param->open.remote_bda[2],
+             param->open.remote_bda[3], param->open.remote_bda[4], param->open.remote_bda[5]);
+    INFO("BluedroidPlatform: GATTC Connected handle=" + std::to_string(conn_handle) +
+         " conn_id=" + std::to_string(param->open.conn_id) +
+         " addr=" + std::string(addr_str));
 
     if (_on_connected) {
         ConnectionHandle ch = getConnection(conn_handle);
@@ -1434,10 +1534,11 @@ void BluedroidPlatform::handleGattcDisconnect(esp_ble_gattc_cb_param_t* param) {
 }
 
 void BluedroidPlatform::handleGattcSearchResult(esp_ble_gattc_cb_param_t* param) {
-    // Find connection
+    // Find connection - ONLY search central (GATTC) connections
     BluedroidConnection* conn = nullptr;
     for (auto& pair : _connections) {
-        if (pair.second.conn_id == param->search_res.conn_id) {
+        if (pair.second.conn_id == param->search_res.conn_id &&
+            pair.second.local_role == Role::CENTRAL) {
             conn = &pair.second;
             break;
         }
@@ -1453,21 +1554,29 @@ void BluedroidPlatform::handleGattcSearchResult(esp_ble_gattc_cb_param_t* param)
 }
 
 void BluedroidPlatform::handleGattcSearchComplete(esp_ble_gattc_cb_param_t* param) {
-    // Find connection
+    // Find connection - ONLY search central (GATTC) connections
     BluedroidConnection* conn = nullptr;
     uint16_t conn_handle = 0xFFFF;
     for (auto& pair : _connections) {
-        if (pair.second.conn_id == param->search_cmpl.conn_id) {
+        if (pair.second.conn_id == param->search_cmpl.conn_id &&
+            pair.second.local_role == Role::CENTRAL) {
             conn = &pair.second;
             conn_handle = pair.first;
             break;
         }
     }
 
-    if (!conn) return;
+    if (!conn) {
+        ERROR("BluedroidPlatform: handleGattcSearchComplete - connection not found for conn_id=" +
+              std::to_string(param->search_cmpl.conn_id));
+        return;
+    }
+
+    DEBUG("BluedroidPlatform: handleGattcSearchComplete for conn_handle=" + std::to_string(conn_handle) +
+          " service_start=" + std::to_string(conn->service_start_handle));
 
     if (conn->service_start_handle == 0) {
-        ERROR("BluedroidPlatform: Service not found");
+        ERROR("BluedroidPlatform: Service not found for conn " + std::to_string(conn_handle));
         if (_on_services_discovered) {
             ConnectionHandle ch = getConnection(conn_handle);
             _on_services_discovered(ch, false);
@@ -1491,7 +1600,8 @@ void BluedroidPlatform::handleGattcSearchComplete(esp_ble_gattc_cb_param_t* para
     );
 
     if (status != ESP_GATT_OK || count == 0) {
-        ERROR("BluedroidPlatform: No characteristics found");
+        ERROR("BluedroidPlatform: No characteristics found, status=" + std::to_string(status) +
+              " count=" + std::to_string(count));
         conn->discovery_state = BluedroidConnection::DiscoveryState::COMPLETE;
         if (_on_services_discovered) {
             ConnectionHandle ch = getConnection(conn_handle);
@@ -1499,6 +1609,8 @@ void BluedroidPlatform::handleGattcSearchComplete(esp_ble_gattc_cb_param_t* para
         }
         return;
     }
+
+    DEBUG("BluedroidPlatform: Found " + std::to_string(count) + " characteristics for conn_handle=" + std::to_string(conn_handle));
 
     // Get all characteristics
     esp_gattc_char_elem_t* chars = new esp_gattc_char_elem_t[count];
@@ -1566,6 +1678,12 @@ void BluedroidPlatform::handleGattcSearchComplete(esp_ble_gattc_cb_param_t* para
     conn->discovery_state = BluedroidConnection::DiscoveryState::COMPLETE;
 
     bool success = (conn->rx_char_handle != 0 && conn->tx_char_handle != 0);
+    INFO("BluedroidPlatform: Service discovery complete for conn " + std::to_string(conn_handle) +
+         " RX=" + std::to_string(conn->rx_char_handle) +
+         " TX=" + std::to_string(conn->tx_char_handle) +
+         " CCCD=" + std::to_string(conn->tx_cccd_handle) +
+         " Identity=" + std::to_string(conn->identity_char_handle));
+
     if (_on_services_discovered) {
         ConnectionHandle ch = getConnection(conn_handle);
         ch.rx_char_handle = conn->rx_char_handle;
@@ -1577,16 +1695,24 @@ void BluedroidPlatform::handleGattcSearchComplete(esp_ble_gattc_cb_param_t* para
 }
 
 void BluedroidPlatform::handleGattcNotify(esp_ble_gattc_cb_param_t* param) {
-    // Find connection
+    DEBUG("BluedroidPlatform: GATTC notify received, conn_id=" + std::to_string(param->notify.conn_id) +
+          " len=" + std::to_string(param->notify.value_len));
+
+    // Find connection - ONLY search central (GATTC) connections
     uint16_t conn_handle = 0xFFFF;
     for (auto& pair : _connections) {
-        if (pair.second.conn_id == param->notify.conn_id) {
+        if (pair.second.conn_id == param->notify.conn_id &&
+            pair.second.local_role == Role::CENTRAL) {
             conn_handle = pair.first;
             break;
         }
     }
 
-    if (conn_handle == 0xFFFF) return;
+    if (conn_handle == 0xFFFF) {
+        WARNING("BluedroidPlatform: No CENTRAL connection found for notify conn_id=" +
+                std::to_string(param->notify.conn_id));
+        return;
+    }
 
     Bytes data(param->notify.value, param->notify.value_len);
 
@@ -1604,11 +1730,18 @@ void BluedroidPlatform::handleGattcWrite(esp_ble_gattc_cb_param_t* param) {
 }
 
 void BluedroidPlatform::handleGattcRead(esp_ble_gattc_cb_param_t* param) {
-    // Find pending read operation and invoke callback
-    // For now, just log - operation queue handles callbacks
     if (param->read.status != ESP_GATT_OK) {
         WARNING("BluedroidPlatform: Read failed: " + std::to_string(param->read.status));
+        complete(OperationResult::ERROR, Bytes());
+        return;
     }
+
+    // Extract read data
+    Bytes data(param->read.value, param->read.value_len);
+    DEBUG("BluedroidPlatform: Read complete, " + std::to_string(data.size()) + " bytes");
+
+    // Complete the pending operation with the data
+    complete(OperationResult::SUCCESS, data);
 }
 
 //=============================================================================
