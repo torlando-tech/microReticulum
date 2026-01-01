@@ -114,6 +114,12 @@ public:
     void set_lora_interface(RNS::Interface* iface);
 
     /**
+     * Set BLE interface for connection count display
+     * @param iface BLE interface
+     */
+    void set_ble_interface(RNS::Interface* iface);
+
+    /**
      * Set GPS for satellite count display
      * @param gps TinyGPSPlus instance
      */

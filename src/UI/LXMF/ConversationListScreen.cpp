@@ -23,7 +23,9 @@ namespace LXMF {
 ConversationListScreen::ConversationListScreen(lv_obj_t* parent)
     : _screen(nullptr), _header(nullptr), _list(nullptr), _bottom_nav(nullptr),
       _btn_new(nullptr), _btn_settings(nullptr), _label_wifi(nullptr), _label_lora(nullptr),
-      _label_gps(nullptr), _label_battery(nullptr), _lora_interface(nullptr), _gps(nullptr),
+      _label_gps(nullptr), _label_ble(nullptr), _battery_container(nullptr),
+      _label_battery_icon(nullptr), _label_battery_pct(nullptr),
+      _lora_interface(nullptr), _ble_interface(nullptr), _gps(nullptr),
       _message_store(nullptr) {
 
     // Create screen object
@@ -71,26 +73,47 @@ void ConversationListScreen::create_header() {
     lv_obj_set_style_text_color(title, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
 
-    // Status indicators (WiFi RSSI, LoRa RSSI, GPS, Battery) - positioned in center-right area
+    // Status indicators - compact layout: WiFi, LoRa, GPS, BLE, Battery(vertical)
     _label_wifi = lv_label_create(_header);
     lv_label_set_text(_label_wifi, LV_SYMBOL_WIFI " --");
-    lv_obj_align(_label_wifi, LV_ALIGN_LEFT_MID, 63, 0);
+    lv_obj_align(_label_wifi, LV_ALIGN_LEFT_MID, 50, 0);
     lv_obj_set_style_text_color(_label_wifi, lv_color_hex(0x808080), 0);
 
     _label_lora = lv_label_create(_header);
     lv_label_set_text(_label_lora, LV_SYMBOL_CALL " --");  // Antenna-like symbol
-    lv_obj_align(_label_lora, LV_ALIGN_LEFT_MID, 115, 0);
+    lv_obj_align(_label_lora, LV_ALIGN_LEFT_MID, 95, 0);
     lv_obj_set_style_text_color(_label_lora, lv_color_hex(0x808080), 0);
 
     _label_gps = lv_label_create(_header);
     lv_label_set_text(_label_gps, LV_SYMBOL_GPS " --");
-    lv_obj_align(_label_gps, LV_ALIGN_LEFT_MID, 163, 0);
+    lv_obj_align(_label_gps, LV_ALIGN_LEFT_MID, 135, 0);
     lv_obj_set_style_text_color(_label_gps, lv_color_hex(0x808080), 0);
 
-    _label_battery = lv_label_create(_header);
-    lv_label_set_text(_label_battery, LV_SYMBOL_BATTERY_FULL " --%");
-    lv_obj_align(_label_battery, LV_ALIGN_LEFT_MID, 200, 0);
-    lv_obj_set_style_text_color(_label_battery, lv_color_hex(0x808080), 0);
+    // BLE status: Bluetooth icon with central|peripheral counts
+    _label_ble = lv_label_create(_header);
+    lv_label_set_text(_label_ble, LV_SYMBOL_BLUETOOTH " -|-");
+    lv_obj_align(_label_ble, LV_ALIGN_LEFT_MID, 175, 0);
+    lv_obj_set_style_text_color(_label_ble, lv_color_hex(0x808080), 0);
+
+    // Battery: vertical layout (icon on top, percentage below) to save horizontal space
+    _battery_container = lv_obj_create(_header);
+    lv_obj_set_size(_battery_container, 30, 34);
+    lv_obj_align(_battery_container, LV_ALIGN_LEFT_MID, 215, 0);
+    lv_obj_set_style_bg_opa(_battery_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_battery_container, 0, 0);
+    lv_obj_set_style_pad_all(_battery_container, 0, 0);
+    lv_obj_clear_flag(_battery_container, LV_OBJ_FLAG_SCROLLABLE);
+
+    _label_battery_icon = lv_label_create(_battery_container);
+    lv_label_set_text(_label_battery_icon, LV_SYMBOL_BATTERY_FULL);
+    lv_obj_align(_label_battery_icon, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_text_color(_label_battery_icon, lv_color_hex(0x808080), 0);
+
+    _label_battery_pct = lv_label_create(_battery_container);
+    lv_label_set_text(_label_battery_pct, "--%");
+    lv_obj_align(_label_battery_pct, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_text_color(_label_battery_pct, lv_color_hex(0x808080), 0);
+    lv_obj_set_style_text_font(_label_battery_pct, &lv_font_montserrat_12, 0);
 
     // New message button (right corner)
     _btn_new = lv_btn_create(_header);
@@ -425,7 +448,36 @@ void ConversationListScreen::update_status() {
         lv_obj_set_style_text_color(_label_gps, lv_color_hex(0x808080), 0);
     }
 
-    // Update battery level (read from ADC)
+    // Update BLE connection counts (central|peripheral)
+    if (_ble_interface) {
+        int central_count = 0;
+        int peripheral_count = 0;
+
+        // Get connection counts from BLE interface
+        // The interface stores stats about connections
+        // Use get_stats() map if available, otherwise show "--"
+        auto stats = _ble_interface->get_stats();
+        auto it_c = stats.find("central_connections");
+        auto it_p = stats.find("peripheral_connections");
+        if (it_c != stats.end()) central_count = (int)it_c->second;
+        if (it_p != stats.end()) peripheral_count = (int)it_p->second;
+
+        String ble_text = String(LV_SYMBOL_BLUETOOTH) + " " + String(central_count) + "|" + String(peripheral_count);
+        lv_label_set_text(_label_ble, ble_text.c_str());
+
+        // Color based on connection status
+        int total = central_count + peripheral_count;
+        if (total > 0) {
+            lv_obj_set_style_text_color(_label_ble, lv_color_hex(0x2196F3), 0);  // Blue - connected
+        } else {
+            lv_obj_set_style_text_color(_label_ble, lv_color_hex(0x808080), 0);  // Gray - no connections
+        }
+    } else {
+        lv_label_set_text(_label_ble, LV_SYMBOL_BLUETOOTH " -|-");
+        lv_obj_set_style_text_color(_label_ble, lv_color_hex(0x808080), 0);
+    }
+
+    // Update battery level (read from ADC) - vertical layout
     // ESP32 ADC has linearity/offset issues - add 0.32V calibration per LilyGo community
     int raw_adc = analogRead(Pin::BATTERY_ADC);
     float voltage = (raw_adc / 4095.0) * 3.3 * Power::BATTERY_VOLTAGE_DIVIDER + 0.32;
@@ -436,24 +488,30 @@ void ConversationListScreen::update_status() {
     // (calibrated voltage reads ~5V+ when charging, ~4.2V max on battery)
     bool charging = (voltage > 4.4);
 
-    String battery_text;
+    // Update icon
     if (charging) {
-        battery_text = String(LV_SYMBOL_CHARGE);
+        lv_label_set_text(_label_battery_icon, LV_SYMBOL_CHARGE);
     } else {
-        battery_text = String(LV_SYMBOL_BATTERY_FULL) + " " + String(percent) + "%";
+        lv_label_set_text(_label_battery_icon, LV_SYMBOL_BATTERY_FULL);
     }
-    lv_label_set_text(_label_battery, battery_text.c_str());
+
+    // Update percentage
+    String pct_text = String(percent) + "%";
+    lv_label_set_text(_label_battery_pct, pct_text.c_str());
 
     // Color based on battery level (cyan when charging)
+    lv_color_t battery_color;
     if (charging) {
-        lv_obj_set_style_text_color(_label_battery, lv_color_hex(0x00BCD4), 0);  // Cyan
+        battery_color = lv_color_hex(0x00BCD4);  // Cyan
     } else if (percent > 50) {
-        lv_obj_set_style_text_color(_label_battery, lv_color_hex(0x4CAF50), 0);  // Green
+        battery_color = lv_color_hex(0x4CAF50);  // Green
     } else if (percent > 20) {
-        lv_obj_set_style_text_color(_label_battery, lv_color_hex(0xFFEB3B), 0);  // Yellow
+        battery_color = lv_color_hex(0xFFEB3B);  // Yellow
     } else {
-        lv_obj_set_style_text_color(_label_battery, lv_color_hex(0xF44336), 0);  // Red
+        battery_color = lv_color_hex(0xF44336);  // Red
     }
+    lv_obj_set_style_text_color(_label_battery_icon, battery_color, 0);
+    lv_obj_set_style_text_color(_label_battery_pct, battery_color, 0);
 }
 
 void ConversationListScreen::on_conversation_clicked(lv_event_t* event) {

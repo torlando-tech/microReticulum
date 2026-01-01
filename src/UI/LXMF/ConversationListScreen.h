@@ -155,6 +155,12 @@ public:
     void set_lora_interface(RNS::Interface* iface) { _lora_interface = iface; }
 
     /**
+     * Set BLE interface for connection count display
+     * @param iface BLE interface implementation
+     */
+    void set_ble_interface(RNS::Interface* iface) { _ble_interface = iface; }
+
+    /**
      * Set GPS for satellite count display
      * @param gps TinyGPSPlus instance
      */
@@ -170,9 +176,13 @@ private:
     lv_obj_t* _label_wifi;
     lv_obj_t* _label_lora;
     lv_obj_t* _label_gps;
-    lv_obj_t* _label_battery;
+    lv_obj_t* _label_ble;
+    lv_obj_t* _battery_container;
+    lv_obj_t* _label_battery_icon;
+    lv_obj_t* _label_battery_pct;
 
     RNS::Interface* _lora_interface;
+    RNS::Interface* _ble_interface;
     TinyGPSPlus* _gps;
 
     ::LXMF::MessageStore* _message_store;

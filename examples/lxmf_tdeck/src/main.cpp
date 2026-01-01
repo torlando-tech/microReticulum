@@ -262,56 +262,45 @@ bool try_l76k_init() {
 void setup_gps() {
     INFO("Initializing GPS...");
 
-    // Initialize GPS serial (9600 baud is default for L76K)
-    // Note: begin(baud, config, rxPin, txPin) - ESP32 perspective
-    // GPS_RX (44) = ESP32 receives FROM GPS
-    // GPS_TX (43) = ESP32 transmits TO GPS
-    GPSSerial.begin(9600, SERIAL_8N1, Pin::GPS_RX, Pin::GPS_TX);
-
     String gps_msg = "  GPS UART: ESP32 RX=" + String(Pin::GPS_RX) + ", TX=" + String(Pin::GPS_TX);
     INFO(gps_msg.c_str());
 
-    // Set timeout to prevent blocking (Arduino Core 3.x can hang on serial ops)
-    GPSSerial.setTimeout(500);
-
-    delay(500);  // Give GPS time to start up
-
     bool gps_found = false;
 
-    // Try L76K at 9600 baud first
-    if (try_l76k_init()) {
-        // L76K initialization commands
-        GPSSerial.write("$PCAS04,5*1C\r\n");    // GPS + GLONASS mode
-        delay(100);
-        GPSSerial.write("$PCAS03,1,1,1,1,1,1,1,1,1,1,,,0,0*02\r\n");  // Enable all NMEA
-        delay(100);
-        GPSSerial.write("$PCAS11,3*1E\r\n");    // Vehicle mode
-        delay(100);
+    // Try u-blox at 38400 baud FIRST (T-Deck Plus default)
+    // This avoids sending L76K commands that could confuse u-blox
+    GPSSerial.begin(38400, SERIAL_8N1, Pin::GPS_RX, Pin::GPS_TX);
+    GPSSerial.setTimeout(500);
+    delay(500);  // Give GPS time to start up
+
+    uint32_t timeout = millis() + 1000;
+    while (!GPSSerial.available() && millis() < timeout) {
+        delay(10);
+    }
+
+    if (GPSSerial.available()) {
+        INFO("  u-blox GPS detected at 38400 baud");
         gps_found = true;
-        INFO("  L76K GPS initialized (GPS+GLONASS, Vehicle mode)");
     } else {
-        // Try u-blox m10q at 38400 baud
-        INFO("  L76K not found, trying u-blox at 38400...");
+        // Try L76K at 9600 baud
+        INFO("  No data at 38400, trying L76K at 9600...");
         GPSSerial.end();
-        GPSSerial.begin(38400, SERIAL_8N1, Pin::GPS_RX, Pin::GPS_TX);
+        GPSSerial.begin(9600, SERIAL_8N1, Pin::GPS_RX, Pin::GPS_TX);
         GPSSerial.setTimeout(500);
-        delay(100);
+        delay(200);
 
-        // Check if we get any data
-        uint32_t timeout = millis() + 1000;
-        while (!GPSSerial.available() && millis() < timeout) {
-            delay(10);
-        }
-
-        if (GPSSerial.available()) {
-            INFO("  u-blox GPS detected at 38400 baud");
-            gps_found = true;
-        } else {
-            // Try 9600 again for u-blox
-            GPSSerial.end();
-            GPSSerial.begin(9600, SERIAL_8N1, Pin::GPS_RX, Pin::GPS_TX);
-            GPSSerial.setTimeout(500);
+        if (try_l76k_init()) {
+            // L76K initialization commands
+            GPSSerial.write("$PCAS04,5*1C\r\n");    // GPS + GLONASS mode
             delay(100);
+            GPSSerial.write("$PCAS03,1,1,1,1,1,1,1,1,1,1,,,0,0*02\r\n");  // Enable all NMEA
+            delay(100);
+            GPSSerial.write("$PCAS11,3*1E\r\n");    // Vehicle mode
+            delay(100);
+            gps_found = true;
+            INFO("  L76K GPS initialized (GPS+GLONASS, Vehicle mode)");
+        } else {
+            // Last try: check for any GPS at 9600
             timeout = millis() + 1000;
             while (!GPSSerial.available() && millis() < timeout) {
                 delay(10);

@@ -357,6 +357,12 @@ void UIManager::set_lora_interface(Interface* iface) {
     }
 }
 
+void UIManager::set_ble_interface(Interface* iface) {
+    if (_conversation_list_screen) {
+        _conversation_list_screen->set_ble_interface(iface);
+    }
+}
+
 void UIManager::set_gps(TinyGPSPlus* gps) {
     if (_conversation_list_screen) {
         _conversation_list_screen->set_gps(gps);
