@@ -52,20 +52,6 @@ bool NimBLEPlatform::initialize(const PlatformConfig& config) {
     // Initialize NimBLE
     NimBLEDevice::init(_config.device_name);
 
-    // Clear all bonds to prevent stale bond information from causing connection failures
-    // This is especially important on ESP32-S3 where stale bonds can cause error=13 (ETIMEOUT)
-    // when attempting central mode connections
-    int numBonds = NimBLEDevice::getNumBonds();
-    if (numBonds > 0) {
-        DEBUG("NimBLEPlatform: Clearing " + std::to_string(numBonds) + " stale bonds from NVS");
-        NimBLEDevice::deleteAllBonds();
-    }
-
-    // Disable security requirements - we use open GATT connections, no pairing needed
-    // This helps avoid connection failures due to security negotiation issues on ESP32-S3
-    NimBLEDevice::setSecurityAuth(false, false, false);  // No bonding, no MITM, no SC
-    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);  // Just works / no auth
-
     // Address type for ESP32-S3:
     // - BLE_OWN_ADDR_PUBLIC fails with error 13 (ETIMEOUT) for client connections
     // - BLE_OWN_ADDR_RPA_PUBLIC_DEFAULT also fails with error 13
@@ -201,78 +187,65 @@ bool NimBLEPlatform::isRunning() const {
 //=============================================================================
 
 bool NimBLEPlatform::recoverBLEStack() {
-    WARNING("NimBLEPlatform: Starting BLE stack recovery...");
+    // Track consecutive recovery attempts using existing member variable
+    _lightweight_reset_fails++;
+    WARNING("NimBLEPlatform: Performing soft BLE reset (attempt " +
+            std::to_string(_lightweight_reset_fails) + ")...");
 
-    // Save identity data to restore after reinit
-    Bytes saved_identity = _identity_data;
-
-    // Stop all BLE operations
-    _scanning = false;
-    _advertising = false;
-    _scan_stop_time = 0;
-
-    // Clear all clients and connections
-    for (auto& kv : _clients) {
-        if (kv.second) {
-            if (kv.second->isConnected()) {
-                kv.second->disconnect();
-            }
-            NimBLEDevice::deleteClient(kv.second);
-        }
+    // If we've had too many consecutive recovery attempts without success,
+    // the BLE stack is truly stuck. Reboot is the only reliable fix.
+    if (_lightweight_reset_fails >= 5) {
+        ERROR("NimBLEPlatform: BLE stack unrecoverable after " +
+              std::to_string(_lightweight_reset_fails) + " attempts - rebooting device");
+        delay(100);
+        ESP.restart();
+        return false;  // Won't reach here
     }
-    _clients.clear();
-    _connections.clear();
+
+    // Stop all operations
+    _scanning = false;
+    _scan_stop_time = 0;
+    _advertising = false;
+
+    // Stop scan via high-level API
+    if (_scan) {
+        _scan->stop();
+    }
+
+    // Stop advertising
+    if (_advertising_obj) {
+        _advertising_obj->stop();
+    }
+
+    // Wait for all operations to settle
+    delay(500);
+
+    // Clear scan results and discovered devices
+    if (_scan) {
+        _scan->clearResults();
+    }
     _discovered_devices.clear();
 
-    // Clear pointers before deinit
-    _server = nullptr;
-    _service = nullptr;
-    _rx_char = nullptr;
-    _tx_char = nullptr;
-    _identity_char = nullptr;
-    _scan = nullptr;
-    _advertising_obj = nullptr;
+    // Reconfigure scan - this can help recover from bad state
+    if (_scan) {
+        _scan->setScanCallbacks(this, false);
+        _scan->setActiveScan(_config.scan_mode == ScanMode::ACTIVE);
+        _scan->setInterval(_config.scan_interval_ms);
+        _scan->setWindow(_config.scan_window_ms);
+        _scan->setFilterPolicy(BLE_HCI_SCAN_FILT_NO_WL);
+        _scan->setDuplicateFilter(true);
+    }
 
-    // Deinitialize NimBLE completely
-    INFO("NimBLEPlatform: Deinitializing NimBLE...");
-    NimBLEDevice::deinit(true);
-    delay(200);  // Give hardware time to reset
+    // Reset scan failure counter (but NOT lightweight_reset_fails - that tracks recovery success)
+    _scan_fail_count = 0;
 
-    // Reinitialize NimBLE
-    INFO("NimBLEPlatform: Reinitializing NimBLE...");
-    NimBLEDevice::init(_config.device_name);
-    NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM);
-    NimBLEDevice::setPower(ESP_PWR_LVL_P9);
-    NimBLEDevice::setMTU(_config.preferred_mtu);
-
-    // Re-setup server if needed
+    // Restart advertising if in peripheral/dual mode
     if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
-        if (!setupServer()) {
-            ERROR("NimBLEPlatform: Failed to setup server during recovery");
-            return false;
-        }
-    }
-
-    // Re-setup scan if needed
-    if (_config.role == Role::CENTRAL || _config.role == Role::DUAL) {
-        if (!setupScan()) {
-            ERROR("NimBLEPlatform: Failed to setup scan during recovery");
-            return false;
-        }
-    }
-
-    // Restore identity data
-    if (saved_identity.size() > 0) {
-        setIdentityData(saved_identity);
-    }
-
-    // Start advertising if in peripheral/dual mode
-    if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
+        delay(100);
         startAdvertising();
     }
 
-    _scan_fail_count = 0;
-    INFO("NimBLEPlatform: BLE stack recovery complete");
+    INFO("NimBLEPlatform: Soft reset complete");
     return true;
 }
 
@@ -289,6 +262,13 @@ bool NimBLEPlatform::startScan(uint16_t duration_ms) {
     if (_scanning) {
         _scan_fail_count = 0;  // Reset on successful state
         return true;
+    }
+
+    // Check if BLE stack is busy with other operations (e.g., incoming peripheral connection)
+    // This prevents conflicts between central and peripheral operations
+    if (ble_gap_conn_active()) {
+        DEBUG("NimBLEPlatform: Skipping scan - connection in progress");
+        return false;  // Don't count as failure, just skip this cycle
     }
 
     // Stop advertising while scanning to avoid conflicts on ESP32
@@ -321,6 +301,7 @@ bool NimBLEPlatform::startScan(uint16_t duration_ms) {
     if (started) {
         _scanning = true;
         _scan_fail_count = 0;  // Reset failure counter on success
+        _lightweight_reset_fails = 0;  // Reset recovery counter - BLE is working again
         _scan_stop_time = millis() + duration_ms;  // Schedule when to stop
         DEBUG("NimBLEPlatform: Scan started, will stop at " + std::to_string(_scan_stop_time) +
               " (in " + std::to_string(duration_ms) + "ms)");
@@ -331,28 +312,21 @@ bool NimBLEPlatform::startScan(uint16_t duration_ms) {
     _scan_fail_count++;
     ERROR("NimBLEPlatform: Failed to start scan (attempt " + std::to_string(_scan_fail_count) + ")");
 
-    // Lightweight recovery: cancel any pending GAP operations that might be blocking
-    // Full recoverBLEStack() causes heap corruption, but this simpler approach is safe
     if (_scan_fail_count >= SCAN_FAIL_RECOVERY_THRESHOLD) {
-        WARNING("NimBLEPlatform: Too many scan failures, attempting GAP reset");
-
-        // Cancel any pending GAP operations
-        ble_gap_disc_cancel();   // Cancel any ongoing discovery
-        ble_gap_conn_cancel();   // Cancel any pending connection
-        delay(100);              // Let BLE stack settle
-
-        // Try to start scan again immediately
-        _scan->clearResults();
-        bool retry = _scan->start(0, false);
-        if (retry) {
-            INFO("NimBLEPlatform: Scan started after GAP reset");
-            _scanning = true;
-            _scan_fail_count = 0;
-            _scan_stop_time = millis() + duration_ms;
-            return true;
+        WARNING("NimBLEPlatform: Too many scan failures, attempting BLE stack recovery");
+        if (recoverBLEStack()) {
+            INFO("NimBLEPlatform: BLE stack recovered, retrying scan");
+            // Try scan one more time after recovery
+            _scan->clearResults();
+            started = _scan->start(0, false);
+            if (started) {
+                _scanning = true;
+                _scan_fail_count = 0;
+                _scan_stop_time = millis() + duration_ms;
+                INFO("NimBLEPlatform: Scan started after recovery");
+                return true;
+            }
         }
-
-        _scan_fail_count = 0;  // Reset counter to avoid spamming warnings
     }
 
     return false;
@@ -379,6 +353,15 @@ bool NimBLEPlatform::isScanning() const {
 bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
     NimBLEAddress nimAddr = toNimBLE(address);
 
+    // Rate limit connections to avoid overwhelming the BLE stack
+    static unsigned long last_connect_time = 0;
+    unsigned long now = millis();
+    if (now - last_connect_time < 500) {
+        DEBUG("NimBLEPlatform: Connection rate limited, waiting");
+        delay(500 - (now - last_connect_time));
+    }
+    last_connect_time = millis();
+
     // Check if already connected
     if (isConnectedTo(address)) {
         WARNING("NimBLEPlatform: Already connected to " + address.toString());
@@ -394,17 +377,11 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
     // Stop scanning and advertising before connecting
     bool was_advertising = isAdvertising();
 
-    // Use low-level GAP cancel functions for reliable cleanup
-    // These are more reliable than the high-level NimBLE wrappers
-    if (ble_gap_disc_active()) {
-        DEBUG("NimBLEPlatform: Cancelling discovery via ble_gap_disc_cancel");
-        ble_gap_disc_cancel();
-    }
-
-    // Stop high-level scan tracking
-    if (_scan && _scan->isScanning()) {
+    // Use high-level NimBLE API to stop scan (low-level ble_gap_disc_cancel can cause timer assertions)
+    if (_scan && (_scan->isScanning() || ble_gap_disc_active())) {
         DEBUG("NimBLEPlatform: Stopping scan before connect");
         _scan->stop();
+        delay(50);  // Give stack time to process
         _scanning = false;
         _scan_stop_time = 0;
     }
@@ -644,9 +621,16 @@ bool NimBLEPlatform::connectNative(const BLEAddress& address, uint16_t timeout_m
     }
 
     if (_native_connect_pending) {
-        // Timeout - cancel the connection attempt
+        // Timeout - try to cancel but only if connection is still pending at GAP level
         WARNING("NimBLEPlatform::connectNative: Connection timed out, cancelling");
-        ble_gap_conn_cancel();
+        // Check if we're actually connecting before cancelling
+        if (ble_gap_conn_active()) {
+            int rc = ble_gap_conn_cancel();
+            if (rc != 0 && rc != BLE_HS_EALREADY) {
+                DEBUG("NimBLEPlatform::connectNative: ble_gap_conn_cancel returned " + std::to_string(rc));
+            }
+        }
+        delay(50);  // Give stack time to process
         _native_connect_pending = false;
         return false;
     }
@@ -694,7 +678,6 @@ bool NimBLEPlatform::connectNative(const BLEAddress& address, uint16_t timeout_m
 
     return true;
 }
-
 
 bool NimBLEPlatform::disconnect(uint16_t conn_handle) {
     auto conn_it = _connections.find(conn_handle);
@@ -962,19 +945,11 @@ bool NimBLEPlatform::enableNotifications(uint16_t conn_handle, bool enable) {
 
 bool NimBLEPlatform::notify(uint16_t conn_handle, const Bytes& data) {
     if (!_tx_char) {
-        ERROR("NimBLEPlatform::notify: _tx_char is null");
         return false;
     }
 
-    DEBUG("NimBLEPlatform::notify: conn=" + std::to_string(conn_handle) +
-          " data=" + std::to_string(data.size()) + " bytes");
-
     _tx_char->setValue(data.data(), data.size());
-    bool result = _tx_char->notify(conn_handle);  // Notify specific connection
-    if (!result) {
-        ERROR("NimBLEPlatform::notify: notify() returned false for conn=" + std::to_string(conn_handle));
-    }
-    return result;
+    return _tx_char->notify(true);
 }
 
 bool NimBLEPlatform::notifyAll(const Bytes& data) {
@@ -1097,9 +1072,8 @@ void NimBLEPlatform::onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) 
         _on_central_connected(conn);
     }
 
-    // Continue advertising to accept more connections (peripheral or dual mode)
-    if ((_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) &&
-        getConnectionCount() < _config.max_connections) {
+    // Continue advertising to accept more connections
+    if (_config.role == Role::DUAL && getConnectionCount() < _config.max_connections) {
         startAdvertising();
     }
 }
@@ -1122,12 +1096,6 @@ void NimBLEPlatform::onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInf
 
     // Clear operation queue for this connection
     BLEOperationQueue::clearForConnection(conn_handle);
-
-    // Restart advertising after disconnect (peripheral or dual mode)
-    if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
-        DEBUG("NimBLEPlatform: Restarting advertising after disconnect");
-        startAdvertising();
-    }
 }
 
 void NimBLEPlatform::onMTUChange(uint16_t MTU, NimBLEConnInfo& connInfo) {
@@ -1195,12 +1163,6 @@ void NimBLEPlatform::onConnect(NimBLEClient* pClient) {
     uint16_t conn_handle = pClient->getConnHandle();
     BLEAddress peer_addr = fromNimBLE(pClient->getPeerAddress());
 
-    // Remove temporary pending connection entry if it exists
-    auto pending_it = _clients.find(0xFFFF);
-    if (pending_it != _clients.end() && pending_it->second == pClient) {
-        _clients.erase(pending_it);
-    }
-
     ConnectionHandle conn;
     conn.handle = conn_handle;
     conn.peer_address = peer_addr;
@@ -1228,22 +1190,10 @@ void NimBLEPlatform::onConnectFail(NimBLEClient* pClient, int reason) {
     ERROR("NimBLEPlatform: onConnectFail to " + peer_addr.toString() +
           " reason=" + std::to_string(reason));
 
-    // Remove temporary pending connection entry if it exists
-    auto pending_it = _clients.find(0xFFFF);
-    if (pending_it != _clients.end() && pending_it->second == pClient) {
-        _clients.erase(pending_it);
-    }
-
-    // Delete the client to free up the slot for future connections
-    // With async connect, NimBLE doesn't automatically delete the client on failure
-    NimBLEDevice::deleteClient(pClient);
-
-    // Restart advertising if we're in dual/peripheral mode
-    if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
-        if (!isAdvertising()) {
-            startAdvertising();
-        }
-    }
+    // Signal async connect failure
+    _async_connect_pending = false;
+    _async_connect_failed = true;
+    _async_connect_error = reason;
 }
 
 void NimBLEPlatform::onDisconnect(NimBLEClient* pClient, int reason) {

@@ -255,7 +255,7 @@ void TCPClientInterface::handle_disconnect() {
     if (now - last_status_log >= 5000) {  // Every 5 seconds
         last_status_log = now;
         int avail = _client.available();
-        Serial.printf("[TCP] connected=%d online=%d avail=%d loops=%lu rx=%lu buf=%d\n",
+        Serial.printf("[TCP] connected=%d online=%d avail=%d loops=%u rx=%u buf=%d\n",
                       _client.connected(), _online, avail, loop_count, total_rx, (int)_frame_buffer.size());
         loop_count = 0;
     }
@@ -390,7 +390,7 @@ void TCPClientInterface::extract_and_process_frames() {
         // Extract frame content between FLAGS (excluding the FLAGS)
         Bytes frame_content = _frame_buffer.mid(1, end - 1);
         frame_count++;
-        Serial.printf("[HDLC] Frame #%lu: %d escaped bytes\n", frame_count, (int)frame_content.size());
+        Serial.printf("[HDLC] Frame #%u: %d escaped bytes\n", frame_count, (int)frame_content.size());
 
         // Remove processed frame from buffer (keep data after end FLAG)
         _frame_buffer = _frame_buffer.mid(end);

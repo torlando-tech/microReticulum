@@ -169,7 +169,11 @@ private:
 
     // BLE stack recovery
     uint8_t _scan_fail_count = 0;
+    uint8_t _lightweight_reset_fails = 0;
+    unsigned long _last_full_recovery_time = 0;
     static constexpr uint8_t SCAN_FAIL_RECOVERY_THRESHOLD = 5;
+    static constexpr uint8_t LIGHTWEIGHT_RESET_MAX_FAILS = 3;
+    static constexpr unsigned long FULL_RECOVERY_COOLDOWN_MS = 60000;  // 60 seconds
     bool recoverBLEStack();
 
     // NimBLE objects
