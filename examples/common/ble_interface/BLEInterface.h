@@ -109,6 +109,16 @@ public:
     size_t peerCount() const;
 
     /**
+     * @brief Get count of peers where we are central (we initiated)
+     */
+    size_t centralPeerCount() const;
+
+    /**
+     * @brief Get count of peers where we are peripheral (they initiated)
+     */
+    size_t peripheralPeerCount() const;
+
+    /**
      * @brief Check if BLE is running
      */
     bool isRunning() const { return _platform && _platform->isRunning(); }

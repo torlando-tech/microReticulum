@@ -261,6 +261,16 @@ public:
     size_t connectedCount() const;
 
     /**
+     * @brief Get count of peers where we are central (we initiated connection)
+     */
+    size_t centralCount() const;
+
+    /**
+     * @brief Get count of peers where we are peripheral (they initiated connection)
+     */
+    size_t peripheralCount() const;
+
+    /**
      * @brief Get total peer count
      */
     size_t totalPeerCount() const { return _peers_by_identity.size() + _peers_by_mac_only.size(); }

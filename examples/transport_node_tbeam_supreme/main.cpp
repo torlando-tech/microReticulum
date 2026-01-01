@@ -604,7 +604,8 @@ void loop() {
     // Update display with peer counts
     #ifdef HAS_DISPLAY
     if (ble_iface) {
-        RNS::Display::set_ble_peers(ble_iface->peerCount());
+        RNS::Display::set_ble_central_peers(ble_iface->centralPeerCount());
+        RNS::Display::set_ble_peripheral_peers(ble_iface->peripheralPeerCount());
     }
     if (auto_iface) {
         RNS::Display::set_auto_peers(auto_iface->peer_count());

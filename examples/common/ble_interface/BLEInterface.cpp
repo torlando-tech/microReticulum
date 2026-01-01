@@ -273,6 +273,16 @@ size_t BLEInterface::peerCount() const {
     return _peer_manager.connectedCount();
 }
 
+size_t BLEInterface::centralPeerCount() const {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    return _peer_manager.centralCount();
+}
+
+size_t BLEInterface::peripheralPeerCount() const {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    return _peer_manager.peripheralCount();
+}
+
 //=============================================================================
 // Platform Callbacks
 //=============================================================================

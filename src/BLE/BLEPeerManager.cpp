@@ -486,6 +486,34 @@ size_t BLEPeerManager::connectedCount() const {
     return count;
 }
 
+size_t BLEPeerManager::centralCount() const {
+    size_t count = 0;
+
+    for (const auto& kv : _peers_by_identity) {
+        if (kv.second.isConnected() && kv.second.is_central) count++;
+    }
+
+    for (const auto& kv : _peers_by_mac_only) {
+        if (kv.second.isConnected() && kv.second.is_central) count++;
+    }
+
+    return count;
+}
+
+size_t BLEPeerManager::peripheralCount() const {
+    size_t count = 0;
+
+    for (const auto& kv : _peers_by_identity) {
+        if (kv.second.isConnected() && !kv.second.is_central) count++;
+    }
+
+    for (const auto& kv : _peers_by_mac_only) {
+        if (kv.second.isConnected() && !kv.second.is_central) count++;
+    }
+
+    return count;
+}
+
 void BLEPeerManager::cleanupStalePeers(double max_age) {
     double now = Utilities::OS::time();
     std::vector<Bytes> to_remove;
