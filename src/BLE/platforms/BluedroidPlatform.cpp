@@ -357,6 +357,14 @@ bool BluedroidPlatform::startAdvertising() {
         return false;
     }
 
+    // Skip advertising if at max connections - no point accepting more
+    if (getConnectionCount() >= _config.max_connections) {
+        TRACE("BluedroidPlatform: Skipping advertising - at max connections (" +
+              std::to_string(getConnectionCount()) + "/" +
+              std::to_string(_config.max_connections) + ")");
+        return false;
+    }
+
     DEBUG("BluedroidPlatform: Starting advertising");
     buildAdvertisingData();
     _adv_state = AdvState::CONFIGURING_DATA;
@@ -457,6 +465,14 @@ void BluedroidPlatform::setIdentityData(const Bytes& identity) {
 //=============================================================================
 
 bool BluedroidPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
+    // Check connection limit first - don't connect if at max
+    if (getConnectionCount() >= _config.max_connections) {
+        TRACE("BluedroidPlatform: Skipping connect - at max connections (" +
+              std::to_string(getConnectionCount()) + "/" +
+              std::to_string(_config.max_connections) + ")");
+        return false;
+    }
+
     // Protect against connecting when memory is critically low
     if (ESP.getFreeHeap() < 40000) {
         static uint32_t last_low_mem_warn = 0;
@@ -1313,6 +1329,12 @@ void BluedroidPlatform::handleGattsConnect(esp_ble_gatts_cb_param_t* param) {
     INFO("BluedroidPlatform: GATTS Connected handle=" + std::to_string(conn_handle) +
          " conn_id=" + std::to_string(param->connect.conn_id) +
          " addr=" + std::string(addr_str));
+
+    // Stop advertising if we've hit max connections
+    if (getConnectionCount() >= _config.max_connections) {
+        DEBUG("BluedroidPlatform: At max connections, stopping advertising");
+        stopAdvertising();
+    }
 
     if (_on_central_connected) {
         ConnectionHandle ch = getConnection(conn_handle);
