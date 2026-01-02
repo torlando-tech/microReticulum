@@ -290,6 +290,14 @@ bool BluedroidPlatform::startScan(uint16_t duration_ms) {
         return false;
     }
 
+    // Skip scanning if we've reached connection limit - saves memory from scan results
+    if (getConnectionCount() >= _config.max_connections) {
+        TRACE("BluedroidPlatform: Skipping scan - at max connections (" +
+              std::to_string(getConnectionCount()) + "/" +
+              std::to_string(_config.max_connections) + ")");
+        return false;
+    }
+
     // In dual mode, stop advertising before scanning
     if (_adv_state == AdvState::ACTIVE) {
         DEBUG("BluedroidPlatform: Stopping advertising for scan");

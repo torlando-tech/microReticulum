@@ -78,8 +78,13 @@ namespace Timing {
 //=============================================================================
 
 namespace Limits {
+#ifdef ARDUINO
+    static constexpr size_t MAX_PEERS = 3;                    // Reduced for MCU memory constraints
+    static constexpr size_t MAX_DISCOVERED_PEERS = 16;        // Reduced discovery cache for MCU
+#else
     static constexpr size_t MAX_PEERS = 7;                    // Maximum simultaneous connections
     static constexpr size_t MAX_DISCOVERED_PEERS = 100;       // Discovery cache limit
+#endif
     static constexpr size_t IDENTITY_SIZE = 16;               // Identity hash size (bytes)
     static constexpr size_t MAC_SIZE = 6;                     // BLE MAC address size (bytes)
     static constexpr uint8_t BLACKLIST_THRESHOLD = 3;         // Failures before blacklist
