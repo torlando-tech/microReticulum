@@ -292,6 +292,12 @@ private:
     volatile bool _connect_success = false;
     volatile int _connect_error = 0;
     BLEAddress _pending_connect_address;
+    unsigned long _connect_start_time = 0;
+    uint16_t _connect_timeout_ms = 10000;
+
+    // Service discovery serialization (Bluedroid can only handle one at a time)
+    uint16_t _discovery_in_progress = 0xFFFF;  // conn_handle of active discovery, or 0xFFFF if none
+    std::queue<uint16_t> _pending_discoveries;  // queued conn_handles waiting for discovery
 
     // Local address cache
     mutable esp_bd_addr_t _local_addr = {0};
