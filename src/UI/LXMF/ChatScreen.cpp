@@ -170,9 +170,10 @@ void ChatScreen::refresh() {
 
     INFO("Refreshing chat messages");
 
-    // Clear existing messages
+    // Clear existing messages and row tracking
     lv_obj_clean(_message_list);
     _messages.clear();
+    _message_rows.clear();
 
     // Load all message hashes from store (sorted by timestamp)
     _all_message_hashes = _message_store->get_messages_for_conversation(_peer_hash);
@@ -291,6 +292,9 @@ void ChatScreen::create_message_bubble(const MessageItem& item) {
     lv_obj_set_style_pad_all(row, 0, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
+    // Track row for targeted status updates
+    _message_rows[item.message_hash] = row;
+
     // Create the actual message bubble inside the row
     lv_obj_t* bubble = lv_obj_create(row);
     lv_obj_set_width(bubble, LV_PCT(80));
@@ -380,6 +384,18 @@ void ChatScreen::add_message(const ::LXMF::LXMessage& message, bool outgoing) {
     item.delivered = false;
     item.failed = false;
 
+    // Remove oldest messages if we exceed the limit
+    while (_messages.size() >= MAX_DISPLAYED_MESSAGES) {
+        // Remove from tracking map
+        _message_rows.erase(_messages.front().message_hash);
+        _messages.erase(_messages.begin());
+        // Remove first child (oldest) from message list
+        lv_obj_t* first_row = lv_obj_get_child(_message_list, 0);
+        if (first_row) {
+            lv_obj_del(first_row);
+        }
+    }
+
     _messages.push_back(item);
     create_message_bubble(item);
 
@@ -388,12 +404,31 @@ void ChatScreen::add_message(const ::LXMF::LXMessage& message, bool outgoing) {
 }
 
 void ChatScreen::update_message_status(const Bytes& message_hash, bool delivered) {
-    // Find message and update status
+    // Find message and update status in our data
     for (auto& msg : _messages) {
         if (msg.message_hash == message_hash) {
             msg.delivered = delivered;
             msg.failed = !delivered;
-            refresh();  // Redraw messages
+
+            // Update just the status label instead of full refresh
+            auto row_it = _message_rows.find(message_hash);
+            if (row_it != _message_rows.end()) {
+                lv_obj_t* row = row_it->second;
+                // Structure: row -> bubble -> [content_label, status_label]
+                lv_obj_t* bubble = lv_obj_get_child(row, 0);
+                if (bubble) {
+                    // Status label is always the last child
+                    uint32_t child_count = lv_obj_get_child_cnt(bubble);
+                    if (child_count > 0) {
+                        lv_obj_t* status_label = lv_obj_get_child(bubble, child_count - 1);
+                        if (status_label) {
+                            String status_text = msg.timestamp_str + " " +
+                                get_delivery_indicator(msg.outgoing, msg.delivered, msg.failed);
+                            lv_label_set_text(status_label, status_text.c_str());
+                        }
+                    }
+                }
+            }
             break;
         }
     }

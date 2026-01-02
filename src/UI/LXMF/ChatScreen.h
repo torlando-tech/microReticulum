@@ -8,6 +8,7 @@
 #include <Arduino.h>
 #include <lvgl.h>
 #include <vector>
+#include <map>
 #include <functional>
 #include "../../Bytes.h"
 #include "../../LXMF/LXMessage.h"
@@ -138,6 +139,9 @@ private:
     ::LXMF::MessageStore* _message_store;
     std::vector<MessageItem> _messages;
 
+    // Map message hash to bubble row for targeted updates
+    std::map<RNS::Bytes, lv_obj_t*> _message_rows;
+
     BackCallback _back_callback;
     SendMessageCallback _send_message_callback;
 
@@ -162,6 +166,7 @@ private:
     std::vector<RNS::Bytes> _all_message_hashes;  // All message hashes in conversation
     size_t _display_start_idx;                     // Index into _all_message_hashes where display starts
     static constexpr size_t MESSAGES_PER_PAGE = 20;
+    static constexpr size_t MAX_DISPLAYED_MESSAGES = 50;  // Cap to prevent memory exhaustion
     bool _loading_more;                            // Prevent concurrent loads
 
     // Load more messages (for infinite scroll)

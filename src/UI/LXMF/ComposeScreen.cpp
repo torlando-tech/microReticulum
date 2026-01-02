@@ -256,7 +256,10 @@ void ComposeScreen::on_send_clicked(lv_event_t* event) {
     // Validate destination hash
     if (!screen->validate_destination_hash(dest_hash_str)) {
         ERROR(("Invalid destination hash: " + dest_hash_str).c_str());
-        // TODO: Show error message to user
+        // Show error dialog
+        lv_obj_t* mbox = lv_msgbox_create(NULL, "Invalid Address",
+            "Destination must be a 32-character hex address.", NULL, true);
+        lv_obj_center(mbox);
         return;
     }
 
@@ -267,7 +270,10 @@ void ComposeScreen::on_send_clicked(lv_event_t* event) {
 
     if (message.length() == 0) {
         ERROR("Message is empty");
-        // TODO: Show error message to user
+        // Show error dialog
+        lv_obj_t* mbox = lv_msgbox_create(NULL, "Empty Message",
+            "Please enter a message to send.", NULL, true);
+        lv_obj_center(mbox);
         return;
     }
 
