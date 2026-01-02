@@ -238,6 +238,14 @@ size_t maxContiguousAllocation() {
 #endif
 }
 
+/*static*/ size_t OS::heap_max_block() {
+#if defined(ESP32)
+	return ESP.getMaxAllocHeap();
+#else
+	return heap_available();  // Fallback: assume no fragmentation
+#endif
+}
+
 /*static*/ void OS::dump_heap_stats() {
 	HEAD("Heap Stats", LOG_TRACE);
 #if defined(ESP32)

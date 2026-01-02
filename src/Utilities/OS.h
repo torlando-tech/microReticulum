@@ -236,6 +236,7 @@ namespace RNS { namespace Utilities {
 
 		static size_t heap_size();
 		static size_t heap_available();
+		static size_t heap_max_block();
 		static void dump_heap_stats();
 	
     };

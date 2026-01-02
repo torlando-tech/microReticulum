@@ -261,29 +261,43 @@ using namespace RNS::Utilities;
 
 #ifdef ARDUINO
 	// Proactive low-memory culling to prevent fragmentation
-	// Check every time jobs runs since memory can change rapidly
+	// Check both total free AND max contiguous block (fragmentation indicator)
 	size_t heap_avail = OS::heap_available();
-	if (heap_avail < 50000) {  // Below 50KB - aggressive cleanup
+	size_t max_block = OS::heap_max_block();
+
+	// Trigger cleanup if:
+	// 1. Total free < 50KB, OR
+	// 2. Max block < 20KB (severely fragmented - can't allocate medium buffers)
+	bool needs_cleanup = (heap_avail < 50000) || (max_block < 20000);
+
+	// Even more aggressive if max_block < 10KB (critical fragmentation)
+	bool critical = (max_block < 10000);
+
+	if (needs_cleanup) {
 		// Force path table cull even if under limit
-		if (_destination_table.size() > 16) {
-			uint16_t target_size = (_destination_table.size() > 24) ? 16 : _destination_table.size() / 2;
+		uint16_t min_size = critical ? 8 : 16;  // More aggressive when critical
+		if (_destination_table.size() > min_size) {
+			uint16_t target_size = critical ? min_size :
+				((_destination_table.size() > 24) ? 16 : _destination_table.size() / 2);
 			uint16_t orig_max = _path_table_maxsize;
 			_path_table_maxsize = target_size;
 			cull_path_table();
 			_path_table_maxsize = orig_max;
 		}
-		// Also clear expired path requests
+		// Clear expired path requests (shorter expiry when critical)
 		double now = OS::time();
+		double expiry = critical ? 120 : 300;  // 2 min when critical, 5 min otherwise
 		for (auto it = _path_requests.begin(); it != _path_requests.end(); ) {
-			if (now - it->second > 300) {  // 5 min expiry
+			if (now - it->second > expiry) {
 				it = _path_requests.erase(it);
 			} else {
 				++it;
 			}
 		}
-		// Clear stale packet hashes (set doesn't have order, so just remove from front)
-		if (_packet_hashlist.size() > 30) {
-			size_t to_remove = _packet_hashlist.size() - 30;
+		// Clear stale packet hashes
+		size_t max_hashes = critical ? 20 : 30;
+		if (_packet_hashlist.size() > max_hashes) {
+			size_t to_remove = _packet_hashlist.size() - max_hashes;
 			auto it = _packet_hashlist.begin();
 			for (size_t i = 0; i < to_remove && it != _packet_hashlist.end(); ++i) {
 				it = _packet_hashlist.erase(it);
