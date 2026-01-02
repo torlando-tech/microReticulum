@@ -311,6 +311,10 @@ private:
     // MAC to identity lookup for peers with identity
     std::map<Bytes, Bytes> _mac_to_identity;
 
+    // Connection handle to peer pointer for O(1) lookup
+    // Updated when setPeerHandle is called, cleared on disconnect/remove
+    std::map<uint16_t, PeerInfo*> _handle_to_peer;
+
     // Our own MAC address
     Bytes _local_mac;
 };

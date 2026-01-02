@@ -200,20 +200,11 @@ const PeerInfo* BLEPeerManager::getPeerByIdentity(const Bytes& identity) const {
 }
 
 PeerInfo* BLEPeerManager::getPeerByHandle(uint16_t conn_handle) {
-    // Search identity-keyed peers
-    for (auto& kv : _peers_by_identity) {
-        if (kv.second.conn_handle == conn_handle) {
-            return &kv.second;
-        }
+    // O(1) lookup using handle map
+    auto it = _handle_to_peer.find(conn_handle);
+    if (it != _handle_to_peer.end()) {
+        return it->second;
     }
-
-    // Search MAC-only peers
-    for (auto& kv : _peers_by_mac_only) {
-        if (kv.second.conn_handle == conn_handle) {
-            return &kv.second;
-        }
-    }
-
     return nullptr;
 }
 
@@ -341,6 +332,12 @@ void BLEPeerManager::connectionFailed(const Bytes& identifier) {
     PeerInfo* peer = findPeer(identifier);
     if (!peer) return;
 
+    // Clear handle mapping on disconnect
+    if (peer->conn_handle != 0xFFFF) {
+        _handle_to_peer.erase(peer->conn_handle);
+        peer->conn_handle = 0xFFFF;
+    }
+
     peer->connection_failures++;
     peer->consecutive_failures++;
     peer->state = PeerState::DISCOVERED;
@@ -366,7 +363,15 @@ void BLEPeerManager::setPeerState(const Bytes& identifier, PeerState state) {
 void BLEPeerManager::setPeerHandle(const Bytes& identifier, uint16_t conn_handle) {
     PeerInfo* peer = findPeer(identifier);
     if (peer) {
+        // Remove old handle mapping if exists
+        if (peer->conn_handle != 0xFFFF) {
+            _handle_to_peer.erase(peer->conn_handle);
+        }
         peer->conn_handle = conn_handle;
+        // Add new handle mapping
+        if (conn_handle != 0xFFFF) {
+            _handle_to_peer[conn_handle] = peer;
+        }
     }
 }
 
@@ -382,6 +387,10 @@ void BLEPeerManager::removePeer(const Bytes& identifier) {
     if (identifier.size() == Limits::IDENTITY_SIZE) {
         auto identity_it = _peers_by_identity.find(identifier);
         if (identity_it != _peers_by_identity.end()) {
+            // Remove handle mapping
+            if (identity_it->second.conn_handle != 0xFFFF) {
+                _handle_to_peer.erase(identity_it->second.conn_handle);
+            }
             // Remove MAC mapping
             _mac_to_identity.erase(identity_it->second.mac_address);
             _peers_by_identity.erase(identity_it);
@@ -396,13 +405,27 @@ void BLEPeerManager::removePeer(const Bytes& identifier) {
         // Check if maps to identity
         auto mac_it = _mac_to_identity.find(mac);
         if (mac_it != _mac_to_identity.end()) {
+            auto identity_it = _peers_by_identity.find(mac_it->second);
+            if (identity_it != _peers_by_identity.end()) {
+                // Remove handle mapping
+                if (identity_it->second.conn_handle != 0xFFFF) {
+                    _handle_to_peer.erase(identity_it->second.conn_handle);
+                }
+            }
             _peers_by_identity.erase(mac_it->second);
             _mac_to_identity.erase(mac_it);
             return;
         }
 
         // Check MAC-only
-        _peers_by_mac_only.erase(mac);
+        auto mac_only_it = _peers_by_mac_only.find(mac);
+        if (mac_only_it != _peers_by_mac_only.end()) {
+            // Remove handle mapping
+            if (mac_only_it->second.conn_handle != 0xFFFF) {
+                _handle_to_peer.erase(mac_only_it->second.conn_handle);
+            }
+            _peers_by_mac_only.erase(mac_only_it);
+        }
     }
 }
 
@@ -608,6 +631,11 @@ void BLEPeerManager::promoteToIdentityKeyed(const Bytes& mac_address, const Byte
 
     // Add to identity-keyed storage
     _peers_by_identity[identity] = peer;
+
+    // Update handle mapping to point to new location
+    if (peer.conn_handle != 0xFFFF) {
+        _handle_to_peer[peer.conn_handle] = &_peers_by_identity[identity];
+    }
 
     // Add MAC-to-identity mapping
     _mac_to_identity[mac_address] = identity;

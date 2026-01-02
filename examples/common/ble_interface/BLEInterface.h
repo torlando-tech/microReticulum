@@ -209,6 +209,7 @@ private:
     double _last_connection_attempt = 0;  // Cooldown after connection failures
 
     // Pending handshake completions (deferred from callback to loop for stack safety)
+    static constexpr size_t MAX_PENDING_HANDSHAKES = 32;
     struct PendingHandshake {
         RNS::Bytes mac;
         RNS::Bytes identity;
@@ -217,6 +218,7 @@ private:
     std::vector<PendingHandshake> _pending_handshakes;
 
     // Pending data fragments (deferred from callback to loop for stack safety)
+    static constexpr size_t MAX_PENDING_DATA = 64;
     struct PendingData {
         RNS::Bytes identity;
         RNS::Bytes data;

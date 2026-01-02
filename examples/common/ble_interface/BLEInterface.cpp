@@ -211,7 +211,17 @@ void BLEInterface::send_outgoing(const Bytes& data) {
         return;
     }
 
-    // Send to all connected peers
+    // Count peers with identity
+    size_t peers_with_identity = 0;
+    for (PeerInfo* peer : connected_peers) {
+        if (peer->hasIdentity()) {
+            peers_with_identity++;
+        }
+    }
+    DEBUG("BLEInterface: Sending to " + std::to_string(peers_with_identity) +
+          "/" + std::to_string(connected_peers.size()) + " connected peers");
+
+    // Send to all connected peers with identity
     for (PeerInfo* peer : connected_peers) {
         if (peer->hasIdentity()) {
             sendToPeer(peer->identity, data);
@@ -241,17 +251,18 @@ bool BLEInterface::sendToPeer(const Bytes& peer_identity, const Bytes& data) {
     // Fragment the data
     std::vector<Bytes> fragments = frag_it->second.fragment(data);
 
+    INFO("BLEInterface: Sending " + std::to_string(fragments.size()) + " frags to " +
+         peer_identity.toHex().substr(0, 8) + " via " + (peer->is_central ? "write" : "notify") +
+         " conn=" + std::to_string(peer->conn_handle) + " mtu=" + std::to_string(peer->mtu));
+
     // Send each fragment
+    bool all_sent = true;
     for (const Bytes& fragment : fragments) {
         bool sent = false;
 
-        DEBUG("BLEInterface: Sending fragment to " + peer_identity.toHex().substr(0, 8) +
-              " via conn_handle=" + std::to_string(peer->conn_handle) +
-              " is_central=" + std::string(peer->is_central ? "yes" : "no"));
-
         if (peer->is_central) {
-            // We are central - write to peripheral
-            sent = _platform->write(peer->conn_handle, fragment, false);
+            // We are central - write to peripheral (with response for debugging)
+            sent = _platform->write(peer->conn_handle, fragment, true);
         } else {
             // We are peripheral - notify central
             sent = _platform->notify(peer->conn_handle, fragment);
@@ -259,10 +270,15 @@ bool BLEInterface::sendToPeer(const Bytes& peer_identity, const Bytes& data) {
 
         if (!sent) {
             WARNING("BLEInterface: Failed to send fragment to " +
-                    peer_identity.toHex().substr(0, 8) + " on conn_handle=" +
+                    peer_identity.toHex().substr(0, 8) + " conn=" +
                     std::to_string(peer->conn_handle));
-            return false;
+            all_sent = false;
+            break;
         }
+    }
+
+    if (!all_sent) {
+        return false;
     }
 
     _peer_manager.recordPacketSent(peer_identity);
@@ -279,26 +295,34 @@ size_t BLEInterface::peerCount() const {
 }
 
 std::map<std::string, float> BLEInterface::get_stats() const {
-    std::lock_guard<std::recursive_mutex> lock(_mutex);
     std::map<std::string, float> stats;
+    stats["central_connections"] = 0.0f;
+    stats["peripheral_connections"] = 0.0f;
 
-    // Count central vs peripheral connections
-    int central_count = 0;
-    int peripheral_count = 0;
+    try {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
 
-    // Cast away const for read-only access to non-const getConnectedPeers()
-    auto& mutable_peer_manager = const_cast<BLE::BLEPeerManager&>(_peer_manager);
-    auto connected_peers = mutable_peer_manager.getConnectedPeers();
-    for (const auto* peer : connected_peers) {
-        if (peer->is_central) {
-            central_count++;
-        } else {
-            peripheral_count++;
+        // Count central vs peripheral connections
+        int central_count = 0;
+        int peripheral_count = 0;
+
+        // Cast away const for read-only access to non-const getConnectedPeers()
+        auto& mutable_peer_manager = const_cast<BLE::BLEPeerManager&>(_peer_manager);
+        auto connected_peers = mutable_peer_manager.getConnectedPeers();
+        for (const auto* peer : connected_peers) {
+            if (peer && peer->is_central) {
+                central_count++;
+            } else if (peer) {
+                peripheral_count++;
+            }
         }
+
+        stats["central_connections"] = (float)central_count;
+        stats["peripheral_connections"] = (float)peripheral_count;
+    } catch (...) {
+        // Ignore errors during BLE state changes
     }
 
-    stats["central_connections"] = (float)central_count;
-    stats["peripheral_connections"] = (float)peripheral_count;
     return stats;
 }
 
@@ -544,6 +568,10 @@ void BLEInterface::onWriteReceived(const ConnectionHandle& conn, const Bytes& da
 void BLEInterface::onHandshakeComplete(const Bytes& mac, const Bytes& identity, bool is_central) {
     // Queue the handshake for processing in loop() to avoid stack overflow in NimBLE callback
     // The NimBLE task has limited stack space, so we defer heavy processing
+    if (_pending_handshakes.size() >= MAX_PENDING_HANDSHAKES) {
+        WARNING("BLEInterface: Pending handshake queue full, dropping handshake");
+        return;
+    }
     PendingHandshake pending;
     pending.mac = mac;
     pending.identity = identity;
@@ -708,25 +736,16 @@ void BLEInterface::performMaintenance() {
 }
 
 void BLEInterface::handleIncomingData(const ConnectionHandle& conn, const Bytes& data) {
-    DEBUG("BLEInterface::handleIncomingData: Starting, data size=" + std::to_string(data.size()));
+    // Hot path - no logging to avoid blocking main loop
     std::lock_guard<std::recursive_mutex> lock(_mutex);
-    DEBUG("BLEInterface::handleIncomingData: Lock acquired");
 
     Bytes mac = conn.peer_address.toBytes();
-    DEBUG("BLEInterface::handleIncomingData: MAC=" + conn.peer_address.toString());
-
-    // Determine our role
     bool is_central = (conn.local_role == Role::CENTRAL);
-    DEBUG("BLEInterface::handleIncomingData: is_central=" + std::string(is_central ? "yes" : "no"));
 
     // First check if this is an identity handshake
-    DEBUG("BLEInterface::handleIncomingData: Calling processReceivedData");
     if (_identity_manager.processReceivedData(mac, data, is_central)) {
-        // Was a handshake - consumed
-        DEBUG("BLEInterface::handleIncomingData: Was handshake, returning");
         return;
     }
-    DEBUG("BLEInterface::handleIncomingData: Not a handshake, continuing");
 
     // Check for keepalive (1 byte, value 0x00)
     if (data.size() == 1 && data.data()[0] == 0x00) {
@@ -741,11 +760,15 @@ void BLEInterface::handleIncomingData(const ConnectionHandle& conn, const Bytes&
         return;
     }
 
+    if (_pending_data.size() >= MAX_PENDING_DATA) {
+        WARNING("BLEInterface: Pending data queue full, dropping data");
+        return;
+    }
+
     PendingData pending;
     pending.identity = identity;
     pending.data = data;
     _pending_data.push_back(pending);
-    DEBUG("BLEInterface::handleIncomingData: Queued data for deferred processing");
 }
 
 void BLEInterface::initiateHandshake(const ConnectionHandle& conn) {

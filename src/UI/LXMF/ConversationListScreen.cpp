@@ -52,6 +52,14 @@ ConversationListScreen::ConversationListScreen(lv_obj_t* parent)
 }
 
 ConversationListScreen::~ConversationListScreen() {
+    // Free allocated user data pointers before deleting screen
+    for (lv_obj_t* container : _conversation_containers) {
+        Bytes* hash_ptr = (Bytes*)lv_obj_get_user_data(container);
+        if (hash_ptr) {
+            delete hash_ptr;
+        }
+    }
+
     if (_screen) {
         lv_obj_del(_screen);
     }
@@ -80,8 +88,8 @@ void ConversationListScreen::create_header() {
     lv_obj_set_style_text_color(_label_wifi, lv_color_hex(0x808080), 0);
 
     _label_lora = lv_label_create(_header);
-    lv_label_set_text(_label_lora, LV_SYMBOL_CALL " --");  // Antenna-like symbol
-    lv_obj_align(_label_lora, LV_ALIGN_LEFT_MID, 100, 0);
+    lv_label_set_text(_label_lora, LV_SYMBOL_CALL"--");  // Antenna-like symbol
+    lv_obj_align(_label_lora, LV_ALIGN_LEFT_MID, 101, 0);
     lv_obj_set_style_text_color(_label_lora, lv_color_hex(0x808080), 0);
 
     _label_gps = lv_label_create(_header);
@@ -182,6 +190,14 @@ void ConversationListScreen::refresh() {
     }
 
     INFO("Refreshing conversation list");
+
+    // Free allocated user data pointers before clearing LVGL objects
+    for (lv_obj_t* container : _conversation_containers) {
+        Bytes* hash_ptr = (Bytes*)lv_obj_get_user_data(container);
+        if (hash_ptr) {
+            delete hash_ptr;
+        }
+    }
 
     // Clear existing items (also removes from focus group when deleted)
     lv_obj_clean(_list);
@@ -408,7 +424,7 @@ void ConversationListScreen::update_status() {
 
         // Only show RSSI if we've received at least one packet (RSSI != 0)
         if (rssi_f != 0.0f) {
-            String lora_text = String(LV_SYMBOL_CALL) + " " + String(rssi);
+            String lora_text = String(LV_SYMBOL_CALL) + String(rssi);
             lv_label_set_text(_label_lora, lora_text.c_str());
 
             // Color based on signal strength (LoRa typically has weaker signals)
@@ -421,11 +437,11 @@ void ConversationListScreen::update_status() {
             }
         } else {
             // RSSI of 0 means no recent packet
-            lv_label_set_text(_label_lora, LV_SYMBOL_CALL " --");
+            lv_label_set_text(_label_lora, LV_SYMBOL_CALL"--");
             lv_obj_set_style_text_color(_label_lora, lv_color_hex(0x808080), 0);
         }
     } else {
-        lv_label_set_text(_label_lora, LV_SYMBOL_CALL " --");
+        lv_label_set_text(_label_lora, LV_SYMBOL_CALL"--");
         lv_obj_set_style_text_color(_label_lora, lv_color_hex(0x808080), 0);
     }
 
