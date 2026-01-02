@@ -259,6 +259,39 @@ using namespace RNS::Utilities;
 	int count;
 	_jobs_running = true;
 
+#ifdef ARDUINO
+	// Proactive low-memory culling to prevent fragmentation
+	// Check every time jobs runs since memory can change rapidly
+	size_t heap_avail = OS::heap_available();
+	if (heap_avail < 50000) {  // Below 50KB - aggressive cleanup
+		// Force path table cull even if under limit
+		if (_destination_table.size() > 16) {
+			uint16_t target_size = (_destination_table.size() > 24) ? 16 : _destination_table.size() / 2;
+			uint16_t orig_max = _path_table_maxsize;
+			_path_table_maxsize = target_size;
+			cull_path_table();
+			_path_table_maxsize = orig_max;
+		}
+		// Also clear expired path requests
+		double now = OS::time();
+		for (auto it = _path_requests.begin(); it != _path_requests.end(); ) {
+			if (now - it->second > 300) {  // 5 min expiry
+				it = _path_requests.erase(it);
+			} else {
+				++it;
+			}
+		}
+		// Clear stale packet hashes (set doesn't have order, so just remove from front)
+		if (_packet_hashlist.size() > 30) {
+			size_t to_remove = _packet_hashlist.size() - 30;
+			auto it = _packet_hashlist.begin();
+			for (size_t i = 0; i < to_remove && it != _packet_hashlist.end(); ++i) {
+				it = _packet_hashlist.erase(it);
+			}
+		}
+	}
+#endif
+
 	try {
 		if (!_jobs_locked) {
 
@@ -3985,75 +4018,35 @@ TRACE("Transport::write_path_table: buffer size " + std::to_string(Persistence::
 /*static*/ void Transport::cull_path_table() {
 	TRACE("Transport::cull_path_table()");
 	if (_destination_table.size() > _path_table_maxsize) {
-		// TODO prune by age, or better yet by last use
-/*
-		std::map<Bytes, DestinationEntry>::iterator iter = _destination_table.begin();
-		// naively erase from front of table
-		std::advance(iter, _destination_table.size() - _path_table_maxsize + 1);
-		_destination_table.erase(_destination_table.begin(), iter);
-*/
-/*
+		// Use in-place iteration to find and remove oldest entries
+		// This is O(n^2) but uses O(1) memory - critical for low-memory situations
 		uint16_t count = 0;
-		std::set<DestinationEntry> sorted_values;
-		MapToValues(_destination_table, sorted_values);
-		for (auto& destination_entry : sorted_values) {
-			Packet announce_packet = destination_entry.announce_packet();
-			TRACE("Transport::cull_path_table: Removing destination " + announce_packet.destination_hash().toHex() + " from path table");
-			// Remove destination from path table
-			if (_destination_table.erase(announce_packet.destination_hash()) < 1) {
-				WARNING("Failed to remove destination " + announce_packet.destination_hash().toHex() + " from path table");
+		while (_destination_table.size() > _path_table_maxsize) {
+			// Find oldest entry by iterating (no allocation needed)
+			auto oldest_it = _destination_table.begin();
+			double oldest_time = oldest_it->second._timestamp;
+			for (auto it = _destination_table.begin(); it != _destination_table.end(); ++it) {
+				if (it->second._timestamp < oldest_time) {
+					oldest_time = it->second._timestamp;
+					oldest_it = it;
+				}
 			}
-			// Remove announce packet from packet table
-			//if (_packet_table.erase(destination_entry._announce_packet) < 1) {
-			//	WARNING("Failed to remove packet " + destination_entry._announce_packet.toHex() + " from packet table");
-			//}
+
+			if (oldest_it != _destination_table.end()) {
+				TRACE("Transport::cull_path_table: Removing destination " + oldest_it->first.toHex() + " from path table");
 #if defined(RNS_USE_FS) && defined(RNS_PERSIST_PATHS)
-			// Remove cached packet file
-			char packet_cache_path[Type::Reticulum::FILEPATH_MAXSIZE];
-			snprintf(packet_cache_path, Type::Reticulum::FILEPATH_MAXSIZE, "%s/%s", Reticulum::_cachepath, destination_entry._announce_packet.toHex().c_str());
-			if (OS::file_exists(packet_cache_path)) {
-				OS::remove_file(packet_cache_path);
-			}
+				// Remove cached packet file
+				char packet_cache_path[Type::Reticulum::FILEPATH_MAXSIZE];
+				snprintf(packet_cache_path, Type::Reticulum::FILEPATH_MAXSIZE, "%s/%s",
+				         Reticulum::_cachepath, oldest_it->second._announce_packet.toHex().c_str());
+				if (OS::file_exists(packet_cache_path)) {
+					OS::remove_file(packet_cache_path);
+				}
 #endif
-			++count;
-			if (_destination_table.size() <= _path_table_maxsize) {
-				break;
-			}
-		}
-		DEBUG("Removed " + std::to_string(count) + " path(s) from path table");
-*/
-		uint16_t count = 0;
-		std::vector<std::pair<Bytes,DestinationEntry>> sorted_pairs;
-		// Copy key/value pairs from map into vector
-		std::for_each(_destination_table.begin(), _destination_table.end(), [&](const std::pair<const Bytes, DestinationEntry>& ref) {
-			sorted_pairs.push_back(ref);
-		});
-		// Sort vector using specified comparator
-		std::sort(sorted_pairs.begin(), sorted_pairs.end(), [](const std::pair<Bytes,DestinationEntry> &left, const std::pair<Bytes,DestinationEntry> &right) {
-			return left.second._timestamp < right.second._timestamp;
-		});
-		// Iterate vector of sorted values
-		for (auto& [destination_hash, destination_entry] : sorted_pairs) {
-			TRACE("Transport::cull_path_table: Removing destination " + destination_hash.toHex() + " from path table");
-			// Remove destination from path table
-			if (_destination_table.erase(destination_hash) < 1) {
-				WARNING("Failed to remove destination " + destination_hash.toHex() + " from path table");
-			}
-			// Remove announce packet from packet table
-			//if (_packet_table.erase(destination_entry._announce_packet) < 1) {
-			//	WARNING("Failed to remove packet " + destination_entry._announce_packet.toHex() + " from packet table");
-			//}
-#if defined(RNS_USE_FS) && defined(RNS_PERSIST_PATHS)
-			// Remove cached packet file
-			char packet_cache_path[Type::Reticulum::FILEPATH_MAXSIZE];
-			snprintf(packet_cache_path, Type::Reticulum::FILEPATH_MAXSIZE, "%s/%s", Reticulum::_cachepath, destination_entry._announce_packet.toHex().c_str());
-			if (OS::file_exists(packet_cache_path)) {
-				OS::remove_file(packet_cache_path);
-			}
-#endif
-			++count;
-			if (_destination_table.size() <= _path_table_maxsize) {
-				break;
+				_destination_table.erase(oldest_it);
+				++count;
+			} else {
+				break;  // Safety: shouldn't happen but avoid infinite loop
 			}
 		}
 		DEBUG("Removed " + std::to_string(count) + " path(s) from path table");
