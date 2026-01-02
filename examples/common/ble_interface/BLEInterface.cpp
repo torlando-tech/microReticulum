@@ -7,6 +7,11 @@
 #include "../../../src/Log.h"
 #include "../../../src/Utilities/OS.h"
 
+#ifdef ARDUINO
+#include <Arduino.h>
+#include <esp_heap_caps.h>
+#endif
+
 using namespace RNS;
 using namespace RNS::BLE;
 
@@ -640,6 +645,19 @@ void BLEInterface::performScan() {
 }
 
 void BLEInterface::processDiscoveredPeers() {
+    // Don't attempt connections when memory is critically low
+    // BLE connection setup requires significant heap allocation
+#ifdef ARDUINO
+    if (ESP.getFreeHeap() < 30000) {
+        static uint32_t last_low_mem_warn = 0;
+        if (millis() - last_low_mem_warn > 10000) {
+            WARNING("BLEInterface: Skipping connection attempts - low memory");
+            last_low_mem_warn = millis();
+        }
+        return;
+    }
+#endif
+
     // Don't try to connect while scanning - BLE stack will return "busy"
     if (_platform->isScanning()) {
         return;
