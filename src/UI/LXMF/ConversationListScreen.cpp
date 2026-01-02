@@ -124,18 +124,18 @@ void ConversationListScreen::create_header() {
     lv_obj_set_style_text_color(_label_battery_pct, Theme::textMuted(), 0);
     lv_obj_set_style_text_font(_label_battery_pct, &lv_font_montserrat_12, 0);
 
-    // New message button (right corner)
+    // Sync button (right corner) - syncs messages from propagation node
     _btn_new = lv_btn_create(_header);
     lv_obj_set_size(_btn_new, 55, 28);
     lv_obj_align(_btn_new, LV_ALIGN_RIGHT_MID, -4, 0);
     lv_obj_set_style_bg_color(_btn_new, Theme::primary(), 0);
     lv_obj_set_style_bg_color(_btn_new, Theme::primaryPressed(), LV_STATE_PRESSED);
-    lv_obj_add_event_cb(_btn_new, on_new_message_clicked, LV_EVENT_CLICKED, this);
+    lv_obj_add_event_cb(_btn_new, on_sync_clicked, LV_EVENT_CLICKED, this);
 
-    lv_obj_t* label_new = lv_label_create(_btn_new);
-    lv_label_set_text(label_new, "New");
-    lv_obj_center(label_new);
-    lv_obj_set_style_text_color(label_new, Theme::textPrimary(), 0);
+    lv_obj_t* label_sync = lv_label_create(_btn_new);
+    lv_label_set_text(label_sync, LV_SYMBOL_REFRESH);
+    lv_obj_center(label_sync);
+    lv_obj_set_style_text_color(label_sync, Theme::textPrimary(), 0);
 }
 
 void ConversationListScreen::create_list() {
@@ -335,8 +335,12 @@ void ConversationListScreen::set_conversation_selected_callback(ConversationSele
     _conversation_selected_callback = callback;
 }
 
-void ConversationListScreen::set_new_message_callback(NewMessageCallback callback) {
-    _new_message_callback = callback;
+void ConversationListScreen::set_compose_callback(ComposeCallback callback) {
+    _compose_callback = callback;
+}
+
+void ConversationListScreen::set_sync_callback(SyncCallback callback) {
+    _sync_callback = callback;
 }
 
 void ConversationListScreen::set_settings_callback(SettingsCallback callback) {
@@ -545,11 +549,11 @@ void ConversationListScreen::on_conversation_clicked(lv_event_t* event) {
     }
 }
 
-void ConversationListScreen::on_new_message_clicked(lv_event_t* event) {
+void ConversationListScreen::on_sync_clicked(lv_event_t* event) {
     ConversationListScreen* screen = (ConversationListScreen*)lv_event_get_user_data(event);
 
-    if (screen->_new_message_callback) {
-        screen->_new_message_callback();
+    if (screen->_sync_callback) {
+        screen->_sync_callback();
     }
 }
 
@@ -567,7 +571,10 @@ void ConversationListScreen::on_bottom_nav_clicked(lv_event_t* event) {
     int btn_index = (int)(intptr_t)lv_obj_get_user_data(target);
 
     switch (btn_index) {
-        case 0: // Messages - already here
+        case 0: // Compose new message
+            if (screen->_compose_callback) {
+                screen->_compose_callback();
+            }
             break;
         case 1: // Announces
             if (screen->_announces_callback) {

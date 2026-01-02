@@ -87,8 +87,11 @@ Interface* ble_interface = nullptr;
 // Timing
 uint32_t last_ui_update = 0;
 uint32_t last_announce = 0;
+uint32_t last_sync = 0;
 uint32_t last_status_check = 0;
 const uint32_t STATUS_CHECK_INTERVAL = 1000;  // 1 second
+const uint32_t INITIAL_SYNC_DELAY = 45000;    // 45 seconds after boot before first sync
+bool initial_sync_done = false;
 
 // Connection tracking
 bool last_tcp_online = false;
@@ -335,7 +338,7 @@ void load_app_settings() {
     // Network
     app_settings.wifi_ssid = prefs.getString("wifi_ssid", "");
     app_settings.wifi_password = prefs.getString("wifi_pass", "");
-    app_settings.tcp_host = prefs.getString("tcp_host", "YOUR_SERVER_IP");
+    app_settings.tcp_host = prefs.getString("tcp_host", "sideband.connect.reticulum.network");
     app_settings.tcp_port = prefs.getUShort("tcp_port", 4965);
 
     // Identity
@@ -348,7 +351,7 @@ void load_app_settings() {
 
     // Notifications
     app_settings.notification_sound = prefs.getBool("notif_snd", true);
-    app_settings.notification_volume = prefs.getUChar("notif_vol", 50);
+    app_settings.notification_volume = prefs.getUChar("notif_vol", 10);
 
     // Interfaces
     app_settings.tcp_enabled = prefs.getBool("tcp_en", true);
@@ -363,6 +366,7 @@ void load_app_settings() {
 
     // Advanced
     app_settings.announce_interval = prefs.getULong("announce", 60);
+    app_settings.sync_interval = prefs.getULong("sync_int", 3600);  // Default 60 minutes
     app_settings.gps_time_sync = prefs.getBool("gps_sync", true);
 
     // Propagation
@@ -1105,6 +1109,36 @@ void loop() {
                 router->announce();
                 last_announce = millis();
                 INFO("Periodic announce sent (interval: " + std::to_string(app_settings.announce_interval) + "s)");
+            }
+        }
+    }
+
+    // Periodic propagation sync (fetch messages from prop node)
+    if (app_settings.sync_interval > 0 && router) {  // 0 = disabled
+        bool should_sync = false;
+        uint32_t now = millis();
+
+        // Initial sync after boot delay
+        if (!initial_sync_done && now > INITIAL_SYNC_DELAY) {
+            should_sync = true;
+            initial_sync_done = true;
+            INFO("Initial propagation sync after boot delay");
+        }
+        // Periodic sync
+        else if (initial_sync_done) {
+            uint32_t sync_interval_ms = app_settings.sync_interval * 1000;
+            if (now - last_sync > sync_interval_ms) {
+                should_sync = true;
+            }
+        }
+
+        if (should_sync) {
+            // Only sync if TCP is online (propagation nodes need network)
+            bool tcp_online = tcp_interface && tcp_interface->online();
+            if (tcp_online) {
+                router->request_messages_from_propagation_node();
+                last_sync = now;
+                INFO("Periodic propagation sync (interval: " + std::to_string(app_settings.sync_interval / 60) + " min)");
             }
         }
     }

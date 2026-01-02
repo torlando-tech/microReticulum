@@ -62,7 +62,8 @@ public:
      * Callback types
      */
     using ConversationSelectedCallback = std::function<void(const RNS::Bytes& peer_hash)>;
-    using NewMessageCallback = std::function<void()>;
+    using ComposeCallback = std::function<void()>;
+    using SyncCallback = std::function<void()>;
     using SettingsCallback = std::function<void()>;
     using AnnouncesCallback = std::function<void()>;
     using StatusCallback = std::function<void()>;
@@ -103,10 +104,16 @@ public:
     void set_conversation_selected_callback(ConversationSelectedCallback callback);
 
     /**
-     * Set callback for new message button
-     * @param callback Function to call when new message button is pressed
+     * Set callback for compose (envelope icon in bottom nav)
+     * @param callback Function to call when compose is requested
      */
-    void set_new_message_callback(NewMessageCallback callback);
+    void set_compose_callback(ComposeCallback callback);
+
+    /**
+     * Set callback for sync button
+     * @param callback Function to call when sync button is pressed
+     */
+    void set_sync_callback(SyncCallback callback);
 
     /**
      * Set callback for settings button
@@ -191,7 +198,8 @@ private:
     RNS::Bytes _pending_delete_hash;  // Hash of conversation pending deletion
 
     ConversationSelectedCallback _conversation_selected_callback;
-    NewMessageCallback _new_message_callback;
+    ComposeCallback _compose_callback;
+    SyncCallback _sync_callback;
     SettingsCallback _settings_callback;
     AnnouncesCallback _announces_callback;
     StatusCallback _status_callback;
@@ -206,7 +214,7 @@ private:
     static void on_conversation_clicked(lv_event_t* event);
     static void on_conversation_long_pressed(lv_event_t* event);
     static void on_delete_confirmed(lv_event_t* event);
-    static void on_new_message_clicked(lv_event_t* event);
+    static void on_sync_clicked(lv_event_t* event);
     static void on_settings_clicked(lv_event_t* event);
     static void on_bottom_nav_clicked(lv_event_t* event);
     static void msgbox_close_cb(lv_event_t* event);

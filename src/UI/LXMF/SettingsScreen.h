@@ -53,6 +53,7 @@ struct AppSettings {
 
     // Advanced
     uint32_t announce_interval;  // seconds
+    uint32_t sync_interval;      // seconds (0 = disabled, default 3600 = hourly)
     bool gps_time_sync;
 
     // Propagation
@@ -63,13 +64,13 @@ struct AppSettings {
 
     // Defaults
     AppSettings() :
-        tcp_host("YOUR_SERVER_IP"),
+        tcp_host("sideband.connect.reticulum.network"),
         tcp_port(4965),
         brightness(180),
         screen_timeout(60),
         keyboard_light(false),
         notification_sound(true),
-        notification_volume(50),
+        notification_volume(10),
         tcp_enabled(true),
         lora_enabled(false),
         lora_frequency(927.25f),
@@ -80,6 +81,7 @@ struct AppSettings {
         auto_enabled(false),
         ble_enabled(false),
         announce_interval(60),
+        sync_interval(3600),
         gps_time_sync(true),
         prop_auto_select(true),
         prop_selected_node(""),
@@ -281,6 +283,7 @@ private:
 
     // Advanced section
     lv_obj_t* _ta_announce_interval;
+    lv_obj_t* _ta_sync_interval;
     lv_obj_t* _switch_gps_sync;
 
     // Delivery/Propagation section

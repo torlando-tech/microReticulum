@@ -30,6 +30,7 @@ static const char* KEY_BRIGHTNESS = "brightness";
 static const char* KEY_KB_LIGHT = "kb_light";
 static const char* KEY_TIMEOUT = "timeout";
 static const char* KEY_ANNOUNCE_INT = "announce";
+static const char* KEY_SYNC_INT = "sync_int";
 static const char* KEY_GPS_SYNC = "gps_sync";
 // Notification settings
 static const char* KEY_NOTIF_SND = "notif_snd";
@@ -65,7 +66,7 @@ SettingsScreen::SettingsScreen(lv_obj_t* parent)
       _dropdown_lora_sf(nullptr), _dropdown_lora_cr(nullptr),
       _slider_lora_power(nullptr), _label_lora_power_value(nullptr),
       _lora_params_container(nullptr), _switch_auto_enabled(nullptr), _switch_ble_enabled(nullptr),
-      _ta_announce_interval(nullptr), _switch_gps_sync(nullptr),
+      _ta_announce_interval(nullptr), _ta_sync_interval(nullptr), _switch_gps_sync(nullptr),
       _btn_propagation_nodes(nullptr), _switch_prop_fallback(nullptr), _switch_prop_only(nullptr),
       _gps(nullptr) {
 
@@ -798,6 +799,45 @@ void SettingsScreen::create_advanced_section(lv_obj_t* parent) {
     lv_obj_set_style_text_color(sec_label, Theme::textMuted(), 0);
     lv_obj_set_style_text_font(sec_label, &lv_font_montserrat_14, 0);
 
+    // Sync interval row (for propagation node sync)
+    lv_obj_t* sync_row = lv_obj_create(parent);
+    lv_obj_set_width(sync_row, LV_PCT(100));
+    lv_obj_set_height(sync_row, 28);
+    lv_obj_set_style_bg_opa(sync_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(sync_row, 0, 0);
+    lv_obj_set_style_pad_all(sync_row, 0, 0);
+    lv_obj_clear_flag(sync_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* sync_label = lv_label_create(sync_row);
+    lv_label_set_text(sync_label, "Prop Sync Interval:");
+    lv_obj_align(sync_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(sync_label, Theme::textTertiary(), 0);
+    lv_obj_set_style_text_font(sync_label, &lv_font_montserrat_14, 0);
+
+    _ta_sync_interval = lv_textarea_create(sync_row);
+    lv_obj_set_size(_ta_sync_interval, 50, 24);
+    lv_obj_align(_ta_sync_interval, LV_ALIGN_RIGHT_MID, -30, 0);
+    lv_textarea_set_one_line(_ta_sync_interval, true);
+    lv_textarea_set_max_length(_ta_sync_interval, 5);
+    lv_textarea_set_accepted_chars(_ta_sync_interval, "0123456789");
+    lv_obj_set_style_bg_color(_ta_sync_interval, Theme::surfaceInput(), 0);
+    lv_obj_set_style_text_color(_ta_sync_interval, Theme::textPrimary(), 0);
+    lv_obj_set_style_border_color(_ta_sync_interval, Theme::border(), 0);
+    lv_obj_set_style_border_width(_ta_sync_interval, 1, 0);
+    lv_obj_set_style_radius(_ta_sync_interval, 4, 0);
+    lv_obj_set_style_pad_all(_ta_sync_interval, 4, 0);
+    lv_obj_set_style_text_font(_ta_sync_interval, &lv_font_montserrat_14, 0);
+    if (grp) {
+        lv_group_add_obj(grp, _ta_sync_interval);
+    }
+    TextAreaHelper::enable_paste(_ta_sync_interval);
+
+    lv_obj_t* min_label = lv_label_create(sync_row);
+    lv_label_set_text(min_label, "min");
+    lv_obj_align(min_label, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_text_color(min_label, Theme::textMuted(), 0);
+    lv_obj_set_style_text_font(min_label, &lv_font_montserrat_14, 0);
+
     // GPS sync row
     lv_obj_t* gps_sync_row = lv_obj_create(parent);
     lv_obj_set_width(gps_sync_row, LV_PCT(100));
@@ -833,6 +873,7 @@ void SettingsScreen::load_settings() {
     _settings.keyboard_light = prefs.getBool(KEY_KB_LIGHT, false);
     _settings.screen_timeout = prefs.getUShort(KEY_TIMEOUT, 60);
     _settings.announce_interval = prefs.getUInt(KEY_ANNOUNCE_INT, 60);
+    _settings.sync_interval = prefs.getUInt(KEY_SYNC_INT, 3600);  // Default 60 minutes
     _settings.gps_time_sync = prefs.getBool(KEY_GPS_SYNC, true);
 
     // Notification settings
@@ -881,6 +922,7 @@ void SettingsScreen::save_settings() {
     prefs.putBool(KEY_KB_LIGHT, _settings.keyboard_light);
     prefs.putUShort(KEY_TIMEOUT, _settings.screen_timeout);
     prefs.putUInt(KEY_ANNOUNCE_INT, _settings.announce_interval);
+    prefs.putUInt(KEY_SYNC_INT, _settings.sync_interval);
     prefs.putBool(KEY_GPS_SYNC, _settings.gps_time_sync);
 
     // Notification settings
@@ -969,6 +1011,10 @@ void SettingsScreen::update_ui_from_settings() {
     }
     if (_ta_announce_interval) {
         lv_textarea_set_text(_ta_announce_interval, String(_settings.announce_interval).c_str());
+    }
+    if (_ta_sync_interval) {
+        // Display in minutes (stored in seconds)
+        lv_textarea_set_text(_ta_sync_interval, String(_settings.sync_interval / 60).c_str());
     }
     if (_switch_gps_sync) {
         if (_settings.gps_time_sync) {
@@ -1103,6 +1149,10 @@ void SettingsScreen::update_settings_from_ui() {
     }
     if (_ta_announce_interval) {
         _settings.announce_interval = String(lv_textarea_get_text(_ta_announce_interval)).toInt();
+    }
+    if (_ta_sync_interval) {
+        // UI shows minutes, store as seconds
+        _settings.sync_interval = String(lv_textarea_get_text(_ta_sync_interval)).toInt() * 60;
     }
     if (_switch_gps_sync) {
         _settings.gps_time_sync = lv_obj_has_state(_switch_gps_sync, LV_STATE_CHECKED);

@@ -84,8 +84,12 @@ bool UIManager::init() {
         [this](const Bytes& peer_hash) { on_conversation_selected(peer_hash); }
     );
 
-    _conversation_list_screen->set_new_message_callback(
+    _conversation_list_screen->set_compose_callback(
         [this]() { on_new_message(); }
+    );
+
+    _conversation_list_screen->set_sync_callback(
+        [this]() { on_propagation_sync(); }
     );
 
     _conversation_list_screen->set_settings_callback(
