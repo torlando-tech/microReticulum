@@ -6,10 +6,16 @@
 #ifdef ARDUINO
 
 #include <lvgl.h>
+#include <Preferences.h>
 #include "../../Log.h"
 #include "tone/Tone.h"
 
 using namespace RNS;
+
+// NVS keys for propagation settings
+static const char* NVS_NAMESPACE = "propagation";
+static const char* KEY_AUTO_SELECT = "auto_select";
+static const char* KEY_NODE_HASH = "node_hash";
 
 namespace UI {
 namespace LXMF {
@@ -329,10 +335,25 @@ void UIManager::show_propagation_nodes() {
     INFO("Showing propagation nodes screen");
 
     if (_propagation_manager) {
-        // Load nodes from manager
-        // TODO: Get auto-select setting from NVS
-        bool auto_select = true;
-        Bytes selected_hash = _router.get_outbound_propagation_node();
+        // Load settings from NVS
+        Preferences prefs;
+        prefs.begin(NVS_NAMESPACE, true);  // read-only
+        bool auto_select = prefs.getBool(KEY_AUTO_SELECT, true);
+
+        Bytes selected_hash;
+        size_t hash_len = prefs.getBytesLength(KEY_NODE_HASH);
+        if (hash_len > 0 && hash_len <= 32) {
+            uint8_t buf[32];
+            prefs.getBytes(KEY_NODE_HASH, buf, hash_len);
+            selected_hash = Bytes(buf, hash_len);
+        }
+        prefs.end();
+
+        // If not auto-select and we have a saved hash, use it
+        if (!auto_select && selected_hash.size() > 0) {
+            _router.set_outbound_propagation_node(selected_hash);
+        }
+
         _propagation_nodes_screen->load_nodes(*_propagation_manager, selected_hash, auto_select);
     }
 
@@ -433,7 +454,13 @@ void UIManager::on_propagation_node_selected(const Bytes& node_hash) {
     // Set the node in the router
     _router.set_outbound_propagation_node(node_hash);
 
-    // TODO: Save to NVS
+    // Save to NVS
+    Preferences prefs;
+    prefs.begin(NVS_NAMESPACE, false);
+    prefs.putBool(KEY_AUTO_SELECT, false);
+    prefs.putBytes(KEY_NODE_HASH, node_hash.data(), node_hash.size());
+    prefs.end();
+    DEBUG("Propagation node saved to NVS");
 }
 
 void UIManager::on_propagation_auto_select_changed(bool enabled) {
@@ -446,7 +473,15 @@ void UIManager::on_propagation_auto_select_changed(bool enabled) {
         _router.set_outbound_propagation_node(Bytes());
     }
 
-    // TODO: Save to NVS
+    // Save to NVS
+    Preferences prefs;
+    prefs.begin(NVS_NAMESPACE, false);
+    prefs.putBool(KEY_AUTO_SELECT, enabled);
+    if (enabled) {
+        prefs.remove(KEY_NODE_HASH);  // Clear saved node when auto-select enabled
+    }
+    prefs.end();
+    DEBUG("Propagation auto-select saved to NVS");
 }
 
 void UIManager::on_propagation_sync() {
