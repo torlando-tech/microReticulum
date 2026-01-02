@@ -60,9 +60,9 @@ void MessageStore::load_index() {
 			return;
 		}
 
-		// Parse JSON from bytes
-		JsonDocument doc;
-		DeserializationError error = deserializeJson(doc, data.data(), data.size());
+		// Parse JSON from bytes using reusable document to reduce heap fragmentation
+		_json_doc.clear();
+		DeserializationError error = deserializeJson(_json_doc, data.data(), data.size());
 
 		if (error) {
 			ERROR("Failed to parse conversation index: " + std::string(error.c_str()));
@@ -70,7 +70,7 @@ void MessageStore::load_index() {
 		}
 
 		// Load conversations
-		JsonArray conversations = doc["conversations"].as<JsonArray>();
+		JsonArray conversations = _json_doc["conversations"].as<JsonArray>();
 		for (JsonObject conv : conversations) {
 			ConversationInfo info;
 
@@ -110,8 +110,9 @@ bool MessageStore::save_index() {
 	std::string index_path = "/conv.json";  // Short path for SPIFFS
 
 	try {
-		JsonDocument doc;
-		JsonArray conversations = doc["conversations"].to<JsonArray>();
+		// Use reusable document to reduce heap fragmentation
+		_json_doc.clear();
+		JsonArray conversations = _json_doc["conversations"].to<JsonArray>();
 
 		// Serialize each conversation
 		for (const auto& pair : _conversations) {
@@ -135,7 +136,7 @@ bool MessageStore::save_index() {
 
 		// Serialize to string then write via OS abstraction (SPIFFS compatible)
 		std::string json_str;
-		serializeJsonPretty(doc, json_str);
+		serializeJsonPretty(_json_doc, json_str);
 		Bytes data((const uint8_t*)json_str.data(), json_str.size());
 
 		if (Utilities::OS::write_file(index_path.c_str(), data) != data.size()) {
@@ -162,28 +163,28 @@ bool MessageStore::save_message(const LXMessage& message) {
 	INFO("Saving message: " + message.hash().toHex());
 
 	try {
-		// Create JSON document for message
-		JsonDocument doc;
+		// Use reusable document to reduce heap fragmentation
+		_json_doc.clear();
 
-		doc["hash"] = message.hash().toHex();
-		doc["destination_hash"] = message.destination_hash().toHex();
-		doc["source_hash"] = message.source_hash().toHex();
-		doc["incoming"] = message.incoming();
-		doc["timestamp"] = message.timestamp();
-		doc["state"] = static_cast<int>(message.state());
+		_json_doc["hash"] = message.hash().toHex();
+		_json_doc["destination_hash"] = message.destination_hash().toHex();
+		_json_doc["source_hash"] = message.source_hash().toHex();
+		_json_doc["incoming"] = message.incoming();
+		_json_doc["timestamp"] = message.timestamp();
+		_json_doc["state"] = static_cast<int>(message.state());
 
 		// Store content as UTF-8 for fast loading (no msgpack unpacking needed)
 		std::string content_str((const char*)message.content().data(), message.content().size());
-		doc["content"] = content_str;
+		_json_doc["content"] = content_str;
 
 		// Store the entire packed message to preserve hash/signature
 		// This ensures exact reconstruction on load
-		doc["packed"] = message.packed().toHex();
+		_json_doc["packed"] = message.packed().toHex();
 
 		// Write message file via OS abstraction (SPIFFS compatible)
 		std::string message_path = get_message_path(message.hash());
 		std::string json_str;
-		serializeJsonPretty(doc, json_str);
+		serializeJsonPretty(_json_doc, json_str);
 		Bytes data((const uint8_t*)json_str.data(), json_str.size());
 
 		if (Utilities::OS::write_file(message_path.c_str(), data) != data.size()) {
@@ -261,8 +262,9 @@ LXMessage MessageStore::load_message(const Bytes& message_hash) {
 			return LXMessage(Bytes(), Bytes(), Bytes(), Bytes());
 		}
 
-		JsonDocument doc;
-		DeserializationError error = deserializeJson(doc, data.data(), data.size());
+		// Use reusable document to reduce heap fragmentation
+		_json_doc.clear();
+		DeserializationError error = deserializeJson(_json_doc, data.data(), data.size());
 
 		if (error) {
 			ERROR("Failed to parse message file: " + std::string(error.c_str()));
@@ -272,14 +274,14 @@ LXMessage MessageStore::load_message(const Bytes& message_hash) {
 		// Unpack the message from stored packed bytes
 		// This preserves the exact hash and signature
 		Bytes packed;
-		packed.assignHex(doc["packed"].as<const char*>());
+		packed.assignHex(_json_doc["packed"].as<const char*>());
 
 		// Skip signature validation - messages from storage were already validated when received
 		LXMessage message = LXMessage::unpack_from_bytes(packed, LXMF::Type::Message::DIRECT, true);
 
 		// Restore incoming flag from storage (unpack_from_bytes defaults to true)
-		if (doc.containsKey("incoming")) {
-			message.incoming(doc["incoming"].as<bool>());
+		if (_json_doc.containsKey("incoming")) {
+			message.incoming(_json_doc["incoming"].as<bool>());
 		}
 
 		DEBUG("Loaded message: " + message_hash.toHex());
@@ -312,8 +314,9 @@ MessageStore::MessageMetadata MessageStore::load_message_metadata(const Bytes& m
 			return meta;
 		}
 
-		JsonDocument doc;
-		DeserializationError error = deserializeJson(doc, data.data(), data.size());
+		// Use reusable document to reduce heap fragmentation
+		_json_doc.clear();
+		DeserializationError error = deserializeJson(_json_doc, data.data(), data.size());
 
 		if (error) {
 			return meta;
@@ -322,12 +325,12 @@ MessageStore::MessageMetadata MessageStore::load_message_metadata(const Bytes& m
 		meta.hash = message_hash;
 
 		// Read pre-extracted fields (no msgpack unpacking needed)
-		if (doc["content"].is<const char*>()) {
-			meta.content = doc["content"].as<std::string>();
+		if (_json_doc["content"].is<const char*>()) {
+			meta.content = _json_doc["content"].as<std::string>();
 		}
-		meta.timestamp = doc["timestamp"] | 0.0;
-		meta.incoming = doc["incoming"] | true;
-		meta.state = doc["state"] | 0;
+		meta.timestamp = _json_doc["timestamp"] | 0.0;
+		meta.incoming = _json_doc["incoming"] | true;
+		meta.state = _json_doc["state"] | 0;
 		meta.valid = true;
 
 		return meta;
@@ -359,19 +362,20 @@ bool MessageStore::update_message_state(const Bytes& message_hash, Type::Message
 			return false;
 		}
 
-		JsonDocument doc;
-		DeserializationError error = deserializeJson(doc, data.data(), data.size());
+		// Use reusable document to reduce heap fragmentation
+		_json_doc.clear();
+		DeserializationError error = deserializeJson(_json_doc, data.data(), data.size());
 		if (error) {
 			ERROR("Failed to parse message file: " + std::string(error.c_str()));
 			return false;
 		}
 
 		// Update state
-		doc["state"] = static_cast<int>(state);
+		_json_doc["state"] = static_cast<int>(state);
 
 		// Write back
 		std::string json_str;
-		serializeJson(doc, json_str);
+		serializeJson(_json_doc, json_str);
 		if (!Utilities::OS::write_file(message_path.c_str(), Bytes((uint8_t*)json_str.c_str(), json_str.length()))) {
 			ERROR("Failed to write message file: " + message_path);
 			return false;

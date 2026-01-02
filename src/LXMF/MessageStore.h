@@ -3,6 +3,7 @@
 #include "LXMessage.h"
 #include "../Bytes.h"
 
+#include <ArduinoJson.h>
 #include <string>
 #include <vector>
 #include <map>
@@ -252,6 +253,11 @@ namespace LXMF {
 		std::string _base_path;
 		std::map<RNS::Bytes, ConversationInfo> _conversations;
 		bool _initialized;
+
+		// Reusable JSON document to reduce heap fragmentation
+		// Note: This class is assumed to be used from a single thread (main loop).
+		// If called from multiple threads, this would need per-thread documents or locking.
+		JsonDocument _json_doc;
 	};
 
 }  // namespace LXMF

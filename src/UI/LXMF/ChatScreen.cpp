@@ -183,6 +183,9 @@ void ChatScreen::refresh() {
     _messages.clear();
     _message_rows.clear();
 
+    // Reserve capacity for message hashes to reduce fragmentation
+    _all_message_hashes.reserve(200);
+
     // Load all message hashes from store (sorted by timestamp)
     _all_message_hashes = _message_store->get_messages_for_conversation(_peer_hash);
 
@@ -250,6 +253,7 @@ void ChatScreen::load_more_messages() {
 
     // Build list of new items to prepend
     std::vector<MessageItem> new_items;
+    new_items.reserve(load_count);
     for (size_t i = new_start_idx; i < _display_start_idx; i++) {
         const auto& msg_hash = _all_message_hashes[i];
 

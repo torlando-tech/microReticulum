@@ -53,14 +53,7 @@ ConversationListScreen::ConversationListScreen(lv_obj_t* parent)
 }
 
 ConversationListScreen::~ConversationListScreen() {
-    // Free allocated user data pointers before deleting screen
-    for (lv_obj_t* container : _conversation_containers) {
-        Bytes* hash_ptr = (Bytes*)lv_obj_get_user_data(container);
-        if (hash_ptr) {
-            delete hash_ptr;
-        }
-    }
-
+    // Pool handles cleanup automatically when vector destructs
     if (_screen) {
         lv_obj_del(_screen);
     }
@@ -192,21 +185,17 @@ void ConversationListScreen::refresh() {
 
     INFO("Refreshing conversation list");
 
-    // Free allocated user data pointers before clearing LVGL objects
-    for (lv_obj_t* container : _conversation_containers) {
-        Bytes* hash_ptr = (Bytes*)lv_obj_get_user_data(container);
-        if (hash_ptr) {
-            delete hash_ptr;
-        }
-    }
-
     // Clear existing items (also removes from focus group when deleted)
     lv_obj_clean(_list);
     _conversations.clear();
     _conversation_containers.clear();
+    _peer_hash_pool.clear();
 
     // Load conversations from store
     std::vector<Bytes> peer_hashes = _message_store->get_conversations();
+
+    // Reserve pool capacity to avoid reallocations (which would invalidate pointers)
+    _peer_hash_pool.reserve(peer_hashes.size());
 
     std::string count_msg = "  Found " + std::to_string(peer_hashes.size()) + " conversations";
     INFO(count_msg.c_str());
@@ -273,9 +262,9 @@ void ConversationListScreen::create_conversation_item(const ConversationItem& it
     lv_obj_set_style_border_width(container, 2, LV_STATE_FOCUSED);
     lv_obj_set_style_bg_color(container, Theme::surfaceElevated(), LV_STATE_FOCUSED);
 
-    // Store peer hash in user data
-    Bytes* peer_hash_copy = new Bytes(item.peer_hash);
-    lv_obj_set_user_data(container, peer_hash_copy);
+    // Store peer hash in user data using pool (avoids per-item heap allocations)
+    _peer_hash_pool.push_back(item.peer_hash);
+    lv_obj_set_user_data(container, &_peer_hash_pool.back());
     lv_obj_add_event_cb(container, on_conversation_clicked, LV_EVENT_CLICKED, this);
     lv_obj_add_event_cb(container, on_conversation_long_pressed, LV_EVENT_LONG_PRESSED, this);
 

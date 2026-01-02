@@ -81,8 +81,11 @@ static void static_resource_concluded_callback(const Resource& resource) {
 // Called when our resource transfer completes (receiver sent RESOURCE_PRF)
 static void static_outbound_resource_concluded(const Resource& resource) {
 	Bytes resource_hash = resource.hash();
-	DEBUG("Outbound resource concluded: " + resource_hash.toHex().substr(0, 16) + "...");
-	DEBUG("  Status: " + std::to_string((int)resource.status()));
+	char buf[128];
+	snprintf(buf, sizeof(buf), "Outbound resource concluded: %.16s...", resource_hash.toHex().c_str());
+	DEBUG(buf);
+	snprintf(buf, sizeof(buf), "  Status: %d", (int)resource.status());
+	DEBUG(buf);
 
 	// Check if this resource is one we're tracking
 	auto it = _pending_outbound_resources.find(resource_hash);
@@ -95,12 +98,14 @@ static void static_outbound_resource_concluded(const Resource& resource) {
 
 	// Check if resource completed successfully
 	if (resource.status() == RNS::Type::Resource::COMPLETE) {
-		INFO("DIRECT delivery confirmed for message " + message_hash.toHex().substr(0, 16) + "...");
+		snprintf(buf, sizeof(buf), "DIRECT delivery confirmed for message %.16s...", message_hash.toHex().c_str());
+		INFO(buf);
 
 		// Use the public static method to trigger delivered callback
 		LXMRouter::handle_direct_proof(message_hash);
 	} else {
-		WARNING("DIRECT resource transfer failed with status " + std::to_string((int)resource.status()));
+		snprintf(buf, sizeof(buf), "DIRECT resource transfer failed with status %d", (int)resource.status());
+		WARNING(buf);
 	}
 
 	// Remove from pending map
@@ -111,12 +116,14 @@ static void static_outbound_resource_concluded(const Resource& resource) {
 void LXMRouter::static_proof_callback(const PacketReceipt& receipt) {
 	// Get packet hash from receipt
 	Bytes packet_hash = receipt.hash();
+	char buf[128];
 
 	// Look up message hash for this packet
 	auto it = _pending_proofs.find(packet_hash);
 	if (it != _pending_proofs.end()) {
 		Bytes message_hash = it->second;
-		INFO("Delivery proof received for message " + message_hash.toHex().substr(0, 16) + "...");
+		snprintf(buf, sizeof(buf), "Delivery proof received for message %.16s...", message_hash.toHex().c_str());
+		INFO(buf);
 
 		// Use set to avoid calling callback multiple times for same router
 		std::set<LXMRouter*> notified_routers;
@@ -139,7 +146,8 @@ void LXMRouter::static_proof_callback(const PacketReceipt& receipt) {
 		// Remove from pending proofs
 		_pending_proofs.erase(it);
 	} else {
-		DEBUG("Received proof for unknown packet: " + packet_hash.toHex().substr(0, 16) + "...");
+		snprintf(buf, sizeof(buf), "Received proof for unknown packet: %.16s...", packet_hash.toHex().c_str());
+		DEBUG(buf);
 	}
 }
 
@@ -174,9 +182,13 @@ LXMRouter::LXMRouter(
 	// Register link established callback for incoming links (DIRECT delivery)
 	_delivery_destination.set_link_established_callback(static_delivery_link_established_callback);
 
-	INFO("  Delivery destination: " + _delivery_destination.hash().toHex());
-	INFO("  Destination type: " + std::to_string((uint8_t)_delivery_destination.type()));
-	INFO("  Destination direction: " + std::to_string((uint8_t)_delivery_destination.direction()));
+	char buf[128];
+	snprintf(buf, sizeof(buf), "  Delivery destination: %s", _delivery_destination.hash().toHex().c_str());
+	INFO(buf);
+	snprintf(buf, sizeof(buf), "  Destination type: %u", (uint8_t)_delivery_destination.type());
+	INFO(buf);
+	snprintf(buf, sizeof(buf), "  Destination direction: %u", (uint8_t)_delivery_destination.direction());
+	INFO(buf);
 
 	// Announce at start if enabled
 	if (_announce_at_start) {
@@ -218,8 +230,11 @@ void LXMRouter::register_failed_callback(FailedCallback callback) {
 // Queue outbound message
 void LXMRouter::handle_outbound(LXMessage& message) {
 	INFO("Handling outbound LXMF message");
-	DEBUG("  Destination: " + message.destination_hash().toHex());
-	DEBUG("  Content size: " + std::to_string(message.content().size()) + " bytes");
+	char buf[128];
+	snprintf(buf, sizeof(buf), "  Destination: %s", message.destination_hash().toHex().c_str());
+	DEBUG(buf);
+	snprintf(buf, sizeof(buf), "  Content size: %zu bytes", message.content().size());
+	DEBUG(buf);
 
 	// Pack the message
 	message.pack();
@@ -238,7 +253,8 @@ void LXMRouter::handle_outbound(LXMessage& message) {
 	// Add to pending queue
 	_pending_outbound.push_back(message);
 
-	INFO("Message queued for delivery (" + std::to_string(_pending_outbound.size()) + " pending)");
+	snprintf(buf, sizeof(buf), "Message queued for delivery (%zu pending)", _pending_outbound.size());
+	INFO(buf);
 }
 
 // Process outbound queue
@@ -255,8 +271,10 @@ void LXMRouter::process_outbound() {
 
 	// Process one message per call to avoid blocking
 	LXMessage& message = _pending_outbound.front();
+	char buf[128];
 
-	DEBUG("Processing outbound message to " + message.destination_hash().toHex());
+	snprintf(buf, sizeof(buf), "Processing outbound message to %s", message.destination_hash().toHex().c_str());
+	DEBUG(buf);
 
 	try {
 		// If propagation-only mode is enabled, send via propagation node
@@ -344,7 +362,8 @@ void LXMRouter::process_outbound() {
 				WARNING("Failed to establish link for message delivery");
 				// Set backoff timer to avoid tight loop
 				_next_outbound_process_time = now + OUTBOUND_RETRY_DELAY;
-				INFO("  Will retry in " + std::to_string((int)OUTBOUND_RETRY_DELAY) + " seconds");
+				snprintf(buf, sizeof(buf), "  Will retry in %d seconds", (int)OUTBOUND_RETRY_DELAY);
+				INFO(buf);
 				return;
 			}
 
@@ -383,7 +402,8 @@ void LXMRouter::process_outbound() {
 		}
 
 	} catch (const std::exception& e) {
-		ERROR("Exception processing outbound message: " + std::string(e.what()));
+		snprintf(buf, sizeof(buf), "Exception processing outbound message: %s", e.what());
+		ERROR(buf);
 		message.state(Type::Message::FAILED);
 
 		// Call failed callback
@@ -405,8 +425,10 @@ void LXMRouter::process_inbound() {
 
 	// Process one message per call
 	LXMessage& message = _pending_inbound.front();
+	char buf[128];
 
-	DEBUG("Processing inbound message from " + message.source_hash().toHex());
+	snprintf(buf, sizeof(buf), "Processing inbound message from %s", message.source_hash().toHex().c_str());
+	DEBUG(buf);
 
 	try {
 		// Message is already unpacked and validated in on_packet()
@@ -418,10 +440,12 @@ void LXMRouter::process_inbound() {
 		// Remove from pending queue
 		_pending_inbound.erase(_pending_inbound.begin());
 
-		INFO("Inbound message processed (" + std::to_string(_pending_inbound.size()) + " remaining)");
+		snprintf(buf, sizeof(buf), "Inbound message processed (%zu remaining)", _pending_inbound.size());
+		INFO(buf);
 
 	} catch (const std::exception& e) {
-		ERROR("Exception processing inbound message: " + std::string(e.what()));
+		snprintf(buf, sizeof(buf), "Exception processing inbound message: %s", e.what());
+		ERROR(buf);
 		// Discard message on error
 		_pending_inbound.erase(_pending_inbound.begin());
 	}
@@ -429,7 +453,9 @@ void LXMRouter::process_inbound() {
 
 // Announce delivery destination
 void LXMRouter::announce(const Bytes& app_data, bool path_response) {
-	INFO("Announcing LXMF delivery destination: " + _delivery_destination.hash().toHex());
+	char buf[128];
+	snprintf(buf, sizeof(buf), "Announcing LXMF delivery destination: %s", _delivery_destination.hash().toHex().c_str());
+	INFO(buf);
 
 	try {
 		Bytes announce_data;
@@ -452,19 +478,23 @@ void LXMRouter::announce(const Bytes& app_data, bool path_response) {
 			packer.packNil();
 
 			announce_data = Bytes(packer.data(), packer.size());
-			DEBUG("  Built LXMF app_data for display_name: " + _display_name);
+			snprintf(buf, sizeof(buf), "  Built LXMF app_data for display_name: %s", _display_name.c_str());
+			DEBUG(buf);
 		}
 
-		DEBUG("  Name hash: " + RNS::Destination::name_hash("lxmf", "delivery").toHex());
-		DEBUG("  App_data (" + std::to_string(announce_data.size()) + " bytes): " +
-		      (announce_data.size() > 0 ? announce_data.toHex() : "(empty)"));
+		snprintf(buf, sizeof(buf), "  Name hash: %s", RNS::Destination::name_hash("lxmf", "delivery").toHex().c_str());
+		DEBUG(buf);
+		snprintf(buf, sizeof(buf), "  App_data (%zu bytes): %s", announce_data.size(),
+		         (announce_data.size() > 0 ? announce_data.toHex().c_str() : "(empty)"));
+		DEBUG(buf);
 		DEBUG("  Calling _delivery_destination.announce()...");
 		_delivery_destination.announce(announce_data, path_response);
 		_last_announce_time = Utilities::OS::time();
 		INFO("Announce sent successfully");
 
 	} catch (const std::exception& e) {
-		ERROR("Failed to announce: " + std::string(e.what()));
+		snprintf(buf, sizeof(buf), "Failed to announce: %s", e.what());
+		ERROR(buf);
 	}
 }
 
@@ -472,7 +502,9 @@ void LXMRouter::announce(const Bytes& app_data, bool path_response) {
 void LXMRouter::set_announce_interval(uint32_t interval) {
 	_announce_interval = interval;
 	if (interval > 0) {
-		INFO("Auto-announce interval set to " + std::to_string(interval) + " seconds");
+		char buf[64];
+		snprintf(buf, sizeof(buf), "Auto-announce interval set to %u seconds", interval);
+		INFO(buf);
 	} else {
 		INFO("Auto-announce disabled");
 	}
@@ -481,14 +513,16 @@ void LXMRouter::set_announce_interval(uint32_t interval) {
 // Set announce at start
 void LXMRouter::set_announce_at_start(bool enabled) {
 	_announce_at_start = enabled;
-	DEBUG("Announce at start: " + std::string(enabled ? "enabled" : "disabled"));
+	DEBUG(enabled ? "Announce at start: enabled" : "Announce at start: disabled");
 }
 
 // Set display name for announces
 void LXMRouter::set_display_name(const std::string& name) {
 	_display_name = name;
 	if (!name.empty()) {
-		INFO("Display name set to: " + name);
+		char buf[128];
+		snprintf(buf, sizeof(buf), "Display name set to: %s", name.c_str());
+		INFO(buf);
 	}
 }
 
@@ -496,7 +530,9 @@ void LXMRouter::set_display_name(const std::string& name) {
 void LXMRouter::clear_failed_outbound() {
 	size_t count = _failed_outbound.size();
 	_failed_outbound.clear();
-	INFO("Cleared " + std::to_string(count) + " failed outbound messages");
+	char buf[64];
+	snprintf(buf, sizeof(buf), "Cleared %zu failed outbound messages", count);
+	INFO(buf);
 }
 
 // Retry failed outbound
@@ -505,7 +541,9 @@ void LXMRouter::retry_failed_outbound() {
 		return;
 	}
 
-	INFO("Retrying " + std::to_string(_failed_outbound.size()) + " failed messages");
+	char buf[64];
+	snprintf(buf, sizeof(buf), "Retrying %zu failed messages", _failed_outbound.size());
+	INFO(buf);
 
 	// Move all failed messages back to pending
 	for (auto& message : _failed_outbound) {
@@ -518,9 +556,13 @@ void LXMRouter::retry_failed_outbound() {
 
 // Packet callback - receive LXMF messages
 void LXMRouter::on_packet(const Bytes& data, const Packet& packet) {
-	INFO("Received LXMF message packet (" + std::to_string(data.size()) + " bytes)");
-	DEBUG("  From: " + packet.destination_hash().toHex());
-	DEBUG("  Destination type: " + std::to_string((uint8_t)packet.destination_type()));
+	char buf[128];
+	snprintf(buf, sizeof(buf), "Received LXMF message packet (%zu bytes)", data.size());
+	INFO(buf);
+	snprintf(buf, sizeof(buf), "  From: %s", packet.destination_hash().toHex().c_str());
+	DEBUG(buf);
+	snprintf(buf, sizeof(buf), "  Destination type: %u", (uint8_t)packet.destination_type());
+	DEBUG(buf);
 
 	try {
 		// Build LXMF data based on delivery method (matches Python LXMF exactly)
@@ -540,14 +582,18 @@ void LXMRouter::on_packet(const Bytes& data, const Packet& packet) {
 			lxmf_data = data;
 		}
 
-		DEBUG("  LXMF data size after processing: " + std::to_string(lxmf_data.size()) + " bytes");
+		snprintf(buf, sizeof(buf), "  LXMF data size after processing: %zu bytes", lxmf_data.size());
+		DEBUG(buf);
 
 		// Unpack LXMF message from packet data
 		LXMessage message = LXMessage::unpack_from_bytes(lxmf_data, method);
 
-		DEBUG("  Message hash: " + message.hash().toHex());
-		DEBUG("  Source: " + message.source_hash().toHex());
-		DEBUG("  Content size: " + std::to_string(message.content().size()) + " bytes");
+		snprintf(buf, sizeof(buf), "  Message hash: %s", message.hash().toHex().c_str());
+		DEBUG(buf);
+		snprintf(buf, sizeof(buf), "  Source: %s", message.source_hash().toHex().c_str());
+		DEBUG(buf);
+		snprintf(buf, sizeof(buf), "  Content size: %zu bytes", message.content().size());
+		DEBUG(buf);
 
 		// Verify destination matches our delivery destination
 		if (message.destination_hash() != _delivery_destination.hash()) {
@@ -558,7 +604,8 @@ void LXMRouter::on_packet(const Bytes& data, const Packet& packet) {
 		// Signature validation
 		if (!message.signature_validated()) {
 			WARNING("Message signature not validated");
-			DEBUG("  Unverified reason: " + std::to_string((uint8_t)message.unverified_reason()));
+			snprintf(buf, sizeof(buf), "  Unverified reason: %u", (uint8_t)message.unverified_reason());
+			DEBUG(buf);
 
 			// For Phase 1 MVP, we'll still accept messages with unknown source
 			// (signature will be validated later if source identity is learned)
@@ -571,8 +618,8 @@ void LXMRouter::on_packet(const Bytes& data, const Packet& packet) {
 		// Stamp enforcement (if enabled)
 		if (_stamp_cost > 0 && _enforce_stamps) {
 			if (!message.validate_stamp(_stamp_cost)) {
-				WARNING("  Rejecting message with invalid or missing stamp (required cost=" +
-				        std::to_string(_stamp_cost) + ")");
+				snprintf(buf, sizeof(buf), "  Rejecting message with invalid or missing stamp (required cost=%u)", _stamp_cost);
+				WARNING(buf);
 				return;
 			}
 			INFO("  Stamp validated");
@@ -587,16 +634,20 @@ void LXMRouter::on_packet(const Bytes& data, const Packet& packet) {
 		// Add to inbound queue
 		_pending_inbound.push_back(message);
 
-		INFO("Message queued for processing (" + std::to_string(_pending_inbound.size()) + " pending)");
+		snprintf(buf, sizeof(buf), "Message queued for processing (%zu pending)", _pending_inbound.size());
+		INFO(buf);
 
 	} catch (const std::exception& e) {
-		ERROR("Failed to unpack LXMF message: " + std::string(e.what()));
+		snprintf(buf, sizeof(buf), "Failed to unpack LXMF message: %s", e.what());
+		ERROR(buf);
 	}
 }
 
 // Get or establish link to destination
 Link LXMRouter::get_link_for_destination(const Bytes& destination_hash) {
-	DEBUG("Getting link for destination " + destination_hash.toHex());
+	char buf[128];
+	snprintf(buf, sizeof(buf), "Getting link for destination %s", destination_hash.toHex().c_str());
+	DEBUG(buf);
 
 	// Check if we already have an active link
 	auto it = _direct_links.find(destination_hash);
@@ -613,12 +664,14 @@ Link LXMRouter::get_link_for_destination(const Bytes& destination_hash) {
 			if (time_it != _link_creation_times.end()) {
 				double age = Utilities::OS::time() - time_it->second;
 				if (age > LINK_ESTABLISHMENT_TIMEOUT) {
-					WARNING("  Pending link timed out after " + std::to_string((int)age) + "s, removing");
+					snprintf(buf, sizeof(buf), "  Pending link timed out after %ds, removing", (int)age);
+					WARNING(buf);
 					_direct_links.erase(it);
 					_link_creation_times.erase(time_it);
 					// Fall through to create new link
 				} else {
-					DEBUG("  Using existing pending link (age: " + std::to_string((int)age) + "s)");
+					snprintf(buf, sizeof(buf), "  Using existing pending link (age: %ds)", (int)age);
+					DEBUG(buf);
 					return existing_link;
 				}
 			} else {
@@ -633,7 +686,8 @@ Link LXMRouter::get_link_for_destination(const Bytes& destination_hash) {
 	}
 
 	// Need to establish new link
-	INFO("  Establishing new link to " + destination_hash.toHex());
+	snprintf(buf, sizeof(buf), "  Establishing new link to %s", destination_hash.toHex().c_str());
+	INFO(buf);
 
 	try {
 		// Create destination object for link
@@ -674,7 +728,8 @@ Link LXMRouter::get_link_for_destination(const Bytes& destination_hash) {
 		return link;
 
 	} catch (const std::exception& e) {
-		ERROR("  Failed to establish link: " + std::string(e.what()));
+		snprintf(buf, sizeof(buf), "  Failed to establish link: %s", e.what());
+		ERROR(buf);
 		return Link(RNS::Type::NONE);
 	}
 }
@@ -682,8 +737,11 @@ Link LXMRouter::get_link_for_destination(const Bytes& destination_hash) {
 // Send message via link
 bool LXMRouter::send_via_link(LXMessage& message, Link& link) {
 	INFO("Sending LXMF message via link");
-	DEBUG("  Message size: " + std::to_string(message.packed_size()) + " bytes");
-	DEBUG("  Representation: " + std::to_string((uint8_t)message.representation()));
+	char buf[128];
+	snprintf(buf, sizeof(buf), "  Message size: %zu bytes", message.packed_size());
+	DEBUG(buf);
+	snprintf(buf, sizeof(buf), "  Representation: %u", (uint8_t)message.representation());
+	DEBUG(buf);
 
 	try {
 		// Ensure message is packed
@@ -701,7 +759,8 @@ bool LXMRouter::send_via_link(LXMessage& message, Link& link) {
 
 		if (message.representation() == Type::Message::PACKET) {
 			// Send as single packet over link
-			INFO("  Sending as single packet (" + std::to_string(message.packed_size()) + " bytes)");
+			snprintf(buf, sizeof(buf), "  Sending as single packet (%zu bytes)", message.packed_size());
+			INFO(buf);
 
 			Packet packet(link, message.packed());
 			packet.send();
@@ -712,7 +771,8 @@ bool LXMRouter::send_via_link(LXMessage& message, Link& link) {
 
 		} else if (message.representation() == Type::Message::RESOURCE) {
 			// Send as resource over link with concluded callback
-			INFO("  Sending as resource (" + std::to_string(message.packed_size()) + " bytes)");
+			snprintf(buf, sizeof(buf), "  Sending as resource (%zu bytes)", message.packed_size());
+			INFO(buf);
 
 			// Create resource with our callback to track completion
 			Resource resource(message.packed(), link, true, true, static_outbound_resource_concluded);
@@ -720,7 +780,9 @@ bool LXMRouter::send_via_link(LXMessage& message, Link& link) {
 			// Track this resource so we can match the callback to the message
 			if (resource.hash()) {
 				_pending_outbound_resources[resource.hash()] = message.hash();
-				DEBUG("  Tracking resource " + resource.hash().toHex().substr(0, 16) + " for message " + message.hash().toHex().substr(0, 16));
+				snprintf(buf, sizeof(buf), "  Tracking resource %.16s for message %.16s",
+				         resource.hash().toHex().c_str(), message.hash().toHex().c_str());
+				DEBUG(buf);
 			}
 
 			message.state(Type::Message::SENT);
@@ -734,7 +796,8 @@ bool LXMRouter::send_via_link(LXMessage& message, Link& link) {
 		}
 
 	} catch (const std::exception& e) {
-		ERROR("Failed to send message: " + std::string(e.what()));
+		snprintf(buf, sizeof(buf), "Failed to send message: %s", e.what());
+		ERROR(buf);
 		return false;
 	}
 }
@@ -742,7 +805,9 @@ bool LXMRouter::send_via_link(LXMessage& message, Link& link) {
 // Send message via OPPORTUNISTIC delivery (single encrypted packet)
 bool LXMRouter::send_opportunistic(LXMessage& message, const Identity& dest_identity) {
 	INFO("Sending LXMF message via OPPORTUNISTIC delivery");
-	DEBUG("  Message size: " + std::to_string(message.packed_size()) + " bytes");
+	char buf[128];
+	snprintf(buf, sizeof(buf), "  Message size: %zu bytes", message.packed_size());
+	DEBUG(buf);
 
 	try {
 		// Create destination object for the remote peer's LXMF delivery
@@ -757,15 +822,18 @@ bool LXMRouter::send_opportunistic(LXMessage& message, const Identity& dest_iden
 		// Verify destination hash matches
 		if (destination.hash() != message.destination_hash()) {
 			ERROR("Destination hash mismatch!");
-			DEBUG("  Expected: " + message.destination_hash().toHex());
-			DEBUG("  Got: " + destination.hash().toHex());
+			snprintf(buf, sizeof(buf), "  Expected: %s", message.destination_hash().toHex().c_str());
+			DEBUG(buf);
+			snprintf(buf, sizeof(buf), "  Got: %s", destination.hash().toHex().c_str());
+			DEBUG(buf);
 			return false;
 		}
 
 		// For OPPORTUNISTIC, we strip the destination hash from the packed data
 		// since it's already in the packet header
 		Bytes packet_data = message.packed().mid(Type::Constants::DESTINATION_LENGTH);
-		DEBUG("  Packet data size: " + std::to_string(packet_data.size()) + " bytes");
+		snprintf(buf, sizeof(buf), "  Packet data size: %zu bytes", packet_data.size());
+		DEBUG(buf);
 
 		// Create and send packet
 		Packet packet(destination, packet_data, RNS::Type::Packet::DATA);
@@ -775,7 +843,8 @@ bool LXMRouter::send_opportunistic(LXMessage& message, const Identity& dest_iden
 		if (receipt) {
 			receipt.set_delivery_callback(static_proof_callback);
 			_pending_proofs[receipt.hash()] = message.hash();
-			DEBUG("  Registered proof callback for packet " + receipt.hash().toHex().substr(0, 16) + "...");
+			snprintf(buf, sizeof(buf), "  Registered proof callback for packet %.16s...", receipt.hash().toHex().c_str());
+			DEBUG(buf);
 		}
 
 		message.state(Type::Message::SENT);
@@ -784,14 +853,17 @@ bool LXMRouter::send_opportunistic(LXMessage& message, const Identity& dest_iden
 		return true;
 
 	} catch (const std::exception& e) {
-		ERROR("Failed to send OPPORTUNISTIC message: " + std::string(e.what()));
+		snprintf(buf, sizeof(buf), "Failed to send OPPORTUNISTIC message: %s", e.what());
+		ERROR(buf);
 		return false;
 	}
 }
 
 // Handle delivery proof for DIRECT messages
 void LXMRouter::handle_direct_proof(const Bytes& message_hash) {
-	INFO("Processing DIRECT delivery proof for message " + message_hash.toHex().substr(0, 16) + "...");
+	char buf[128];
+	snprintf(buf, sizeof(buf), "Processing DIRECT delivery proof for message %.16s...", message_hash.toHex().c_str());
+	INFO(buf);
 
 	// Use set to avoid calling callback multiple times for same router
 	// (router may be registered under multiple keys in registry)
@@ -813,14 +885,18 @@ void LXMRouter::handle_direct_proof(const Bytes& message_hash) {
 
 // Link established callback
 void LXMRouter::on_link_established(const Link& link) {
-	INFO("Link established to " + link.destination().hash().toHex());
+	char buf[128];
+	snprintf(buf, sizeof(buf), "Link established to %s", link.destination().hash().toHex().c_str());
+	INFO(buf);
 	// Link is now active, process_outbound() will pick it up
 	// Note: Delivery confirmation comes from Resource completed callback
 }
 
 // Link closed callback
 void LXMRouter::on_link_closed(const Link& link) {
-	INFO("Link closed to " + link.destination().hash().toHex());
+	char buf[128];
+	snprintf(buf, sizeof(buf), "Link closed to %s", link.destination().hash().toHex().c_str());
+	INFO(buf);
 
 	// Remove from active links
 	auto it = _direct_links.find(link.destination().hash());
@@ -833,7 +909,9 @@ void LXMRouter::on_link_closed(const Link& link) {
 // Incoming link established callback (for DIRECT delivery to our destination)
 void LXMRouter::on_incoming_link_established(Link& link) {
 	INFO("Incoming link established from remote peer");
-	DEBUG("  Link ID: " + link.link_id().toHex());
+	char buf[128];
+	snprintf(buf, sizeof(buf), "  Link ID: %s", link.link_id().toHex().c_str());
+	DEBUG(buf);
 
 	// Set up resource concluded callback to receive LXMF messages over this link
 	link.set_resource_concluded_callback(static_resource_concluded_callback);
@@ -842,16 +920,20 @@ void LXMRouter::on_incoming_link_established(Link& link) {
 
 // Resource concluded callback (LXMF message received via DIRECT delivery)
 void LXMRouter::on_resource_concluded(const RNS::Resource& resource) {
-	DEBUG("Resource concluded, status=" + std::to_string((int)resource.status()));
+	char buf[128];
+	snprintf(buf, sizeof(buf), "Resource concluded, status=%d", (int)resource.status());
+	DEBUG(buf);
 
 	if (resource.status() != RNS::Type::Resource::COMPLETE) {
-		WARNING("Resource transfer failed with status " + std::to_string((int)resource.status()));
+		snprintf(buf, sizeof(buf), "Resource transfer failed with status %d", (int)resource.status());
+		WARNING(buf);
 		return;
 	}
 
 	// Get the resource data - this is the LXMF message
 	Bytes data = resource.data();
-	INFO("Received LXMF message via DIRECT delivery (" + std::to_string(data.size()) + " bytes)");
+	snprintf(buf, sizeof(buf), "Received LXMF message via DIRECT delivery (%zu bytes)", data.size());
+	INFO(buf);
 
 	try {
 		// DIRECT delivery via resource: data is the full packed LXMF message
@@ -861,9 +943,12 @@ void LXMRouter::on_resource_concluded(const RNS::Resource& resource) {
 		// Unpack the LXMF message
 		LXMessage message = LXMessage::unpack_from_bytes(data, Type::Message::DIRECT);
 
-		DEBUG("  Message hash: " + message.hash().toHex());
-		DEBUG("  Source: " + message.source_hash().toHex());
-		DEBUG("  Content size: " + std::to_string(message.content().size()) + " bytes");
+		snprintf(buf, sizeof(buf), "  Message hash: %s", message.hash().toHex().c_str());
+		DEBUG(buf);
+		snprintf(buf, sizeof(buf), "  Source: %s", message.source_hash().toHex().c_str());
+		DEBUG(buf);
+		snprintf(buf, sizeof(buf), "  Content size: %zu bytes", message.content().size());
+		DEBUG(buf);
 
 		// Verify destination matches
 		if (message.destination_hash() != _delivery_destination.hash()) {
@@ -874,7 +959,8 @@ void LXMRouter::on_resource_concluded(const RNS::Resource& resource) {
 		// Signature validation (same as on_packet)
 		if (!message.signature_validated()) {
 			WARNING("Message signature not validated");
-			DEBUG("  Unverified reason: " + std::to_string((uint8_t)message.unverified_reason()));
+			snprintf(buf, sizeof(buf), "  Unverified reason: %u", (uint8_t)message.unverified_reason());
+			DEBUG(buf);
 
 			// Accept messages with unknown source (signature validated later)
 			if (message.unverified_reason() != Type::Message::SOURCE_UNKNOWN) {
@@ -886,8 +972,8 @@ void LXMRouter::on_resource_concluded(const RNS::Resource& resource) {
 		// Stamp enforcement (if enabled)
 		if (_stamp_cost > 0 && _enforce_stamps) {
 			if (!message.validate_stamp(_stamp_cost)) {
-				WARNING("  Rejecting message with invalid or missing stamp (required cost=" +
-				        std::to_string(_stamp_cost) + ")");
+				snprintf(buf, sizeof(buf), "  Rejecting message with invalid or missing stamp (required cost=%u)", _stamp_cost);
+				WARNING(buf);
 				return;
 			}
 			INFO("  Stamp validated");
@@ -902,7 +988,8 @@ void LXMRouter::on_resource_concluded(const RNS::Resource& resource) {
 		INFO("  Message queued for delivery");
 
 	} catch (const std::exception& e) {
-		ERROR("Failed to process DIRECT message: " + std::string(e.what()));
+		snprintf(buf, sizeof(buf), "Failed to process DIRECT message: %s", e.what());
+		ERROR(buf);
 	}
 }
 
@@ -931,7 +1018,9 @@ void LXMRouter::set_outbound_propagation_node(const Bytes& node_hash) {
 	}
 
 	_outbound_propagation_node = node_hash;
-	INFO("Set outbound propagation node to " + node_hash.toHex().substr(0, 16) + "...");
+	char buf[64];
+	snprintf(buf, sizeof(buf), "Set outbound propagation node to %.16s...", node_hash.toHex().c_str());
+	INFO(buf);
 }
 
 void LXMRouter::register_sync_complete_callback(SyncCompleteCallback callback) {
@@ -942,8 +1031,11 @@ void LXMRouter::register_sync_complete_callback(SyncCompleteCallback callback) {
 // Static callback for outbound propagation resource
 void LXMRouter::static_propagation_resource_concluded(const Resource& resource) {
 	Bytes resource_hash = resource.hash();
-	DEBUG("Propagation resource concluded: " + resource_hash.toHex().substr(0, 16) + "...");
-	DEBUG("  Status: " + std::to_string((int)resource.status()));
+	char buf[128];
+	snprintf(buf, sizeof(buf), "Propagation resource concluded: %.16s...", resource_hash.toHex().c_str());
+	DEBUG(buf);
+	snprintf(buf, sizeof(buf), "  Status: %d", (int)resource.status());
+	DEBUG(buf);
 
 	auto it = _pending_propagation_resources.find(resource_hash);
 	if (it == _pending_propagation_resources.end()) {
@@ -954,7 +1046,8 @@ void LXMRouter::static_propagation_resource_concluded(const Resource& resource) 
 	Bytes message_hash = it->second;
 
 	if (resource.status() == RNS::Type::Resource::COMPLETE) {
-		INFO("PROPAGATED delivery to node confirmed for message " + message_hash.toHex().substr(0, 16) + "...");
+		snprintf(buf, sizeof(buf), "PROPAGATED delivery to node confirmed for message %.16s...", message_hash.toHex().c_str());
+		INFO(buf);
 
 		// For PROPAGATED, "delivered" means delivered to propagation node, not final recipient
 		// We mark it as SENT (not DELIVERED) to indicate it's on the propagation network
@@ -971,7 +1064,8 @@ void LXMRouter::static_propagation_resource_concluded(const Resource& resource) 
 			}
 		}
 	} else {
-		WARNING("PROPAGATED resource transfer failed with status " + std::to_string((int)resource.status()));
+		snprintf(buf, sizeof(buf), "PROPAGATED resource transfer failed with status %d", (int)resource.status());
+		WARNING(buf);
 	}
 
 	_pending_propagation_resources.erase(it);
@@ -979,13 +1073,15 @@ void LXMRouter::static_propagation_resource_concluded(const Resource& resource) 
 
 bool LXMRouter::send_propagated(LXMessage& message) {
 	INFO("Sending LXMF message via PROPAGATED delivery");
+	char buf[128];
 
 	// Get propagation node
 	Bytes prop_node = _outbound_propagation_node;
 	if (prop_node.size() == 0 && _propagation_manager) {
 		DEBUG("  Looking for propagation node via manager...");
 		auto nodes = _propagation_manager->get_nodes();
-		DEBUG("  Manager has " + std::to_string(nodes.size()) + " nodes");
+		snprintf(buf, sizeof(buf), "  Manager has %zu nodes", nodes.size());
+		DEBUG(buf);
 		prop_node = _propagation_manager->get_effective_node();
 	}
 
@@ -994,7 +1090,8 @@ bool LXMRouter::send_propagated(LXMessage& message) {
 		return false;
 	}
 
-	DEBUG("  Using propagation node: " + prop_node.toHex().substr(0, 16) + "...");
+	snprintf(buf, sizeof(buf), "  Using propagation node: %.16s...", prop_node.toHex().c_str());
+	DEBUG(buf);
 
 	// Check/establish link to propagation node
 	if (!_outbound_propagation_link ||
@@ -1039,7 +1136,8 @@ bool LXMRouter::send_propagated(LXMessage& message) {
 	if (_propagation_manager) {
 		auto node_info = _propagation_manager->get_node(prop_node);
 		if (node_info && node_info.stamp_cost > 0) {
-			DEBUG("  Generating propagation stamp (cost=" + std::to_string(node_info.stamp_cost) + ")...");
+			snprintf(buf, sizeof(buf), "  Generating propagation stamp (cost=%u)...", node_info.stamp_cost);
+			DEBUG(buf);
 			Bytes stamp = message.generate_propagation_stamp(node_info.stamp_cost);
 			if (stamp.size() == 0) {
 				WARNING("  Failed to generate propagation stamp, sending anyway");
@@ -1054,7 +1152,8 @@ bool LXMRouter::send_propagated(LXMessage& message) {
 		return false;
 	}
 
-	DEBUG("  Propagated message size: " + std::to_string(prop_packed.size()) + " bytes");
+	snprintf(buf, sizeof(buf), "  Propagated message size: %zu bytes", prop_packed.size());
+	DEBUG(buf);
 
 	// Send via resource with callback
 	Resource resource(prop_packed, _outbound_propagation_link, true, true, static_propagation_resource_concluded);
@@ -1062,7 +1161,8 @@ bool LXMRouter::send_propagated(LXMessage& message) {
 	// Track this resource
 	if (resource.hash()) {
 		_pending_propagation_resources[resource.hash()] = message.hash();
-		DEBUG("  Tracking propagation resource " + resource.hash().toHex().substr(0, 16));
+		snprintf(buf, sizeof(buf), "  Tracking propagation resource %.16s", resource.hash().toHex().c_str());
+		DEBUG(buf);
 	}
 
 	message.state(Type::Message::SENDING);
@@ -1072,7 +1172,9 @@ bool LXMRouter::send_propagated(LXMessage& message) {
 
 void LXMRouter::request_messages_from_propagation_node() {
 	if (_sync_state != PR_IDLE && _sync_state != PR_COMPLETE && _sync_state != PR_FAILED) {
-		WARNING("Sync already in progress (state=" + std::to_string(_sync_state) + ")");
+		char buf[64];
+		snprintf(buf, sizeof(buf), "Sync already in progress (state=%d)", _sync_state);
+		WARNING(buf);
 		return;
 	}
 
@@ -1088,7 +1190,9 @@ void LXMRouter::request_messages_from_propagation_node() {
 		return;
 	}
 
-	INFO("Requesting messages from propagation node " + prop_node.toHex().substr(0, 16) + "...");
+	char buf[64];
+	snprintf(buf, sizeof(buf), "Requesting messages from propagation node %.16s...", prop_node.toHex().c_str());
+	INFO(buf);
 	_sync_progress = 0.0f;
 
 	// Check if link exists and is active
@@ -1186,6 +1290,8 @@ void LXMRouter::process_propagated_lxmf(const Bytes& lxmf_data) {
 			INFO("Propagated message queued for delivery");
 		}
 	} catch (const std::exception& e) {
-		ERROR("Failed to unpack propagated message: " + std::string(e.what()));
+		char buf[128];
+		snprintf(buf, sizeof(buf), "Failed to unpack propagated message: %s", e.what());
+		ERROR(buf);
 	}
 }

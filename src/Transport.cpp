@@ -423,11 +423,14 @@ using namespace RNS::Utilities;
 							);
 
 							new_packet.hops(announce_entry._hops);
+							char log_buf[128];
 							if (announce_entry._block_rebroadcasts) {
-								DEBUG("Rebroadcasting announce as path response for " + announce_destination.hash().toHex() + " with hop count " + std::to_string(new_packet.hops()));
+								snprintf(log_buf, sizeof(log_buf), "Rebroadcasting announce as path response for %s with hop count %u", announce_destination.hash().toHex().c_str(), new_packet.hops());
+								DEBUG(log_buf);
 							}
 							else {
-								DEBUG("Rebroadcasting announce for " + announce_destination.hash().toHex() + " with hop count " + std::to_string(new_packet.hops()));
+								snprintf(log_buf, sizeof(log_buf), "Rebroadcasting announce for %s with hop count %u", announce_destination.hash().toHex().c_str(), new_packet.hops());
+								DEBUG(log_buf);
 							}
 							
 							outgoing.push_back(new_packet);
@@ -630,7 +633,9 @@ using namespace RNS::Utilities;
 					}
 				}
 				if (count > 0) {
-					TRACE("Removed " + std::to_string(count) + " tunnel paths");
+					char log_buf[64];
+					snprintf(log_buf, sizeof(log_buf), "Removed %d tunnel paths", count);
+					TRACE(log_buf);
 				}
 
 				// Cull the path requests table (throttling cache) - use 30 second expiry
@@ -645,7 +650,9 @@ using namespace RNS::Utilities;
 						_path_requests.erase(destination_hash);
 					}
 					if (stale_path_requests.size() > 0) {
-						TRACE("Removed " + std::to_string(stale_path_requests.size()) + " stale path request throttle entries");
+						char log_buf[80];
+						snprintf(log_buf, sizeof(log_buf), "Removed %zu stale path request throttle entries", stale_path_requests.size());
+						TRACE(log_buf);
 					}
 				}
 
@@ -664,7 +671,9 @@ using namespace RNS::Utilities;
 						for (size_t i = 0; i < to_remove && it != _pending_local_path_requests.end(); ++i) {
 							it = _pending_local_path_requests.erase(it);
 						}
-						TRACE("Culled " + std::to_string(to_remove) + " pending local path requests");
+						char log_buf[64];
+						snprintf(log_buf, sizeof(log_buf), "Culled %zu pending local path requests", to_remove);
+						TRACE(log_buf);
 					}
 				}
 
@@ -711,7 +720,9 @@ using namespace RNS::Utilities;
 }
 
 /*static*/ void Transport::transmit(Interface& interface, const Bytes& raw) {
-	DEBUG("Transport::transmit() on " + interface.toString() + " (" + std::to_string(raw.size()) + " bytes)");
+	char log_buf[128];
+	snprintf(log_buf, sizeof(log_buf), "Transport::transmit() on %s (%zu bytes)", interface.toString().c_str(), raw.size());
+	DEBUG(log_buf);
 	// CBA
 	if (_callbacks._transmit_packet) {
 		try {
@@ -781,7 +792,11 @@ using namespace RNS::Utilities;
 		return false;
 	}
 
-	TRACE("Transport::outbound: destination=" + packet.destination_hash().toHex() + " hops=" + std::to_string(packet.hops()));
+	{
+		char log_buf[128];
+		snprintf(log_buf, sizeof(log_buf), "Transport::outbound: destination=%s hops=%u", packet.destination_hash().toHex().c_str(), packet.hops());
+		TRACE(log_buf);
+	}
 
 	while (_jobs_running) {
 		OS::sleep(0.001);  // Wait for jobs to finish
@@ -1077,21 +1092,25 @@ using namespace RNS::Utilities;
 												//z timer = threading.Timer(wait_time, interface.process_announce_queue)
 												//z timer.start()
 
+												char log_buf[192];
 												if (wait_time < 1000) {
-													TRACE("Added announce to queue (height " + std::to_string(interface.announce_queue().size()) + ") on " + interface.toString() + " for processing in " + std::to_string((int)wait_time) + " ms");
+													snprintf(log_buf, sizeof(log_buf), "Added announce to queue (height %zu) on %s for processing in %d ms", interface.announce_queue().size(), interface.toString().c_str(), (int)wait_time);
 												}
 												else {
-													TRACE("Added announce to queue (height " + std::to_string(interface.announce_queue().size()) + ") on " + interface.toString() + " for processing in " + std::to_string(OS::round(wait_time/1000,1)) + " s");
+													snprintf(log_buf, sizeof(log_buf), "Added announce to queue (height %zu) on %s for processing in %.1f s", interface.announce_queue().size(), interface.toString().c_str(), OS::round(wait_time/1000,1));
 												}
+												TRACE(log_buf);
 											}
 											else {
 												double wait_time = std::max(interface.announce_allowed_at() - OS::time(), (double)0);
+												char log_buf[192];
 												if (wait_time < 1000) {
-													TRACE("Added announce to queue (height " + std::to_string(interface.announce_queue().size()) + ") on " + interface.toString() + " for processing in " + std::to_string((int)wait_time) + " ms");
+													snprintf(log_buf, sizeof(log_buf), "Added announce to queue (height %zu) on %s for processing in %d ms", interface.announce_queue().size(), interface.toString().c_str(), (int)wait_time);
 												}
 												else {
-													TRACE("Added announce to queue (height " + std::to_string(interface.announce_queue().size()) + ") on " + interface.toString() + " for processing in " + std::to_string(OS::round(wait_time/1000,1)) + " s");
+													snprintf(log_buf, sizeof(log_buf), "Added announce to queue (height %zu) on %s for processing in %.1f s", interface.announce_queue().size(), interface.toString().c_str(), OS::round(wait_time/1000,1));
 												}
+												TRACE(log_buf);
 											}
 										}
 									}
@@ -1190,7 +1209,9 @@ using namespace RNS::Utilities;
 	if (packet.destination_type() == Type::Destination::PLAIN) {
 		if (packet.packet_type() != Type::Packet::ANNOUNCE) {
 			if (packet.hops() > 1) {
-				DEBUG("Dropped PLAIN packet " + packet.packet_hash().toHex() + " with " + std::to_string(packet.hops()) + " hops");
+				char log_buf[128];
+				snprintf(log_buf, sizeof(log_buf), "Dropped PLAIN packet %s with %u hops", packet.packet_hash().toHex().c_str(), packet.hops());
+				DEBUG(log_buf);
 				return false;
 			}
 			else {
@@ -1206,7 +1227,9 @@ using namespace RNS::Utilities;
 	if (packet.destination_type() == Type::Destination::GROUP) {
 		if (packet.packet_type() != Type::Packet::ANNOUNCE) {
 			if (packet.hops() > 1) {
-				DEBUG("Dropped GROUP packet " + packet.packet_hash().toHex() + " with " + std::to_string(packet.hops()) + " hops");
+				char log_buf[128];
+				snprintf(log_buf, sizeof(log_buf), "Dropped GROUP packet %s with %u hops", packet.packet_hash().toHex().c_str(), packet.hops());
+				DEBUG(log_buf);
 				return false;
 			}
 			else {
@@ -1340,7 +1363,11 @@ using namespace RNS::Utilities;
 	TRACE("Transport::inbound: packet: " + packet.debugString());
 #endif
 
-	TRACE("Transport::inbound: destination=" + packet.destination_hash().toHex() + " hops=" + std::to_string(packet.hops()));
+	{
+		char log_buf[128];
+		snprintf(log_buf, sizeof(log_buf), "Transport::inbound: destination=%s hops=%u", packet.destination_hash().toHex().c_str(), packet.hops());
+		TRACE(log_buf);
+	}
 
 	packet.receiving_interface(interface);
 	packet.hops(packet.hops() + 1);
@@ -2069,7 +2096,11 @@ using namespace RNS::Utilities;
 							cull_path_table();
 						}
 
-						DEBUG("Destination " + packet.destination_hash().toHex() + " is now " + std::to_string(announce_hops) + " hops away via " + received_from.toHex() + " on " + packet.receiving_interface().toString());
+						{
+							char log_buf[256];
+							snprintf(log_buf, sizeof(log_buf), "Destination %s is now %u hops away via %s on %s", packet.destination_hash().toHex().c_str(), announce_hops, received_from.toHex().c_str(), packet.receiving_interface().toString().c_str());
+							DEBUG(log_buf);
+						}
 						//TRACE("Transport::inbound: Destination " + packet.destination_hash().toHex() + " has data: " + packet.data().toHex());
 						//TRACE("Transport::inbound: Destination " + packet.destination_hash().toHex() + " has text: " + packet.data().toString());
 
@@ -2198,7 +2229,11 @@ using namespace RNS::Utilities;
 					INFO("Transport::inbound: Found local destination for DATA packet");
 					auto& destination = (*iter).second;
 					if (destination.type() == packet.destination_type()) {
-						TRACE("Transport::inbound: Packet destination type " + std::to_string(packet.destination_type()) + " matched, processing");
+						{
+							char log_buf[96];
+							snprintf(log_buf, sizeof(log_buf), "Transport::inbound: Packet destination type %d matched, processing", packet.destination_type());
+							TRACE(log_buf);
+						}
 #endif
 						packet.destination(destination);
 #if defined(DESTINATIONS_SET)
@@ -2224,7 +2259,9 @@ using namespace RNS::Utilities;
 						}
 					}
 					else {
-						DEBUG("Transport::inbound: Packet destination type " + std::to_string(packet.destination_type()) + " mismatch, ignoring");
+						char log_buf[96];
+						snprintf(log_buf, sizeof(log_buf), "Transport::inbound: Packet destination type %d mismatch, ignoring", packet.destination_type());
+						DEBUG(log_buf);
 					}
 				}
 				else {
@@ -2757,12 +2794,14 @@ Deregisters an announce handler.
 		double start_time = OS::time();
 		bool success = RNS::Utilities::OS::remove_file(packet_cache_path);
 		double diff_time = OS::time() - start_time;
+		char log_buf[64];
 		if (diff_time < 1.0) {
-			DEBUG("Remove cached packet in " + std::to_string((int)(diff_time*1000)) + " ms");
+			snprintf(log_buf, sizeof(log_buf), "Remove cached packet in %d ms", (int)(diff_time*1000));
 		}
 		else {
-			DEBUG("Remove cached packet in " + std::to_string(diff_time) + " s");
+			snprintf(log_buf, sizeof(log_buf), "Remove cached packet in %.1f s", diff_time);
 		}
+		DEBUG(log_buf);
 	}
 	catch (std::exception& e) {
 		ERROR("Exception occurred while clearing cached packet.");
@@ -3680,9 +3719,9 @@ TRACEF("Transport::start: buffer size %d bytes", Persistence::_buffer.size());
 
 			//size_t size = 8192;
 			size_t size = Persistence::_buffer.capacity();
-TRACE("Transport::write_path_table: obtaining buffer size " + std::to_string(size) + " bytes");
+			TRACEF("Transport::write_path_table: obtaining buffer size %zu bytes", size);
 			uint8_t* buffer = Persistence::_buffer.writable(size);
-TRACE("Transport::write_path_table: buffer addr: " + std::to_string((long)buffer));
+			TRACEF("Transport::write_path_table: buffer addr: %p", (void*)buffer);
 #ifdef USE_MSGPACK
 			size_t length = serializeMsgPack(Persistence::_document, buffer, size);
 #else
@@ -3698,8 +3737,8 @@ TRACE("Transport::write_path_table: buffer addr: " + std::to_string((long)buffer
 			snprintf(destination_table_path, Type::Reticulum::FILEPATH_MAXSIZE, "%s/destination_table", Reticulum::_storagepath);
 #ifndef NDEBUG
 			// CBA DEBUG Dump path table
-TRACE("Transport::write_path_table: buffer addr: " + std::to_string((long)Persistence::_buffer.data()));
-TRACE("Transport::write_path_table: buffer size " + std::to_string(Persistence::_buffer.size()) + " bytes");
+			TRACEF("Transport::write_path_table: buffer addr: %p", (void*)Persistence::_buffer.data());
+			TRACEF("Transport::write_path_table: buffer size %zu bytes", Persistence::_buffer.size());
 			//TRACE("SERIALIZED: destination_table");
 			//TRACE(Persistence::_buffer.toString());
 #endif
@@ -4049,7 +4088,9 @@ TRACE("Transport::write_path_table: buffer size " + std::to_string(Persistence::
 				break;  // Safety: shouldn't happen but avoid infinite loop
 			}
 		}
-		DEBUG("Removed " + std::to_string(count) + " path(s) from path table");
+		char log_buf[64];
+		snprintf(log_buf, sizeof(log_buf), "Removed %u path(s) from path table", count);
+		DEBUG(log_buf);
 	}
 }
 	

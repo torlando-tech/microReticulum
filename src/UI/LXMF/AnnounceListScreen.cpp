@@ -126,18 +126,11 @@ void AnnounceListScreen::create_list() {
 void AnnounceListScreen::refresh() {
     INFO("Refreshing announce list");
 
-    // Free allocated Bytes* before clearing containers
-    for (lv_obj_t* container : _announce_containers) {
-        Bytes* hash_ptr = (Bytes*)lv_obj_get_user_data(container);
-        if (hash_ptr) {
-            delete hash_ptr;
-        }
-    }
-
     // Clear existing items (also removes from focus group when deleted)
     lv_obj_clean(_list);
     _announces.clear();
     _announce_containers.clear();
+    _dest_hash_pool.clear();
     _empty_label = nullptr;
 
     // Get destination table from Transport
@@ -193,6 +186,11 @@ void AnnounceListScreen::refresh() {
     } else {
         // Limit to 20 most recent to prevent memory exhaustion
         const size_t MAX_DISPLAY = 20;
+        size_t display_count = std::min(_announces.size(), MAX_DISPLAY);
+
+        // Reserve pool capacity to avoid reallocations (which would invalidate pointers)
+        _dest_hash_pool.reserve(display_count);
+
         size_t count = 0;
         for (const auto& item : _announces) {
             if (count >= MAX_DISPLAY) break;
@@ -228,9 +226,9 @@ void AnnounceListScreen::create_announce_item(const AnnounceItem& item) {
     lv_obj_set_style_border_width(container, 2, LV_STATE_FOCUSED);
     lv_obj_set_style_bg_color(container, Theme::surfaceElevated(), LV_STATE_FOCUSED);
 
-    // Store destination hash in user data
-    Bytes* hash_copy = new Bytes(item.destination_hash);
-    lv_obj_set_user_data(container, hash_copy);
+    // Store destination hash in user data using pool (avoids per-item heap allocations)
+    _dest_hash_pool.push_back(item.destination_hash);
+    lv_obj_set_user_data(container, &_dest_hash_pool.back());
     lv_obj_add_event_cb(container, on_announce_clicked, LV_EVENT_CLICKED, this);
 
     // Track container for focus group management

@@ -8,6 +8,7 @@
 #include <Arduino.h>
 #include <lvgl.h>
 #include <vector>
+#include <deque>
 #include <map>
 #include <functional>
 #include "../../Bytes.h"
@@ -137,7 +138,7 @@ private:
 
     RNS::Bytes _peer_hash;
     ::LXMF::MessageStore* _message_store;
-    std::vector<MessageItem> _messages;
+    std::deque<MessageItem> _messages;
 
     // Map message hash to bubble row for targeted updates
     std::map<RNS::Bytes, lv_obj_t*> _message_rows;

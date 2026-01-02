@@ -86,8 +86,10 @@ bool BLEPeerManager::addDiscoveredPeer(const Bytes& mac_address, int8_t rssi, ui
 
     _peers_by_mac_only[mac] = peer;
 
-    DEBUG("BLEPeerManager: Discovered new peer " + BLEAddress(mac.data()).toString() +
-          " RSSI " + std::to_string(rssi));
+    char buf[80];
+    snprintf(buf, sizeof(buf), "BLEPeerManager: Discovered new peer %s RSSI %d",
+             BLEAddress(mac.data()).toString().c_str(), rssi);
+    DEBUG(buf);
 
     return true;
 }
@@ -148,7 +150,10 @@ bool BLEPeerManager::updatePeerMac(const Bytes& identity, const Bytes& new_mac) 
     peer.mac_address = mac;
     _mac_to_identity[mac] = identity;
 
-    DEBUG("BLEPeerManager: Updated MAC for peer to " + BLEAddress(mac.data()).toString());
+    char buf[80];
+    snprintf(buf, sizeof(buf), "BLEPeerManager: Updated MAC for peer to %s",
+             BLEAddress(mac.data()).toString().c_str());
+    DEBUG(buf);
 
     return true;
 }
@@ -311,8 +316,10 @@ bool BLEPeerManager::shouldInitiateConnection(const Bytes& our_mac, const Bytes&
     BLEAddress peer_addr(peer_mac.data());
 
     bool result = our_addr.isLowerThan(peer_addr);
-    DEBUG("BLEPeerManager::shouldInitiateConnection: our=" + our_addr.toString() +
-          " peer=" + peer_addr.toString() + " result=" + std::string(result ? "yes" : "no"));
+    char buf[100];
+    snprintf(buf, sizeof(buf), "BLEPeerManager::shouldInitiateConnection: our=%s peer=%s result=%s",
+             our_addr.toString().c_str(), peer_addr.toString().c_str(), result ? "yes" : "no");
+    DEBUG(buf);
     return result;
 }
 
@@ -348,8 +355,10 @@ void BLEPeerManager::connectionFailed(const Bytes& identifier) {
         peer->blacklisted_until = Utilities::OS::time() + duration;
         peer->state = PeerState::BLACKLISTED;
 
-        WARNING("BLEPeerManager: Blacklisted peer for " + std::to_string(duration) +
-                "s after " + std::to_string(peer->consecutive_failures) + " failures");
+        char buf[80];
+        snprintf(buf, sizeof(buf), "BLEPeerManager: Blacklisted peer for %.0fs after %u failures",
+                 duration, peer->consecutive_failures);
+        WARNING(buf);
     }
 }
 
@@ -535,7 +544,10 @@ void BLEPeerManager::cleanupStalePeers(double max_age) {
 
     for (const Bytes& mac : to_remove) {
         _peers_by_mac_only.erase(mac);
-        TRACE("BLEPeerManager: Removed stale peer " + BLEAddress(mac.data()).toString());
+        char buf[80];
+        snprintf(buf, sizeof(buf), "BLEPeerManager: Removed stale peer %s",
+                 BLEAddress(mac.data()).toString().c_str());
+        TRACE(buf);
     }
 }
 

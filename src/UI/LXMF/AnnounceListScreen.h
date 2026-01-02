@@ -122,6 +122,7 @@ private:
 
     std::vector<AnnounceItem> _announces;
     std::vector<lv_obj_t*> _announce_containers;  // For focus group management
+    std::vector<RNS::Bytes> _dest_hash_pool;  // Object pool to avoid per-item allocations
 
     AnnounceSelectedCallback _announce_selected_callback;
     BackCallback _back_callback;

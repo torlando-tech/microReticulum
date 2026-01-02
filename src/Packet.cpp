@@ -55,7 +55,11 @@ Packet::Packet(const Destination& destination, const Interface& attached_interfa
 		_object->_create_receipt = false;
 	}
 
-	MEM("Packet object created, this: " + std::to_string((uintptr_t)this) + ", data: " + std::to_string((uintptr_t)_object.get()));
+	{
+		char buf[96];
+		snprintf(buf, sizeof(buf), "Packet object created, this: %p, data: %p", (void*)this, (void*)_object.get());
+		MEM(buf);
+	}
 }
 
 // CBA LINK
@@ -70,7 +74,11 @@ Packet::Packet(const Link& link, const Bytes& data, Type::Packet::types packet_t
 	_object->_MTU = link.mtu();
 	// CBA HACK: Need to re-build packed flags since Link was assigned
 	_object->_flags = get_packed_flags();
-	MEM("Packet link object created, this: " + std::to_string((uintptr_t)this) + ", data: " + std::to_string((uintptr_t)_object.get()));
+	{
+		char buf[96];
+		snprintf(buf, sizeof(buf), "Packet link object created, this: %p, data: %p", (void*)this, (void*)_object.get());
+		MEM(buf);
+	}
 }
 
 
@@ -366,7 +374,9 @@ TRACEF("***** Destination Data: %s", _object->_ciphertext.toHex().c_str());
 	_object->_raw = _object->_header + _object->_ciphertext;
 
 	if (_object->_raw.size() > _object->_MTU) {
-		throw std::length_error("Packet size of " + std::to_string(_object->_raw.size()) + " exceeds MTU of " + std::to_string(_object->_MTU) +" bytes");
+		char errbuf[96];
+		snprintf(errbuf, sizeof(errbuf), "Packet size of %zu exceeds MTU of %zu bytes", _object->_raw.size(), _object->_MTU);
+		throw std::length_error(errbuf);
 	}
 
 	_object->_packed = true;
@@ -378,7 +388,9 @@ bool Packet::unpack() {
 	TRACE("Packet::unpack: unpacking packet...");
 	try {
 		if (_object->_raw.size() < Type::Reticulum::HEADER_MINSIZE) {
-			throw std::length_error("Packet size of " + std::to_string(_object->_raw.size()) + " does not meet minimum header size of " + std::to_string(Type::Reticulum::HEADER_MINSIZE) +" bytes");
+			char errbuf[96];
+			snprintf(errbuf, sizeof(errbuf), "Packet size of %zu does not meet minimum header size of %d bytes", _object->_raw.size(), Type::Reticulum::HEADER_MINSIZE);
+			throw std::length_error(errbuf);
 		}
 
 		const uint8_t* raw = _object->_raw.data();
@@ -397,7 +409,9 @@ bool Packet::unpack() {
 
 		if (_object->_header_type == HEADER_2) {
 			if (_object->_raw.size() < Type::Reticulum::HEADER_MAXSIZE) {
-				throw std::length_error("Packet size of " + std::to_string(_object->_raw.size()) + " does not meet minimum header size of " + std::to_string(Type::Reticulum::HEADER_MAXSIZE) +" bytes");
+				char errbuf[96];
+				snprintf(errbuf, sizeof(errbuf), "Packet size of %zu does not meet minimum header size of %d bytes", _object->_raw.size(), Type::Reticulum::HEADER_MAXSIZE);
+				throw std::length_error(errbuf);
 			}
 			_object->_transport_id.assign(raw+2, Type::Reticulum::DESTINATION_LENGTH);
 			_object->_destination_hash.assign(raw+Type::Reticulum::DESTINATION_LENGTH+2, Type::Reticulum::DESTINATION_LENGTH);
@@ -419,7 +433,9 @@ bool Packet::unpack() {
 		update_hash();
 	}
 	catch (std::exception& e) {
-		ERROR(std::string("Received malformed packet, dropping it. The contained exception was: ") + e.what());
+		char errbuf[256];
+		snprintf(errbuf, sizeof(errbuf), "Received malformed packet, dropping it. The contained exception was: %s", e.what());
+		ERROR(errbuf);
 		return false;
 	}
 

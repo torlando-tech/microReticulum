@@ -82,21 +82,26 @@ bool BLEReassembler::processFragment(const Bytes& peer_identity, const Bytes& fr
 
     // Validate total_fragments matches
     if (total_fragments != reassembly.total_fragments) {
-        TRACE("BLEReassembler: Fragment total mismatch, expected " +
-              std::to_string(reassembly.total_fragments) + " got " +
-              std::to_string(total_fragments));
+        char buf[80];
+        snprintf(buf, sizeof(buf), "BLEReassembler: Fragment total mismatch, expected %u got %u",
+                 reassembly.total_fragments, total_fragments);
+        TRACE(buf);
         return false;
     }
 
     // Validate sequence is in range
     if (sequence >= reassembly.total_fragments) {
-        TRACE("BLEReassembler: Sequence out of range: " + std::to_string(sequence));
+        char buf[64];
+        snprintf(buf, sizeof(buf), "BLEReassembler: Sequence out of range: %u", sequence);
+        TRACE(buf);
         return false;
     }
 
     // Check for duplicate
     if (reassembly.fragments[sequence].received) {
-        TRACE("BLEReassembler: Duplicate fragment " + std::to_string(sequence));
+        char buf[64];
+        snprintf(buf, sizeof(buf), "BLEReassembler: Duplicate fragment %u", sequence);
+        TRACE(buf);
         // Still update last_activity to keep session alive
         reassembly.last_activity = now;
         return true;  // Not an error, just duplicate
@@ -108,16 +113,22 @@ bool BLEReassembler::processFragment(const Bytes& peer_identity, const Bytes& fr
     reassembly.received_count++;
     reassembly.last_activity = now;
 
-    TRACE("BLEReassembler: Received fragment " + std::to_string(sequence + 1) +
-          "/" + std::to_string(reassembly.total_fragments));
+    {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "BLEReassembler: Received fragment %u/%u", sequence + 1, reassembly.total_fragments);
+        TRACE(buf);
+    }
 
     // Check if complete
     if (reassembly.received_count == reassembly.total_fragments) {
         // Assemble complete packet
         Bytes complete_packet = assembleFragments(reassembly);
 
-        TRACE("BLEReassembler: Completed reassembly, " +
-              std::to_string(complete_packet.size()) + " bytes");
+        {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "BLEReassembler: Completed reassembly, %zu bytes", complete_packet.size());
+            TRACE(buf);
+        }
 
         // Remove from pending before callback (callback might trigger new data)
         Bytes identity_copy = reassembly.peer_identity;
@@ -152,9 +163,12 @@ void BLEReassembler::checkTimeouts() {
         if (it != _pending.end()) {
             PendingReassembly& reassembly = it->second;
 
-            WARNING("BLEReassembler: Timeout waiting for fragments, received " +
-                    std::to_string(reassembly.received_count) + "/" +
-                    std::to_string(reassembly.total_fragments));
+            {
+                char buf[80];
+                snprintf(buf, sizeof(buf), "BLEReassembler: Timeout waiting for fragments, received %u/%u",
+                         reassembly.received_count, reassembly.total_fragments);
+                WARNING(buf);
+            }
 
             // Invoke timeout callback
             if (_timeout_callback) {
@@ -175,8 +189,9 @@ void BLEReassembler::clearForPeer(const Bytes& peer_identity) {
 }
 
 void BLEReassembler::clearAll() {
-    TRACE("BLEReassembler: Clearing all pending reassemblies (" +
-          std::to_string(_pending.size()) + " sessions)");
+    char buf[64];
+    snprintf(buf, sizeof(buf), "BLEReassembler: Clearing all pending reassemblies (%zu sessions)", _pending.size());
+    TRACE(buf);
     _pending.clear();
 }
 
@@ -197,8 +212,9 @@ void BLEReassembler::startReassembly(const Bytes& peer_identity, uint16_t total_
 
     _pending[peer_identity] = std::move(reassembly);
 
-    TRACE("BLEReassembler: Starting reassembly for " +
-          std::to_string(total_fragments) + " fragments");
+    char buf[64];
+    snprintf(buf, sizeof(buf), "BLEReassembler: Starting reassembly for %u fragments", total_fragments);
+    TRACE(buf);
 }
 
 Bytes BLEReassembler::assembleFragments(const PendingReassembly& reassembly) {
