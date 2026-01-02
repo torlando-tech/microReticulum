@@ -57,6 +57,10 @@
 // Logging
 #include <Log.h>
 
+// Firmware version for web flasher detection
+#define FIRMWARE_VERSION "1.0.0"
+#define FIRMWARE_NAME "microReticulum"
+
 using namespace RNS;
 using namespace LXMF;
 using namespace Hardware::TDeck;
@@ -769,6 +773,8 @@ void setup_ui_manager() {
         // Set save callback (update app_settings and apply)
         settings->set_save_callback([](const UI::LXMF::AppSettings& new_settings) {
             // Check what changed
+            bool wifi_settings_changed = (new_settings.wifi_ssid != app_settings.wifi_ssid) ||
+                                        (new_settings.wifi_password != app_settings.wifi_password);
             bool tcp_settings_changed = (new_settings.tcp_enabled != app_settings.tcp_enabled) ||
                                        (new_settings.tcp_host != app_settings.tcp_host) ||
                                        (new_settings.tcp_port != app_settings.tcp_port);
@@ -782,6 +788,26 @@ void setup_ui_manager() {
             bool ble_settings_changed = (new_settings.ble_enabled != app_settings.ble_enabled);
 
             app_settings = new_settings;
+
+            // Handle WiFi credential changes - auto reconnect
+            if (wifi_settings_changed && new_settings.wifi_ssid.length() > 0) {
+                INFO(("WiFi credentials changed, reconnecting to: " + new_settings.wifi_ssid).c_str());
+                WiFi.disconnect();
+                delay(100);
+                WiFi.begin(new_settings.wifi_ssid.c_str(), new_settings.wifi_password.c_str());
+
+                // Wait for connection (with timeout)
+                uint32_t start = millis();
+                while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
+                    delay(100);
+                }
+
+                if (WiFi.status() == WL_CONNECTED) {
+                    INFO(("WiFi connected! IP: " + WiFi.localIP().toString()).c_str());
+                } else {
+                    WARNING("WiFi connection failed");
+                }
+            }
 
             // Update router display name
             if (router && !new_settings.display_name.isEmpty()) {
@@ -943,16 +969,7 @@ void setup_ui_manager() {
 void setup() {
     // Initialize serial
     Serial.begin(115200);
-    delay(2000);
-
-    // Wait for serial connection with countdown
-    Serial.println("\n\n=== Waiting 5 seconds for serial monitor ===");
-    for (int i = 5; i > 0; i--) {
-        Serial.print(i);
-        Serial.println("...");
-        delay(1000);
-    }
-    Serial.println("Starting...");
+    delay(100);
 
     INFO("\n");
     INFO("╔══════════════════════════════════════╗");
@@ -1026,7 +1043,24 @@ void setup() {
     INFO("Press any key to start messaging");
 }
 
+// Serial command buffer for web flasher detection
+static String serial_cmd_buffer = "";
+
 void loop() {
+    // Handle serial commands for web flasher detection
+    while (Serial.available()) {
+        char c = Serial.read();
+        if (c == '\n' || c == '\r') {
+            serial_cmd_buffer.trim();
+            if (serial_cmd_buffer == "VERSION") {
+                Serial.println(String(FIRMWARE_NAME) + " v" + FIRMWARE_VERSION);
+            }
+            serial_cmd_buffer = "";
+        } else if (serial_cmd_buffer.length() < 32) {
+            serial_cmd_buffer += c;
+        }
+    }
+
     // Handle LVGL rendering (must be called frequently for smooth UI)
     UI::LVGL::LVGLInit::task_handler();
 

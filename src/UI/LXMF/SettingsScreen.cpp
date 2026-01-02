@@ -450,7 +450,7 @@ void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(_switch_auto_enabled, lv_color_hex(0x404040), LV_PART_MAIN);
     lv_obj_set_style_bg_color(_switch_auto_enabled, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
 
-    // BLE Mesh row
+    // BLE P2P row
     lv_obj_t* ble_row = lv_obj_create(parent);
     lv_obj_set_width(ble_row, LV_PCT(100));
     lv_obj_set_height(ble_row, 28);
@@ -460,7 +460,7 @@ void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     lv_obj_clear_flag(ble_row, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* ble_label = lv_label_create(ble_row);
-    lv_label_set_text(ble_label, "BLE Mesh:");
+    lv_label_set_text(ble_label, "BLE P2P:");
     lv_obj_align(ble_label, LV_ALIGN_LEFT_MID, 0, 0);
     lv_obj_set_style_text_color(ble_label, lv_color_hex(0xb0b0b0), 0);
     lv_obj_set_style_text_font(ble_label, &lv_font_montserrat_14, 0);
