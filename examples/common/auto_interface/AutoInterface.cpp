@@ -680,17 +680,11 @@ void AutoInterface::process_discovery() {
         recv_check_count = 0;
     }
 
-    // Debug: log if we got any data at all
-    if (len > 0) {
-        INFO("AutoInterface: recvfrom returned " + std::to_string(len) + " bytes");
-    }
+    // Hot path - no logging to avoid heap allocation on every packet
 
     while (len > 0) {
         // Convert source address to COMPRESSED string format (match Python)
         std::string src_str = ipv6_to_compressed_string((const uint8_t*)&src_addr.sin6_addr);
-
-        INFO("AutoInterface: Received discovery packet from " + src_str +
-              " (" + std::to_string(len) + " bytes)");
 
         // Verify the peering hash (full TOKEN_SIZE = 32 bytes)
         Bytes combined;
@@ -698,20 +692,11 @@ void AutoInterface::process_discovery() {
         combined.append((const uint8_t*)src_str.c_str(), src_str.length());
         Bytes expected_hash = Identity::full_hash(combined);
 
-        // Debug: show received vs expected (full 32 bytes)
-        Bytes received_token(recv_buffer, std::min((size_t)len, (size_t)TOKEN_SIZE));
-        DEBUG("AutoInterface: Received token: " + received_token.toHex());
-        DEBUG("AutoInterface: Expected token: " + Bytes(expected_hash.data(), TOKEN_SIZE).toHex());
-        DEBUG("AutoInterface: For input: " + _group_id + src_str);
-
         // Compare received token with expected (full TOKEN_SIZE = 32 bytes)
         if (len >= (ssize_t)TOKEN_SIZE && memcmp(recv_buffer, expected_hash.data(), TOKEN_SIZE) == 0) {
             // Valid peer - use IPv6Address (IPAddress is IPv4-only!)
             IPv6Address remoteIP((const uint8_t*)&src_addr.sin6_addr);
-            INFO("AutoInterface: Valid peer discovered: " + src_str);
             add_or_refresh_peer(remoteIP, RNS::Utilities::OS::time());
-        } else {
-            WARNING("AutoInterface: Invalid discovery hash from " + src_str);
         }
 
         // Try to receive more
