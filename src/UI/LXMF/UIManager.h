@@ -196,7 +196,6 @@ private:
     void on_send_message_from_chat(const String& content);
     void on_send_message_from_compose(const RNS::Bytes& dest_hash, const String& message);
     void on_cancel_compose();
-    void on_info(const RNS::Bytes& peer_hash);
     void on_announce_selected(const RNS::Bytes& dest_hash);
     void on_back_from_announces();
     void on_back_from_status();

@@ -18,7 +18,7 @@ namespace LXMF {
 
 ChatScreen::ChatScreen(lv_obj_t* parent)
     : _screen(nullptr), _header(nullptr), _message_list(nullptr), _input_area(nullptr),
-      _text_area(nullptr), _btn_send(nullptr), _btn_back(nullptr), _btn_info(nullptr),
+      _text_area(nullptr), _btn_send(nullptr), _btn_back(nullptr),
       _message_store(nullptr), _display_start_idx(0), _loading_more(false) {
 
     // Create screen object
@@ -82,18 +82,6 @@ void ChatScreen::create_header() {
     lv_obj_set_style_text_color(label_peer, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_text_font(label_peer, &lv_font_montserrat_16, 0);
 
-    // Info button
-    _btn_info = lv_btn_create(_header);
-    lv_obj_set_size(_btn_info, 40, 28);
-    lv_obj_align(_btn_info, LV_ALIGN_RIGHT_MID, -4, 0);
-    lv_obj_set_style_bg_color(_btn_info, lv_color_hex(0x333333), 0);
-    lv_obj_set_style_bg_color(_btn_info, lv_color_hex(0x444444), LV_STATE_PRESSED);
-    lv_obj_add_event_cb(_btn_info, on_info_clicked, LV_EVENT_CLICKED, this);
-
-    lv_obj_t* label_info = lv_label_create(_btn_info);
-    lv_label_set_text(label_info, LV_SYMBOL_EYE_OPEN);
-    lv_obj_center(label_info);
-    lv_obj_set_style_text_color(label_info, lv_color_hex(0xe0e0e0), 0);
 }
 
 void ChatScreen::create_message_list() {
@@ -419,10 +407,6 @@ void ChatScreen::set_send_message_callback(SendMessageCallback callback) {
     _send_message_callback = callback;
 }
 
-void ChatScreen::set_info_callback(InfoCallback callback) {
-    _info_callback = callback;
-}
-
 void ChatScreen::show() {
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);  // Bring to front for touch events
@@ -477,14 +461,6 @@ void ChatScreen::on_send_clicked(lv_event_t* event) {
         // Clear text area and keep focus for next message
         lv_textarea_set_text(screen->_text_area, "");
         lv_group_focus_obj(screen->_text_area);
-    }
-}
-
-void ChatScreen::on_info_clicked(lv_event_t* event) {
-    ChatScreen* screen = (ChatScreen*)lv_event_get_user_data(event);
-
-    if (screen->_info_callback) {
-        screen->_info_callback(screen->_peer_hash);
     }
 }
 

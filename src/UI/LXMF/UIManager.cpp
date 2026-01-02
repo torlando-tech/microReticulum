@@ -99,10 +99,6 @@ bool UIManager::init() {
         [this](const String& content) { on_send_message_from_chat(content); }
     );
 
-    _chat_screen->set_info_callback(
-        [this](const Bytes& peer_hash) { on_info(peer_hash); }
-    );
-
     // Set up callbacks for compose screen
     _compose_screen->set_cancel_callback(
         [this]() { on_cancel_compose(); }
@@ -390,13 +386,6 @@ void UIManager::on_send_message_from_compose(const Bytes& dest_hash, const Strin
 
 void UIManager::on_cancel_compose() {
     show_conversation_list();
-}
-
-void UIManager::on_info(const Bytes& peer_hash) {
-    std::string hash_hex = peer_hash.toHex().substr(0, 8);
-    std::string msg = "Info button clicked for peer " + hash_hex + "...";
-    INFO(msg.c_str());
-    // TODO: Implement peer info screen
 }
 
 void UIManager::on_announce_selected(const Bytes& dest_hash) {

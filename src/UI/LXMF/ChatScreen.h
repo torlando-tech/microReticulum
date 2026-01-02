@@ -28,7 +28,7 @@ namespace LXMF {
  *
  * Layout:
  * ┌─────────────────────────────────────┐
- * │ ← Alice (a1b2c3d4...)     [i]      │ 32px Header
+ * │ ← Alice (a1b2c3d4...)              │ 32px Header
  * ├─────────────────────────────────────┤
  * │                      [Hey there!]   │ Outgoing (right)
  * │                      [10:23 AM ✓]   │
@@ -59,7 +59,6 @@ public:
      */
     using BackCallback = std::function<void()>;
     using SendMessageCallback = std::function<void(const String& content)>;
-    using InfoCallback = std::function<void(const RNS::Bytes& peer_hash)>;
 
     /**
      * Create chat screen
@@ -111,12 +110,6 @@ public:
     void set_send_message_callback(SendMessageCallback callback);
 
     /**
-     * Set callback for info button
-     * @param callback Function to call when info button is pressed
-     */
-    void set_info_callback(InfoCallback callback);
-
-    /**
      * Show the screen
      */
     void show();
@@ -140,7 +133,6 @@ private:
     lv_obj_t* _text_area;
     lv_obj_t* _btn_send;
     lv_obj_t* _btn_back;
-    lv_obj_t* _btn_info;
 
     RNS::Bytes _peer_hash;
     ::LXMF::MessageStore* _message_store;
@@ -148,7 +140,6 @@ private:
 
     BackCallback _back_callback;
     SendMessageCallback _send_message_callback;
-    InfoCallback _info_callback;
 
     // UI construction
     void create_header();
@@ -159,7 +150,6 @@ private:
     // Event handlers
     static void on_back_clicked(lv_event_t* event);
     static void on_send_clicked(lv_event_t* event);
-    static void on_info_clicked(lv_event_t* event);
     static void on_message_long_pressed(lv_event_t* event);
     static void on_copy_dialog_action(lv_event_t* event);
     static void on_textarea_long_pressed(lv_event_t* event);
