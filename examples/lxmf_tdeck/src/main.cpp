@@ -1237,10 +1237,32 @@ void loop() {
 
     // Periodic heap monitoring (every 10 seconds)
     static uint32_t last_heap_check = 0;
+    static uint32_t last_free_heap = 0;
     if (millis() - last_heap_check > 10000) {
         last_heap_check = millis();
-        Serial.printf("[HEAP] free=%u min=%u\n",
-            ESP.getFreeHeap(), ESP.getMinFreeHeap());
+        uint32_t free_heap = ESP.getFreeHeap();
+        uint32_t min_heap = ESP.getMinFreeHeap();
+        uint32_t max_block = ESP.getMaxAllocHeap();
+        int32_t delta = (last_free_heap > 0) ? ((int32_t)free_heap - (int32_t)last_free_heap) : 0;
+        UBaseType_t stack_hwm = uxTaskGetStackHighWaterMark(NULL);
+
+        Serial.printf("[HEAP] free=%u min=%u max_block=%u delta=%+d stack_hwm=%u\n",
+            free_heap, min_heap, max_block, delta, stack_hwm);
+
+        // Threshold warnings
+        if (free_heap < 20000) {
+            Serial.println("[HEAP] CRITICAL: Free heap below 20KB!");
+        } else if (free_heap < 50000) {
+            Serial.println("[HEAP] WARNING: Free heap below 50KB");
+        }
+
+        // Fragmentation warning (large gap between free heap and max allocatable block)
+        if (max_block < free_heap / 2) {
+            Serial.printf("[HEAP] WARNING: Fragmentation detected (max_block=%u, free=%u)\n",
+                max_block, free_heap);
+        }
+
+        last_free_heap = free_heap;
     }
 
     // Small delay to prevent tight loop

@@ -143,7 +143,12 @@ void ChatScreen::load_conversation(const Bytes& peer_hash, ::LXMF::MessageStore&
     _peer_hash = peer_hash;
     _message_store = &store;
 
-    INFO(("Loading conversation with peer " + String(peer_hash.toHex().substr(0, 8).c_str()) + "...").c_str());
+    {
+        char log_buf[64];
+        snprintf(log_buf, sizeof(log_buf), "Loading conversation with peer %.8s...",
+                 peer_hash.toHex().c_str());
+        INFO(log_buf);
+    }
 
     // Try to get display name from app_data
     String peer_name;
@@ -154,7 +159,9 @@ void ChatScreen::load_conversation(const Bytes& peer_hash, ::LXMF::MessageStore&
 
     // Fall back to truncated hash if no display name
     if (peer_name.length() == 0) {
-        peer_name = String(peer_hash.toHex().substr(0, 12).c_str()) + "...";
+        char hash_buf[20];
+        snprintf(hash_buf, sizeof(hash_buf), "%.12s...", peer_hash.toHex().c_str());
+        peer_name = hash_buf;
     }
 
     // Update header with peer info
@@ -186,8 +193,12 @@ void ChatScreen::refresh() {
         _display_start_idx = 0;
     }
 
-    INFO(("  Found " + String(_all_message_hashes.size()) + " messages, displaying last " +
-          String(_all_message_hashes.size() - _display_start_idx)).c_str());
+    {
+        char log_buf[80];
+        snprintf(log_buf, sizeof(log_buf), "  Found %zu messages, displaying last %zu",
+                 _all_message_hashes.size(), _all_message_hashes.size() - _display_start_idx);
+        INFO(log_buf);
+    }
 
     for (size_t i = _display_start_idx; i < _all_message_hashes.size(); i++) {
         const auto& msg_hash = _all_message_hashes[i];
@@ -202,7 +213,7 @@ void ChatScreen::refresh() {
         MessageItem item;
         item.message_hash = msg_hash;
         item.content = String(meta.content.c_str());
-        item.timestamp_str = format_timestamp(meta.timestamp);
+        format_timestamp(meta.timestamp, item.timestamp_str, sizeof(item.timestamp_str));
         item.outgoing = !meta.incoming;
         item.delivered = (meta.state == static_cast<int>(::LXMF::Type::Message::DELIVERED));
         item.failed = (meta.state == static_cast<int>(::LXMF::Type::Message::FAILED));
@@ -230,7 +241,12 @@ void ChatScreen::load_more_messages() {
     }
     size_t new_start_idx = _display_start_idx - load_count;
 
-    INFO(("  Loading messages " + String(new_start_idx) + " to " + String(_display_start_idx - 1)).c_str());
+    {
+        char log_buf[64];
+        snprintf(log_buf, sizeof(log_buf), "  Loading messages %zu to %zu",
+                 new_start_idx, _display_start_idx - 1);
+        INFO(log_buf);
+    }
 
     // Build list of new items to prepend
     std::vector<MessageItem> new_items;
@@ -245,7 +261,7 @@ void ChatScreen::load_more_messages() {
         MessageItem item;
         item.message_hash = msg_hash;
         item.content = String(meta.content.c_str());
-        item.timestamp_str = format_timestamp(meta.timestamp);
+        format_timestamp(meta.timestamp, item.timestamp_str, sizeof(item.timestamp_str));
         item.outgoing = !meta.incoming;
         item.delivered = (meta.state == static_cast<int>(::LXMF::Type::Message::DELIVERED));
         item.failed = (meta.state == static_cast<int>(::LXMF::Type::Message::FAILED));
@@ -269,7 +285,11 @@ void ChatScreen::load_more_messages() {
     _display_start_idx = new_start_idx;
 
     _loading_more = false;
-    INFO(("  Now displaying " + String(_messages.size()) + " messages").c_str());
+    {
+        char log_buf[48];
+        snprintf(log_buf, sizeof(log_buf), "  Now displaying %zu messages", _messages.size());
+        INFO(log_buf);
+    }
 }
 
 void ChatScreen::on_scroll(lv_event_t* event) {
@@ -320,8 +340,10 @@ void ChatScreen::create_message_bubble(const MessageItem& item) {
     lv_obj_add_flag(bubble, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(bubble, on_message_long_pressed, LV_EVENT_LONG_PRESSED, this);
 
-    // Build status text
-    String status_text = item.timestamp_str + " " + get_delivery_indicator(item.outgoing, item.delivered, item.failed);
+    // Build status text using char buffer to avoid String fragmentation
+    char status_text[32];
+    build_status_text(status_text, sizeof(status_text), item.timestamp_str,
+                      item.outgoing, item.delivered, item.failed);
 
     // Calculate text widths to decide layout
     // Bubble is 80% of 320 = 256px, minus 16px padding = 240px usable
@@ -332,7 +354,7 @@ void ChatScreen::create_message_bubble(const MessageItem& item) {
     lv_coord_t msg_width = lv_txt_get_width(
         item.content.c_str(), item.content.length(), font, 0, LV_TEXT_FLAG_NONE);
     lv_coord_t status_width = lv_txt_get_width(
-        status_text.c_str(), status_text.length(), font, 0, LV_TEXT_FLAG_NONE);
+        status_text, strlen(status_text), font, 0, LV_TEXT_FLAG_NONE);
 
     // Use single-line layout if message + timestamp fit on one row
     bool single_line = (msg_width + status_width + gap) <= bubble_inner_width;
@@ -349,7 +371,7 @@ void ChatScreen::create_message_bubble(const MessageItem& item) {
 
         // Timestamp on same row
         lv_obj_t* label_status = lv_label_create(bubble);
-        lv_label_set_text(label_status, status_text.c_str());
+        lv_label_set_text(label_status, status_text);
         lv_obj_set_style_text_color(label_status, Theme::textTertiary(), 0);
         lv_obj_set_style_text_font(label_status, font, 0);
     } else {
@@ -366,7 +388,7 @@ void ChatScreen::create_message_bubble(const MessageItem& item) {
 
         // Timestamp on its own row
         lv_obj_t* label_status = lv_label_create(bubble);
-        lv_label_set_text(label_status, status_text.c_str());
+        lv_label_set_text(label_status, status_text);
         lv_obj_set_width(label_status, LV_PCT(100));
         lv_obj_set_style_text_align(label_status, LV_TEXT_ALIGN_RIGHT, 0);
         lv_obj_set_style_text_color(label_status, Theme::textTertiary(), 0);
@@ -380,7 +402,7 @@ void ChatScreen::add_message(const ::LXMF::LXMessage& message, bool outgoing) {
 
     String content((const char*)message.content().data(), message.content().size());
     item.content = content;
-    item.timestamp_str = format_timestamp(message.timestamp());
+    format_timestamp(message.timestamp(), item.timestamp_str, sizeof(item.timestamp_str));
     item.outgoing = outgoing;
     item.delivered = false;
     item.failed = false;
@@ -423,9 +445,10 @@ void ChatScreen::update_message_status(const Bytes& message_hash, bool delivered
                     if (child_count > 0) {
                         lv_obj_t* status_label = lv_obj_get_child(bubble, child_count - 1);
                         if (status_label) {
-                            String status_text = msg.timestamp_str + " " +
-                                get_delivery_indicator(msg.outgoing, msg.delivered, msg.failed);
-                            lv_label_set_text(status_label, status_text.c_str());
+                            char status_text[32];
+                            build_status_text(status_text, sizeof(status_text), msg.timestamp_str,
+                                              msg.outgoing, msg.delivered, msg.failed);
+                            lv_label_set_text(status_label, status_text);
                         }
                     }
                 }
@@ -500,18 +523,15 @@ void ChatScreen::on_send_clicked(lv_event_t* event) {
     }
 }
 
-String ChatScreen::format_timestamp(double timestamp) {
+void ChatScreen::format_timestamp(double timestamp, char* buf, size_t buf_size) {
     // Convert to time_t for formatting
     time_t time = (time_t)timestamp;
     struct tm* timeinfo = localtime(&time);
 
-    char buffer[32];
-    strftime(buffer, sizeof(buffer), "%I:%M %p", timeinfo);
-
-    return String(buffer);
+    strftime(buf, buf_size, "%I:%M %p", timeinfo);
 }
 
-String ChatScreen::get_delivery_indicator(bool outgoing, bool delivered, bool failed) {
+const char* ChatScreen::get_delivery_indicator(bool outgoing, bool delivered, bool failed) {
     if (!outgoing) {
         return "";  // No indicator for incoming messages
     }
@@ -522,6 +542,16 @@ String ChatScreen::get_delivery_indicator(bool outgoing, bool delivered, bool fa
         return LV_SYMBOL_OK LV_SYMBOL_OK;  // Double check for delivered
     } else {
         return LV_SYMBOL_OK;  // Single check for sent
+    }
+}
+
+void ChatScreen::build_status_text(char* buf, size_t buf_size, const char* timestamp,
+                                   bool outgoing, bool delivered, bool failed) {
+    const char* indicator = get_delivery_indicator(outgoing, delivered, failed);
+    if (indicator[0] != '\0') {
+        snprintf(buf, buf_size, "%s %s", timestamp, indicator);
+    } else {
+        snprintf(buf, buf_size, "%s", timestamp);
     }
 }
 

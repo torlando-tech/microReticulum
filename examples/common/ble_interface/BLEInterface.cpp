@@ -731,6 +731,22 @@ void BLEInterface::performMaintenance() {
     // Clean up stale peers
     _peer_manager.cleanupStalePeers();
 
+    // Clean up fragmenters for peers that no longer exist
+    {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        std::vector<Bytes> orphaned_fragmenters;
+        for (const auto& kv : _fragmenters) {
+            if (!_peer_manager.getPeerByIdentity(kv.first)) {
+                orphaned_fragmenters.push_back(kv.first);
+            }
+        }
+        for (const Bytes& identity : orphaned_fragmenters) {
+            _fragmenters.erase(identity);
+            _reassembler.clearForPeer(identity);
+            TRACE("BLEInterface: Cleaned up orphaned fragmenter for " + identity.toHex().substr(0, 8));
+        }
+    }
+
     // Process discovered peers (try to connect)
     processDiscoveredPeers();
 }

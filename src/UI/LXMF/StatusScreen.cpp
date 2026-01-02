@@ -179,28 +179,28 @@ void StatusScreen::refresh() {
 }
 
 void StatusScreen::update_labels() {
-    // Update identity
+    // Update identity - use stack buffer to avoid String fragmentation
     if (_identity_hash.size() > 0) {
-        String hash_str = String(_identity_hash.toHex().c_str());
-        lv_label_set_text(_label_identity_value, hash_str.c_str());
+        lv_label_set_text(_label_identity_value, _identity_hash.toHex().c_str());
     }
 
-    // Update LXMF address
+    // Update LXMF address - use stack buffer to avoid String fragmentation
     if (_lxmf_address.size() > 0) {
-        String hash_str = String(_lxmf_address.toHex().c_str());
-        lv_label_set_text(_label_lxmf_value, hash_str.c_str());
+        lv_label_set_text(_label_lxmf_value, _lxmf_address.toHex().c_str());
     }
 
-    // Update WiFi status
+    // Update WiFi status - use snprintf to avoid String concatenation
     if (WiFi.status() == WL_CONNECTED) {
         lv_label_set_text(_label_wifi_status, "WiFi: Connected");
         lv_obj_set_style_text_color(_label_wifi_status, Theme::success(), 0);
 
-        String ip_text = "IP: " + WiFi.localIP().toString();
-        lv_label_set_text(_label_wifi_ip, ip_text.c_str());
+        char ip_text[32];
+        snprintf(ip_text, sizeof(ip_text), "IP: %s", WiFi.localIP().toString().c_str());
+        lv_label_set_text(_label_wifi_ip, ip_text);
 
-        String rssi_text = "RSSI: " + String(WiFi.RSSI()) + " dBm";
-        lv_label_set_text(_label_wifi_rssi, rssi_text.c_str());
+        char rssi_text[24];
+        snprintf(rssi_text, sizeof(rssi_text), "RSSI: %d dBm", WiFi.RSSI());
+        lv_label_set_text(_label_wifi_rssi, rssi_text);
     } else {
         lv_label_set_text(_label_wifi_status, "WiFi: Disconnected");
         lv_obj_set_style_text_color(_label_wifi_status, Theme::error(), 0);
@@ -208,13 +208,15 @@ void StatusScreen::update_labels() {
         lv_label_set_text(_label_wifi_rssi, "");
     }
 
-    // Update RNS status
+    // Update RNS status - use snprintf to avoid String concatenation
     if (_rns_connected) {
-        String rns_text = "RNS: Connected";
+        char rns_text[80];
         if (_rns_server.length() > 0) {
-            rns_text += " (" + _rns_server + ")";
+            snprintf(rns_text, sizeof(rns_text), "RNS: Connected (%s)", _rns_server.c_str());
+        } else {
+            snprintf(rns_text, sizeof(rns_text), "RNS: Connected");
         }
-        lv_label_set_text(_label_rns_status, rns_text.c_str());
+        lv_label_set_text(_label_rns_status, rns_text);
         lv_obj_set_style_text_color(_label_rns_status, Theme::success(), 0);
     } else {
         lv_label_set_text(_label_rns_status, "RNS: Disconnected");

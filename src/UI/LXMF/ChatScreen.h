@@ -49,7 +49,7 @@ public:
     struct MessageItem {
         RNS::Bytes message_hash;
         String content;
-        String timestamp_str;
+        char timestamp_str[16];  // "12:34 PM" format - fixed buffer to avoid fragmentation
         bool outgoing;      // true if sent by us
         bool delivered;     // true if delivery confirmed
         bool failed;        // true if delivery failed
@@ -174,9 +174,11 @@ private:
     static void on_scroll(lv_event_t* event);
 
     // Utility
-    static String format_timestamp(double timestamp);
-    static String get_delivery_indicator(bool outgoing, bool delivered, bool failed);
+    static void format_timestamp(double timestamp, char* buf, size_t buf_size);
+    static const char* get_delivery_indicator(bool outgoing, bool delivered, bool failed);
     static String parse_display_name(const RNS::Bytes& app_data);
+    static void build_status_text(char* buf, size_t buf_size, const char* timestamp,
+                                  bool outgoing, bool delivered, bool failed);
 };
 
 } // namespace LXMF

@@ -360,41 +360,47 @@ void AnnounceListScreen::on_send_announce_clicked(lv_event_t* event) {
     }
 }
 
-String AnnounceListScreen::format_timestamp(double timestamp) {
+std::string AnnounceListScreen::format_timestamp(double timestamp) {
     double now = Utilities::OS::time();
     double diff = now - timestamp;
+    char buf[16];
 
     if (diff < 60) {
         return "Just now";
     } else if (diff < 3600) {
         int mins = (int)(diff / 60);
-        return String(mins) + "m ago";
+        snprintf(buf, sizeof(buf), "%dm ago", mins);
+        return buf;
     } else if (diff < 86400) {
         int hours = (int)(diff / 3600);
-        return String(hours) + "h ago";
+        snprintf(buf, sizeof(buf), "%dh ago", hours);
+        return buf;
     } else {
         int days = (int)(diff / 86400);
-        return String(days) + "d ago";
+        snprintf(buf, sizeof(buf), "%dd ago", days);
+        return buf;
     }
 }
 
-String AnnounceListScreen::format_hops(uint8_t hops) {
+std::string AnnounceListScreen::format_hops(uint8_t hops) {
     if (hops == 0) {
         return "Direct";
     } else if (hops == 1) {
         return "1 hop";
     } else {
-        return String(hops) + " hops";
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%u hops", hops);
+        return buf;
     }
 }
 
-String AnnounceListScreen::truncate_hash(const Bytes& hash) {
-    return String(hash.toHex().c_str());
+std::string AnnounceListScreen::truncate_hash(const Bytes& hash) {
+    return hash.toHex();
 }
 
-String AnnounceListScreen::parse_display_name(const Bytes& app_data) {
+std::string AnnounceListScreen::parse_display_name(const Bytes& app_data) {
     if (app_data.size() == 0) {
-        return String();
+        return std::string();
     }
 
     uint8_t first_byte = app_data.data()[0];
@@ -410,29 +416,29 @@ String AnnounceListScreen::parse_display_name(const Bytes& app_data) {
         // Get array size
         MsgPack::arr_size_t arr_size;
         if (!unpacker.deserialize(arr_size)) {
-            return String();
+            return std::string();
         }
 
         if (arr_size.size() < 1) {
-            return String();
+            return std::string();
         }
 
         // First element is display_name (can be nil or bytes)
         if (unpacker.isNil()) {
             unpacker.unpackNil();
-            return String();
+            return std::string();
         }
 
         MsgPack::bin_t<uint8_t> name_bin;
         if (unpacker.deserialize(name_bin)) {
             // Convert bytes to string
-            return String((const char*)name_bin.data(), name_bin.size());
+            return std::string((const char*)name_bin.data(), name_bin.size());
         }
 
-        return String();
+        return std::string();
     } else {
         // Original format: raw UTF-8 string
-        return String(app_data.toString().c_str());
+        return app_data.toString();
     }
 }
 

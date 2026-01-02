@@ -406,8 +406,9 @@ void ConversationListScreen::update_status() {
     // Update WiFi RSSI
     if (WiFi.status() == WL_CONNECTED) {
         int rssi = WiFi.RSSI();
-        String wifi_text = String(LV_SYMBOL_WIFI) + " " + String(rssi);
-        lv_label_set_text(_label_wifi, wifi_text.c_str());
+        char wifi_text[32];
+        snprintf(wifi_text, sizeof(wifi_text), "%s %d", LV_SYMBOL_WIFI, rssi);
+        lv_label_set_text(_label_wifi, wifi_text);
 
         // Color based on signal strength
         if (rssi > -50) {
@@ -429,8 +430,9 @@ void ConversationListScreen::update_status() {
 
         // Only show RSSI if we've received at least one packet (RSSI != 0)
         if (rssi_f != 0.0f) {
-            String lora_text = String(LV_SYMBOL_CALL) + String(rssi);
-            lv_label_set_text(_label_lora, lora_text.c_str());
+            char lora_text[32];
+            snprintf(lora_text, sizeof(lora_text), "%s%d", LV_SYMBOL_CALL, rssi);
+            lv_label_set_text(_label_lora, lora_text);
 
             // Color based on signal strength (LoRa typically has weaker signals)
             if (rssi > -80) {
@@ -453,8 +455,9 @@ void ConversationListScreen::update_status() {
     // Update GPS satellite count
     if (_gps && _gps->satellites.isValid()) {
         int sats = _gps->satellites.value();
-        String gps_text = String(LV_SYMBOL_GPS) + " " + String(sats);
-        lv_label_set_text(_label_gps, gps_text.c_str());
+        char gps_text[32];
+        snprintf(gps_text, sizeof(gps_text), "%s %d", LV_SYMBOL_GPS, sats);
+        lv_label_set_text(_label_gps, gps_text);
 
         // Color based on satellite count
         if (sats >= 6) {
@@ -483,8 +486,9 @@ void ConversationListScreen::update_status() {
         if (it_c != stats.end()) central_count = (int)it_c->second;
         if (it_p != stats.end()) peripheral_count = (int)it_p->second;
 
-        String ble_text = String(LV_SYMBOL_BLUETOOTH) + " " + String(central_count) + "|" + String(peripheral_count);
-        lv_label_set_text(_label_ble, ble_text.c_str());
+        char ble_text[32];
+        snprintf(ble_text, sizeof(ble_text), "%s %d|%d", LV_SYMBOL_BLUETOOTH, central_count, peripheral_count);
+        lv_label_set_text(_label_ble, ble_text);
 
         // Color based on connection status
         int total = central_count + peripheral_count;
@@ -521,8 +525,9 @@ void ConversationListScreen::update_status() {
         lv_label_set_text(_label_battery_icon, LV_SYMBOL_BATTERY_FULL);
         lv_obj_align(_label_battery_icon, LV_ALIGN_TOP_MID, 0, 0);
         lv_obj_clear_flag(_label_battery_pct, LV_OBJ_FLAG_HIDDEN);
-        String pct_text = String(percent) + "%";
-        lv_label_set_text(_label_battery_pct, pct_text.c_str());
+        char pct_text[16];
+        snprintf(pct_text, sizeof(pct_text), "%d%%", percent);
+        lv_label_set_text(_label_battery_pct, pct_text);
 
         // Color based on battery level
         lv_color_t battery_color;

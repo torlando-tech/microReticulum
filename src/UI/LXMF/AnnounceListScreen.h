@@ -9,6 +9,7 @@
 #include <lvgl.h>
 #include <vector>
 #include <functional>
+#include <string>
 #include "../../Bytes.h"
 
 namespace UI {
@@ -44,11 +45,11 @@ public:
      */
     struct AnnounceItem {
         RNS::Bytes destination_hash;
-        String hash_display;    // Truncated hash for display
-        String display_name;    // Display name from announce (if available)
+        std::string hash_display;    // Truncated hash for display
+        std::string display_name;    // Display name from announce (if available)
         uint8_t hops;           // Hop count (0 = direct)
         double timestamp;       // When announced
-        String timestamp_str;   // Human-readable time
+        std::string timestamp_str;   // Human-readable time
         bool has_path;          // Whether path exists
     };
 
@@ -139,10 +140,10 @@ private:
     static void on_send_announce_clicked(lv_event_t* event);
 
     // Utility
-    static String format_timestamp(double timestamp);
-    static String format_hops(uint8_t hops);
-    static String truncate_hash(const RNS::Bytes& hash);
-    static String parse_display_name(const RNS::Bytes& app_data);
+    static std::string format_timestamp(double timestamp);
+    static std::string format_hops(uint8_t hops);
+    static std::string truncate_hash(const RNS::Bytes& hash);
+    static std::string parse_display_name(const RNS::Bytes& app_data);
 };
 
 } // namespace LXMF
