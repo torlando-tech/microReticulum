@@ -432,6 +432,17 @@ using namespace RNS::Utilities;
 				_discovery_pr_tags.erase(_discovery_pr_tags.begin(), iter);
 			}
 
+			// Process announce queues on all interfaces
+			for (auto& interface : _interfaces) {
+#if defined(INTERFACES_SET)
+				const_cast<Interface&>(interface.get()).process_announce_queue();
+#elif defined(INTERFACES_MAP)
+				interface.second.process_announce_queue();
+#else
+				interface.get().process_announce_queue();
+#endif
+			}
+
 			if (OS::time() > (_tables_last_culled + _tables_cull_interval)) {
 
 				// CBA Disabled following since we're calling immediately after adding to path table now
@@ -580,7 +591,42 @@ using namespace RNS::Utilities;
 				if (count > 0) {
 					TRACE("Removed " + std::to_string(count) + " tunnel paths");
 				}
-				
+
+				// Cull the path requests table (throttling cache) - use 30 second expiry
+				{
+					std::vector<Bytes> stale_path_requests;
+					for (const auto& [destination_hash, timestamp] : _path_requests) {
+						if (OS::time() > (timestamp + 30.0)) {
+							stale_path_requests.push_back(destination_hash);
+						}
+					}
+					for (const Bytes& destination_hash : stale_path_requests) {
+						_path_requests.erase(destination_hash);
+					}
+					if (stale_path_requests.size() > 0) {
+						TRACE("Removed " + std::to_string(stale_path_requests.size()) + " stale path request throttle entries");
+					}
+				}
+
+				// Cull the pending local path requests table
+				{
+					std::vector<Bytes> stale_pending_local_requests;
+					for (const auto& [destination_hash, interface] : _pending_local_path_requests) {
+						// Use PATH_REQUEST_TIMEOUT (15s) as expiry for pending local requests
+						// These should resolve quickly; if not, they're stale
+						// Note: we don't have timestamps in this table, so we use size limit instead
+					}
+					// Limit table size to prevent unbounded growth
+					if (_pending_local_path_requests.size() > 32) {
+						size_t to_remove = _pending_local_path_requests.size() - 32;
+						auto it = _pending_local_path_requests.begin();
+						for (size_t i = 0; i < to_remove && it != _pending_local_path_requests.end(); ++i) {
+							it = _pending_local_path_requests.erase(it);
+						}
+						TRACE("Culled " + std::to_string(to_remove) + " pending local path requests");
+					}
+				}
+
 				remove_reverse_entries(stale_reverse_entries);
 				remove_links(stale_links);
 				remove_paths(stale_paths);

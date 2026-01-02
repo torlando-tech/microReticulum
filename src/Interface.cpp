@@ -2,6 +2,9 @@
 
 #include "Identity.h"
 #include "Transport.h"
+#include "Utilities/OS.h"
+
+#include <algorithm>
 
 using namespace RNS;
 using namespace RNS::Type::Interface;
@@ -38,50 +41,62 @@ void Interface::handle_incoming(const Bytes& data) {
 }
 
 void Interface::process_announce_queue() {
-/*
-	if not hasattr(self, "announce_cap"):
-		self.announce_cap = RNS.Reticulum.ANNOUNCE_CAP
+	if (!_impl || _impl->_announce_queue.empty()) {
+		return;
+	}
 
-	if hasattr(self, "announce_queue"):
-		try:
-			now = time.time()
-			stale = []
-			for a in self.announce_queue:
-				if now > a["time"]+RNS.Reticulum.QUEUED_ANNOUNCE_LIFE:
-					stale.append(a)
+	double now = Utilities::OS::time();
 
-			for s in stale:
-				if s in self.announce_queue:
-					self.announce_queue.remove(s)
+	// For MCU, use shorter lifetime (60 seconds vs 24 hours)
+#ifdef ARDUINO
+	static constexpr double MCU_ANNOUNCE_LIFE = 60.0;
+#else
+	static constexpr double MCU_ANNOUNCE_LIFE = Type::Reticulum::QUEUED_ANNOUNCE_LIFE;
+#endif
 
-			if len(self.announce_queue) > 0:
-				min_hops = min(entry["hops"] for entry in self.announce_queue)
-				entries = list(filter(lambda e: e["hops"] == min_hops, self.announce_queue))
-				entries.sort(key=lambda e: e["time"])
-				selected = entries[0]
+	// Remove stale entries
+	_impl->_announce_queue.remove_if([now](const AnnounceEntry& entry) {
+		return now > (entry._time + MCU_ANNOUNCE_LIFE);
+	});
 
-				double now = OS::time();
-				uint32_t wait_time = 0;
-				if (_impl->_bitrate > 0 && _impl->_announce_cap > 0) {
-					uint32_t tx_time = (len(selected["raw"])*8) / _impl->_bitrate;
-					wait_time = (tx_time / _impl->_announce_cap);
-				}
-				_impl->_announce_allowed_at = now + wait_time;
+	// Limit queue size for MCU (remove oldest if over limit)
+#ifdef ARDUINO
+	static constexpr size_t MCU_MAX_QUEUED_ANNOUNCES = 16;
+	while (_impl->_announce_queue.size() > MCU_MAX_QUEUED_ANNOUNCES) {
+		_impl->_announce_queue.pop_front();
+	}
+#endif
 
-				self.on_outgoing(selected["raw"])
+	// Check if we're allowed to send
+	if (_impl->_announce_queue.empty() || now < _impl->_announce_allowed_at) {
+		return;
+	}
 
-				if selected in self.announce_queue:
-					self.announce_queue.remove(selected)
+	// Find entry with minimum hops
+	auto min_it = std::min_element(
+		_impl->_announce_queue.begin(),
+		_impl->_announce_queue.end(),
+		[](const AnnounceEntry& a, const AnnounceEntry& b) {
+			if (a._hops != b._hops) return a._hops < b._hops;
+			return a._time < b._time;  // Oldest first for same hop count
+		}
+	);
 
-				if len(self.announce_queue) > 0:
-					timer = threading.Timer(wait_time, self.process_announce_queue)
-					timer.start()
+	if (min_it != _impl->_announce_queue.end()) {
+		// Calculate wait time for next announce
+		uint32_t wait_time = 0;
+		if (_impl->_bitrate > 0 && _impl->_announce_cap > 0) {
+			uint32_t tx_time = (min_it->_raw.size() * 8) / _impl->_bitrate;
+			wait_time = (tx_time / _impl->_announce_cap);
+		}
+		_impl->_announce_allowed_at = now + wait_time;
 
-		except Exception as e:
-			self.announce_queue = []
-			RNS.log("Error while processing announce queue on "+str(self)+". The contained exception was: "+str(e), RNS.LOG_ERROR)
-			RNS.log("The announce queue for this interface has been cleared.", RNS.LOG_ERROR)
-*/
+		// Transmit the announce
+		send_outgoing(min_it->_raw);
+
+		// Remove from queue
+		_impl->_announce_queue.erase(min_it);
+	}
 }
 
 /*

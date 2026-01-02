@@ -1238,8 +1238,18 @@ void NimBLEPlatform::onResult(const NimBLEAdvertisedDevice* advertisedDevice) {
         // Cache the full device info for later connection
         // Using string key since NimBLEAdvertisedDevice stores all connection metadata
         std::string addrKey = advertisedDevice->getAddress().toString().c_str();
+
+        // Limit discovered device cache size to prevent memory growth
+        // Remove oldest entry if at limit (simple FIFO approach)
+        static constexpr size_t MAX_DISCOVERED_DEVICES = 16;
+        while (_discovered_devices.size() >= MAX_DISCOVERED_DEVICES) {
+            auto oldest = _discovered_devices.begin();
+            _discovered_devices.erase(oldest);
+        }
+
         _discovered_devices[addrKey] = *advertisedDevice;
-        DEBUG("NimBLEPlatform: Cached device for connection: " + addrKey);
+        TRACE("NimBLEPlatform: Cached device for connection: " + addrKey +
+              " (cache size: " + std::to_string(_discovered_devices.size()) + ")");
     }
 
     if (hasService && _on_scan_result) {
