@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "PropagationNodesScreen.h"
+#include "Theme.h"
 
 #ifdef ARDUINO
 
@@ -30,7 +31,7 @@ PropagationNodesScreen::PropagationNodesScreen(lv_obj_t* parent)
 
     lv_obj_set_size(_screen, LV_PCT(100), LV_PCT(100));
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(_screen, lv_color_hex(0x121212), 0);
+    lv_obj_set_style_bg_color(_screen, Theme::surface(), 0);
     lv_obj_set_style_bg_opa(_screen, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(_screen, 0, 0);
     lv_obj_set_style_border_width(_screen, 0, 0);
@@ -57,7 +58,7 @@ void PropagationNodesScreen::create_header() {
     _header = lv_obj_create(_screen);
     lv_obj_set_size(_header, LV_PCT(100), 36);
     lv_obj_align(_header, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(_header, lv_color_hex(0x1a1a1a), 0);
+    lv_obj_set_style_bg_color(_header, Theme::surfaceHeader(), 0);
     lv_obj_set_style_border_width(_header, 0, 0);
     lv_obj_set_style_radius(_header, 0, 0);
     lv_obj_set_style_pad_all(_header, 0, 0);
@@ -66,34 +67,34 @@ void PropagationNodesScreen::create_header() {
     _btn_back = lv_btn_create(_header);
     lv_obj_set_size(_btn_back, 50, 28);
     lv_obj_align(_btn_back, LV_ALIGN_LEFT_MID, 2, 0);
-    lv_obj_set_style_bg_color(_btn_back, lv_color_hex(0x333333), 0);
-    lv_obj_set_style_bg_color(_btn_back, lv_color_hex(0x444444), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(_btn_back, Theme::btnSecondary(), 0);
+    lv_obj_set_style_bg_color(_btn_back, Theme::btnSecondaryPressed(), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_back, on_back_clicked, LV_EVENT_CLICKED, this);
 
     lv_obj_t* label_back = lv_label_create(_btn_back);
     lv_label_set_text(label_back, LV_SYMBOL_LEFT);
     lv_obj_center(label_back);
-    lv_obj_set_style_text_color(label_back, lv_color_hex(0xe0e0e0), 0);
+    lv_obj_set_style_text_color(label_back, Theme::textSecondary(), 0);
 
     // Title
     lv_obj_t* title = lv_label_create(_header);
     lv_label_set_text(title, "Prop Nodes");
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 60, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_color(title, Theme::textPrimary(), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
 
     // Sync button
     _btn_sync = lv_btn_create(_header);
     lv_obj_set_size(_btn_sync, 65, 28);
     lv_obj_align(_btn_sync, LV_ALIGN_RIGHT_MID, -2, 0);
-    lv_obj_set_style_bg_color(_btn_sync, lv_color_hex(0x1976D2), 0);
-    lv_obj_set_style_bg_color(_btn_sync, lv_color_hex(0x2196F3), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(_btn_sync, Theme::primary(), 0);
+    lv_obj_set_style_bg_color(_btn_sync, Theme::primaryPressed(), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_sync, on_sync_clicked, LV_EVENT_CLICKED, this);
 
     lv_obj_t* label_sync = lv_label_create(_btn_sync);
     lv_label_set_text(label_sync, "Sync");
     lv_obj_center(label_sync);
-    lv_obj_set_style_text_color(label_sync, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_color(label_sync, Theme::textPrimary(), 0);
     lv_obj_set_style_text_font(label_sync, &lv_font_montserrat_12, 0);
 }
 
@@ -104,7 +105,7 @@ void PropagationNodesScreen::create_auto_select_row() {
     lv_obj_set_style_bg_color(_auto_select_row, lv_color_hex(0x1e1e1e), 0);
     lv_obj_set_style_border_width(_auto_select_row, 0, 0);
     lv_obj_set_style_border_side(_auto_select_row, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_border_color(_auto_select_row, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_border_color(_auto_select_row, Theme::btnSecondary(), 0);
     lv_obj_set_style_radius(_auto_select_row, 0, 0);
     lv_obj_set_style_pad_left(_auto_select_row, 8, 0);
     lv_obj_add_flag(_auto_select_row, LV_OBJ_FLAG_CLICKABLE);
@@ -114,12 +115,12 @@ void PropagationNodesScreen::create_auto_select_row() {
     _auto_select_checkbox = lv_checkbox_create(_auto_select_row);
     lv_checkbox_set_text(_auto_select_checkbox, "Auto-select best node");
     lv_obj_align(_auto_select_checkbox, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(_auto_select_checkbox, lv_color_hex(0xe0e0e0), 0);
+    lv_obj_set_style_text_color(_auto_select_checkbox, Theme::textSecondary(), 0);
     lv_obj_set_style_text_font(_auto_select_checkbox, &lv_font_montserrat_14, 0);
 
     // Style the checkbox indicator
-    lv_obj_set_style_bg_color(_auto_select_checkbox, lv_color_hex(0x42A5F5), LV_PART_INDICATOR | LV_STATE_CHECKED);
-    lv_obj_set_style_border_color(_auto_select_checkbox, lv_color_hex(0x808080), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(_auto_select_checkbox, Theme::info(), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_border_color(_auto_select_checkbox, Theme::textMuted(), LV_PART_INDICATOR);
     lv_obj_set_style_border_width(_auto_select_checkbox, 2, LV_PART_INDICATOR);
 
     // Set initial state
@@ -134,7 +135,7 @@ void PropagationNodesScreen::create_list() {
     lv_obj_align(_list, LV_ALIGN_TOP_MID, 0, 72);
     lv_obj_set_style_pad_all(_list, 4, 0);
     lv_obj_set_style_pad_gap(_list, 4, 0);
-    lv_obj_set_style_bg_color(_list, lv_color_hex(0x121212), 0);
+    lv_obj_set_style_bg_color(_list, Theme::surface(), 0);
     lv_obj_set_style_border_width(_list, 0, 0);
     lv_obj_set_style_radius(_list, 0, 0);
     lv_obj_set_flex_flow(_list, LV_FLEX_FLOW_COLUMN);
@@ -196,7 +197,7 @@ void PropagationNodesScreen::refresh() {
 void PropagationNodesScreen::show_empty_state() {
     _empty_label = lv_label_create(_list);
     lv_label_set_text(_empty_label, "No propagation nodes\n\nWaiting for nodes\nto announce...");
-    lv_obj_set_style_text_color(_empty_label, lv_color_hex(0x808080), 0);
+    lv_obj_set_style_text_color(_empty_label, Theme::textMuted(), 0);
     lv_obj_set_style_text_align(_empty_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(_empty_label, LV_ALIGN_CENTER, 0, 0);
 }
@@ -206,9 +207,9 @@ void PropagationNodesScreen::create_node_item(const NodeItem& item, size_t index
     lv_obj_t* container = lv_obj_create(_list);
     lv_obj_set_size(container, LV_PCT(100), 44);
     lv_obj_set_style_bg_color(container, lv_color_hex(0x1e1e1e), 0);
-    lv_obj_set_style_bg_color(container, lv_color_hex(0x2a2a2a), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(container, Theme::surfaceInput(), LV_STATE_PRESSED);
     lv_obj_set_style_border_width(container, 1, 0);
-    lv_obj_set_style_border_color(container, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_border_color(container, Theme::btnSecondary(), 0);
     lv_obj_set_style_radius(container, 6, 0);
     lv_obj_set_style_pad_all(container, 4, 0);
     lv_obj_add_flag(container, LV_OBJ_FLAG_CLICKABLE);
@@ -226,38 +227,38 @@ void PropagationNodesScreen::create_node_item(const NodeItem& item, size_t index
     lv_obj_clear_flag(radio, LV_OBJ_FLAG_CLICKABLE);
 
     if (item.is_selected && !_auto_select_enabled) {
-        lv_obj_set_style_bg_color(radio, lv_color_hex(0x42A5F5), 0);
-        lv_obj_set_style_border_color(radio, lv_color_hex(0x42A5F5), 0);
+        lv_obj_set_style_bg_color(radio, Theme::info(), 0);
+        lv_obj_set_style_border_color(radio, Theme::info(), 0);
     } else {
         lv_obj_set_style_bg_color(radio, lv_color_hex(0x1e1e1e), 0);
-        lv_obj_set_style_border_color(radio, lv_color_hex(0x808080), 0);
+        lv_obj_set_style_border_color(radio, Theme::textMuted(), 0);
     }
 
     // Row 1: Name and hops
     lv_obj_t* label_name = lv_label_create(container);
     lv_label_set_text(label_name, item.name.c_str());
     lv_obj_align(label_name, LV_ALIGN_TOP_LEFT, 24, 2);
-    lv_obj_set_style_text_color(label_name, item.enabled ? lv_color_hex(0x42A5F5) : lv_color_hex(0x808080), 0);
+    lv_obj_set_style_text_color(label_name, item.enabled ? Theme::info() : Theme::textMuted(), 0);
     lv_obj_set_style_text_font(label_name, &lv_font_montserrat_14, 0);
 
     lv_obj_t* label_hops = lv_label_create(container);
     lv_label_set_text(label_hops, format_hops(item.hops).c_str());
     lv_obj_align(label_hops, LV_ALIGN_TOP_RIGHT, -4, 2);
-    lv_obj_set_style_text_color(label_hops, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(label_hops, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(label_hops, &lv_font_montserrat_12, 0);
 
     // Row 2: Hash and status
     lv_obj_t* label_hash = lv_label_create(container);
     lv_label_set_text(label_hash, item.hash_display.c_str());
     lv_obj_align(label_hash, LV_ALIGN_BOTTOM_LEFT, 24, -2);
-    lv_obj_set_style_text_color(label_hash, lv_color_hex(0x808080), 0);
+    lv_obj_set_style_text_color(label_hash, Theme::textMuted(), 0);
     lv_obj_set_style_text_font(label_hash, &lv_font_montserrat_12, 0);
 
     if (!item.enabled) {
         lv_obj_t* label_status = lv_label_create(container);
         lv_label_set_text(label_status, "disabled");
         lv_obj_align(label_status, LV_ALIGN_BOTTOM_RIGHT, -4, -2);
-        lv_obj_set_style_text_color(label_status, lv_color_hex(0xF44336), 0);
+        lv_obj_set_style_text_color(label_status, Theme::error(), 0);
         lv_obj_set_style_text_font(label_status, &lv_font_montserrat_12, 0);
     }
 }

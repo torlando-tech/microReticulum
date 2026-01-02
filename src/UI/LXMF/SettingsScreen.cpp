@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "SettingsScreen.h"
+#include "Theme.h"
 
 #ifdef ARDUINO
 
@@ -77,7 +78,7 @@ SettingsScreen::SettingsScreen(lv_obj_t* parent)
 
     lv_obj_set_size(_screen, LV_PCT(100), LV_PCT(100));
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(_screen, lv_color_hex(0x121212), 0);
+    lv_obj_set_style_bg_color(_screen, Theme::surface(), 0);
     lv_obj_set_style_bg_opa(_screen, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(_screen, 0, 0);
     lv_obj_set_style_border_width(_screen, 0, 0);
@@ -109,7 +110,7 @@ void SettingsScreen::create_header() {
     _header = lv_obj_create(_screen);
     lv_obj_set_size(_header, LV_PCT(100), 36);
     lv_obj_align(_header, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(_header, lv_color_hex(0x1a1a1a), 0);
+    lv_obj_set_style_bg_color(_header, Theme::surfaceHeader(), 0);
     lv_obj_set_style_border_width(_header, 0, 0);
     lv_obj_set_style_radius(_header, 0, 0);
     lv_obj_set_style_pad_all(_header, 0, 0);
@@ -118,34 +119,34 @@ void SettingsScreen::create_header() {
     _btn_back = lv_btn_create(_header);
     lv_obj_set_size(_btn_back, 50, 28);
     lv_obj_align(_btn_back, LV_ALIGN_LEFT_MID, 2, 0);
-    lv_obj_set_style_bg_color(_btn_back, lv_color_hex(0x333333), 0);
-    lv_obj_set_style_bg_color(_btn_back, lv_color_hex(0x444444), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(_btn_back, Theme::btnSecondary(), 0);
+    lv_obj_set_style_bg_color(_btn_back, Theme::btnSecondaryPressed(), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_back, on_back_clicked, LV_EVENT_CLICKED, this);
 
     lv_obj_t* label_back = lv_label_create(_btn_back);
     lv_label_set_text(label_back, LV_SYMBOL_LEFT);
     lv_obj_center(label_back);
-    lv_obj_set_style_text_color(label_back, lv_color_hex(0xe0e0e0), 0);
+    lv_obj_set_style_text_color(label_back, Theme::textSecondary(), 0);
 
     // Title
     lv_obj_t* title = lv_label_create(_header);
     lv_label_set_text(title, "Settings");
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 60, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_color(title, Theme::textPrimary(), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
 
     // Save button
     _btn_save = lv_btn_create(_header);
     lv_obj_set_size(_btn_save, 55, 28);
     lv_obj_align(_btn_save, LV_ALIGN_RIGHT_MID, -4, 0);
-    lv_obj_set_style_bg_color(_btn_save, lv_color_hex(0x2e7d32), 0);
-    lv_obj_set_style_bg_color(_btn_save, lv_color_hex(0x388e3c), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(_btn_save, Theme::primary(), 0);
+    lv_obj_set_style_bg_color(_btn_save, Theme::primaryPressed(), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_save, on_save_clicked, LV_EVENT_CLICKED, this);
 
     lv_obj_t* label_save = lv_label_create(_btn_save);
     lv_label_set_text(label_save, "Save");
     lv_obj_center(label_save);
-    lv_obj_set_style_text_color(label_save, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_color(label_save, Theme::textPrimary(), 0);
 }
 
 void SettingsScreen::create_content() {
@@ -154,7 +155,7 @@ void SettingsScreen::create_content() {
     lv_obj_align(_content, LV_ALIGN_TOP_MID, 0, 36);
     lv_obj_set_style_pad_all(_content, 4, 0);
     lv_obj_set_style_pad_gap(_content, 2, 0);
-    lv_obj_set_style_bg_color(_content, lv_color_hex(0x121212), 0);
+    lv_obj_set_style_bg_color(_content, Theme::surface(), 0);
     lv_obj_set_style_border_width(_content, 0, 0);
     lv_obj_set_style_radius(_content, 0, 0);
 
@@ -179,7 +180,7 @@ lv_obj_t* SettingsScreen::create_section_header(lv_obj_t* parent, const char* ti
     lv_obj_t* header = lv_label_create(parent);
     lv_label_set_text(header, title);
     lv_obj_set_width(header, LV_PCT(100));
-    lv_obj_set_style_text_color(header, lv_color_hex(0x42A5F5), 0);
+    lv_obj_set_style_text_color(header, Theme::info(), 0);
     lv_obj_set_style_text_font(header, &lv_font_montserrat_12, 0);
     lv_obj_set_style_pad_top(header, 6, 0);
     lv_obj_set_style_pad_bottom(header, 2, 0);
@@ -190,7 +191,7 @@ lv_obj_t* SettingsScreen::create_label_row(lv_obj_t* parent, const char* text) {
     lv_obj_t* label = lv_label_create(parent);
     lv_label_set_text(label, text);
     lv_obj_set_width(label, LV_PCT(100));
-    lv_obj_set_style_text_color(label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
     return label;
 }
@@ -206,9 +207,9 @@ lv_obj_t* SettingsScreen::create_text_input(lv_obj_t* parent, const char* placeh
     if (password) {
         lv_textarea_set_password_mode(ta, true);
     }
-    lv_obj_set_style_bg_color(ta, lv_color_hex(0x2a2a2a), 0);
-    lv_obj_set_style_text_color(ta, lv_color_hex(0xffffff), 0);
-    lv_obj_set_style_border_color(ta, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_bg_color(ta, Theme::surfaceInput(), 0);
+    lv_obj_set_style_text_color(ta, Theme::textPrimary(), 0);
+    lv_obj_set_style_border_color(ta, Theme::border(), 0);
     lv_obj_set_style_border_width(ta, 1, 0);
     lv_obj_set_style_radius(ta, 4, 0);
     lv_obj_set_style_pad_all(ta, 4, 0);
@@ -247,7 +248,7 @@ void SettingsScreen::create_network_section(lv_obj_t* parent) {
     lv_obj_t* port_label = lv_label_create(port_row);
     lv_label_set_text(port_label, "Port:");
     lv_obj_align(port_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(port_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(port_label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(port_label, &lv_font_montserrat_14, 0);
 
     _ta_tcp_port = lv_textarea_create(port_row);
@@ -256,9 +257,9 @@ void SettingsScreen::create_network_section(lv_obj_t* parent) {
     lv_textarea_set_one_line(_ta_tcp_port, true);
     lv_textarea_set_max_length(_ta_tcp_port, 5);
     lv_textarea_set_accepted_chars(_ta_tcp_port, "0123456789");
-    lv_obj_set_style_bg_color(_ta_tcp_port, lv_color_hex(0x2a2a2a), 0);
-    lv_obj_set_style_text_color(_ta_tcp_port, lv_color_hex(0xffffff), 0);
-    lv_obj_set_style_border_color(_ta_tcp_port, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_bg_color(_ta_tcp_port, Theme::surfaceInput(), 0);
+    lv_obj_set_style_text_color(_ta_tcp_port, Theme::textPrimary(), 0);
+    lv_obj_set_style_border_color(_ta_tcp_port, Theme::border(), 0);
     lv_obj_set_style_border_width(_ta_tcp_port, 1, 0);
     lv_obj_set_style_radius(_ta_tcp_port, 4, 0);
     lv_obj_set_style_pad_all(_ta_tcp_port, 4, 0);
@@ -274,14 +275,14 @@ void SettingsScreen::create_network_section(lv_obj_t* parent) {
     _btn_reconnect = lv_btn_create(port_row);
     lv_obj_set_size(_btn_reconnect, 80, 26);
     lv_obj_align(_btn_reconnect, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(_btn_reconnect, lv_color_hex(0x1976D2), 0);
-    lv_obj_set_style_bg_color(_btn_reconnect, lv_color_hex(0x1565C0), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(_btn_reconnect, Theme::primary(), 0);
+    lv_obj_set_style_bg_color(_btn_reconnect, Theme::primaryPressed(), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_reconnect, on_reconnect_clicked, LV_EVENT_CLICKED, this);
 
     lv_obj_t* label_reconnect = lv_label_create(_btn_reconnect);
     lv_label_set_text(label_reconnect, "Reconnect");
     lv_obj_center(label_reconnect);
-    lv_obj_set_style_text_color(label_reconnect, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_color(label_reconnect, Theme::textPrimary(), 0);
     lv_obj_set_style_text_font(label_reconnect, &lv_font_montserrat_14, 0);
 }
 
@@ -307,22 +308,22 @@ void SettingsScreen::create_display_section(lv_obj_t* parent) {
     lv_obj_t* bright_label = lv_label_create(brightness_row);
     lv_label_set_text(bright_label, "Brightness:");
     lv_obj_align(bright_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(bright_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(bright_label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(bright_label, &lv_font_montserrat_14, 0);
 
     _slider_brightness = lv_slider_create(brightness_row);
     lv_obj_set_size(_slider_brightness, 120, 10);
     lv_obj_align(_slider_brightness, LV_ALIGN_LEFT_MID, 95, 0);
     lv_slider_set_range(_slider_brightness, 10, 255);
-    lv_obj_set_style_bg_color(_slider_brightness, lv_color_hex(0x404040), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(_slider_brightness, lv_color_hex(0x42A5F5), LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(_slider_brightness, lv_color_hex(0xffffff), LV_PART_KNOB);
+    lv_obj_set_style_bg_color(_slider_brightness, Theme::border(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_slider_brightness, Theme::info(), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(_slider_brightness, Theme::textPrimary(), LV_PART_KNOB);
     lv_obj_add_event_cb(_slider_brightness, on_brightness_changed, LV_EVENT_VALUE_CHANGED, this);
 
     _label_brightness_value = lv_label_create(brightness_row);
     lv_label_set_text(_label_brightness_value, "180");
     lv_obj_align(_label_brightness_value, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_text_color(_label_brightness_value, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_color(_label_brightness_value, Theme::textPrimary(), 0);
     lv_obj_set_style_text_font(_label_brightness_value, &lv_font_montserrat_14, 0);
 
     // Keyboard light row
@@ -337,14 +338,14 @@ void SettingsScreen::create_display_section(lv_obj_t* parent) {
     lv_obj_t* kb_light_label = lv_label_create(kb_light_row);
     lv_label_set_text(kb_light_label, "Keyboard Light:");
     lv_obj_align(kb_light_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(kb_light_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(kb_light_label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(kb_light_label, &lv_font_montserrat_14, 0);
 
     _switch_kb_light = lv_switch_create(kb_light_row);
     lv_obj_set_size(_switch_kb_light, 40, 20);
     lv_obj_align(_switch_kb_light, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(_switch_kb_light, lv_color_hex(0x404040), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(_switch_kb_light, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(_switch_kb_light, Theme::border(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_kb_light, Theme::primary(), LV_PART_INDICATOR | LV_STATE_CHECKED);
 
     // Timeout row
     lv_obj_t* timeout_row = lv_obj_create(parent);
@@ -358,16 +359,16 @@ void SettingsScreen::create_display_section(lv_obj_t* parent) {
     lv_obj_t* timeout_label = lv_label_create(timeout_row);
     lv_label_set_text(timeout_label, "Screen Timeout:");
     lv_obj_align(timeout_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(timeout_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(timeout_label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(timeout_label, &lv_font_montserrat_14, 0);
 
     _dropdown_timeout = lv_dropdown_create(timeout_row);
     lv_dropdown_set_options(_dropdown_timeout, "30 sec\n1 min\n5 min\nNever");
     lv_obj_set_size(_dropdown_timeout, 90, 28);
     lv_obj_align(_dropdown_timeout, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(_dropdown_timeout, lv_color_hex(0x2a2a2a), 0);
-    lv_obj_set_style_text_color(_dropdown_timeout, lv_color_hex(0xffffff), 0);
-    lv_obj_set_style_border_color(_dropdown_timeout, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_bg_color(_dropdown_timeout, Theme::surfaceInput(), 0);
+    lv_obj_set_style_text_color(_dropdown_timeout, Theme::textPrimary(), 0);
+    lv_obj_set_style_border_color(_dropdown_timeout, Theme::border(), 0);
     lv_obj_set_style_text_font(_dropdown_timeout, &lv_font_montserrat_14, 0);
 }
 
@@ -386,14 +387,14 @@ void SettingsScreen::create_notifications_section(lv_obj_t* parent) {
     lv_obj_t* sound_label = lv_label_create(sound_row);
     lv_label_set_text(sound_label, "Message Sound:");
     lv_obj_align(sound_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(sound_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(sound_label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(sound_label, &lv_font_montserrat_14, 0);
 
     _switch_notification_sound = lv_switch_create(sound_row);
     lv_obj_set_size(_switch_notification_sound, 40, 20);
     lv_obj_align(_switch_notification_sound, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(_switch_notification_sound, lv_color_hex(0x404040), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(_switch_notification_sound, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(_switch_notification_sound, Theme::border(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_notification_sound, Theme::primary(), LV_PART_INDICATOR | LV_STATE_CHECKED);
 
     // Volume row
     lv_obj_t* volume_row = lv_obj_create(parent);
@@ -407,22 +408,22 @@ void SettingsScreen::create_notifications_section(lv_obj_t* parent) {
     lv_obj_t* volume_label = lv_label_create(volume_row);
     lv_label_set_text(volume_label, "Volume:");
     lv_obj_align(volume_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(volume_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(volume_label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(volume_label, &lv_font_montserrat_14, 0);
 
     _slider_notification_volume = lv_slider_create(volume_row);
     lv_obj_set_size(_slider_notification_volume, 120, 10);
     lv_obj_align(_slider_notification_volume, LV_ALIGN_LEFT_MID, 65, 0);
     lv_slider_set_range(_slider_notification_volume, 0, 100);
-    lv_obj_set_style_bg_color(_slider_notification_volume, lv_color_hex(0x404040), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(_slider_notification_volume, lv_color_hex(0x42A5F5), LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(_slider_notification_volume, lv_color_hex(0xffffff), LV_PART_KNOB);
+    lv_obj_set_style_bg_color(_slider_notification_volume, Theme::border(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_slider_notification_volume, Theme::info(), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(_slider_notification_volume, Theme::textPrimary(), LV_PART_KNOB);
     lv_obj_add_event_cb(_slider_notification_volume, on_notification_volume_changed, LV_EVENT_VALUE_CHANGED, this);
 
     _label_notification_volume_value = lv_label_create(volume_row);
     lv_label_set_text(_label_notification_volume_value, "50");
     lv_obj_align(_label_notification_volume_value, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_text_color(_label_notification_volume_value, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_color(_label_notification_volume_value, Theme::textPrimary(), 0);
     lv_obj_set_style_text_font(_label_notification_volume_value, &lv_font_montserrat_14, 0);
 }
 
@@ -441,14 +442,14 @@ void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     lv_obj_t* auto_label = lv_label_create(auto_row);
     lv_label_set_text(auto_label, "Auto Discovery:");
     lv_obj_align(auto_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(auto_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(auto_label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(auto_label, &lv_font_montserrat_14, 0);
 
     _switch_auto_enabled = lv_switch_create(auto_row);
     lv_obj_set_size(_switch_auto_enabled, 40, 20);
     lv_obj_align(_switch_auto_enabled, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(_switch_auto_enabled, lv_color_hex(0x404040), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(_switch_auto_enabled, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(_switch_auto_enabled, Theme::border(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_auto_enabled, Theme::primary(), LV_PART_INDICATOR | LV_STATE_CHECKED);
 
     // BLE P2P row
     lv_obj_t* ble_row = lv_obj_create(parent);
@@ -462,14 +463,14 @@ void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     lv_obj_t* ble_label = lv_label_create(ble_row);
     lv_label_set_text(ble_label, "BLE P2P:");
     lv_obj_align(ble_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(ble_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(ble_label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(ble_label, &lv_font_montserrat_14, 0);
 
     _switch_ble_enabled = lv_switch_create(ble_row);
     lv_obj_set_size(_switch_ble_enabled, 40, 20);
     lv_obj_align(_switch_ble_enabled, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(_switch_ble_enabled, lv_color_hex(0x404040), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(_switch_ble_enabled, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(_switch_ble_enabled, Theme::border(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_ble_enabled, Theme::primary(), LV_PART_INDICATOR | LV_STATE_CHECKED);
 
     // TCP Enable row
     lv_obj_t* tcp_row = lv_obj_create(parent);
@@ -483,14 +484,14 @@ void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     lv_obj_t* tcp_label = lv_label_create(tcp_row);
     lv_label_set_text(tcp_label, "TCP Interface:");
     lv_obj_align(tcp_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(tcp_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(tcp_label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(tcp_label, &lv_font_montserrat_14, 0);
 
     _switch_tcp_enabled = lv_switch_create(tcp_row);
     lv_obj_set_size(_switch_tcp_enabled, 40, 20);
     lv_obj_align(_switch_tcp_enabled, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(_switch_tcp_enabled, lv_color_hex(0x404040), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(_switch_tcp_enabled, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(_switch_tcp_enabled, Theme::border(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_tcp_enabled, Theme::primary(), LV_PART_INDICATOR | LV_STATE_CHECKED);
 
     // LoRa Enable row
     lv_obj_t* lora_row = lv_obj_create(parent);
@@ -504,14 +505,14 @@ void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     lv_obj_t* lora_label = lv_label_create(lora_row);
     lv_label_set_text(lora_label, "LoRa Interface:");
     lv_obj_align(lora_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(lora_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(lora_label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(lora_label, &lv_font_montserrat_14, 0);
 
     _switch_lora_enabled = lv_switch_create(lora_row);
     lv_obj_set_size(_switch_lora_enabled, 40, 20);
     lv_obj_align(_switch_lora_enabled, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(_switch_lora_enabled, lv_color_hex(0x404040), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(_switch_lora_enabled, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(_switch_lora_enabled, Theme::border(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_lora_enabled, Theme::primary(), LV_PART_INDICATOR | LV_STATE_CHECKED);
     lv_obj_add_event_cb(_switch_lora_enabled, on_lora_enabled_changed, LV_EVENT_VALUE_CHANGED, this);
 
     // LoRa parameters container (shown/hidden based on LoRa enabled)
@@ -546,9 +547,9 @@ void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     lv_textarea_set_one_line(_ta_lora_frequency, true);
     lv_textarea_set_max_length(_ta_lora_frequency, 8);
     lv_textarea_set_accepted_chars(_ta_lora_frequency, "0123456789.");
-    lv_obj_set_style_bg_color(_ta_lora_frequency, lv_color_hex(0x2a2a2a), 0);
-    lv_obj_set_style_text_color(_ta_lora_frequency, lv_color_hex(0xffffff), 0);
-    lv_obj_set_style_border_color(_ta_lora_frequency, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_bg_color(_ta_lora_frequency, Theme::surfaceInput(), 0);
+    lv_obj_set_style_text_color(_ta_lora_frequency, Theme::textPrimary(), 0);
+    lv_obj_set_style_border_color(_ta_lora_frequency, Theme::border(), 0);
     lv_obj_set_style_border_width(_ta_lora_frequency, 1, 0);
     lv_obj_set_style_radius(_ta_lora_frequency, 4, 0);
     lv_obj_set_style_pad_all(_ta_lora_frequency, 4, 0);
@@ -559,7 +560,7 @@ void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     lv_obj_t* mhz_label = lv_label_create(freq_row);
     lv_label_set_text(mhz_label, "MHz");
     lv_obj_align(mhz_label, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_text_color(mhz_label, lv_color_hex(0x808080), 0);
+    lv_obj_set_style_text_color(mhz_label, Theme::textMuted(), 0);
     lv_obj_set_style_text_font(mhz_label, &lv_font_montserrat_14, 0);
 
     // Bandwidth dropdown row
@@ -581,9 +582,9 @@ void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     lv_dropdown_set_options(_dropdown_lora_bandwidth, "62.5 kHz\n125 kHz\n250 kHz\n500 kHz");
     lv_obj_set_size(_dropdown_lora_bandwidth, 100, 28);
     lv_obj_align(_dropdown_lora_bandwidth, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(_dropdown_lora_bandwidth, lv_color_hex(0x2a2a2a), 0);
-    lv_obj_set_style_text_color(_dropdown_lora_bandwidth, lv_color_hex(0xffffff), 0);
-    lv_obj_set_style_border_color(_dropdown_lora_bandwidth, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_bg_color(_dropdown_lora_bandwidth, Theme::surfaceInput(), 0);
+    lv_obj_set_style_text_color(_dropdown_lora_bandwidth, Theme::textPrimary(), 0);
+    lv_obj_set_style_border_color(_dropdown_lora_bandwidth, Theme::border(), 0);
     lv_obj_set_style_text_font(_dropdown_lora_bandwidth, &lv_font_montserrat_14, 0);
 
     // SF/CR row
@@ -605,9 +606,9 @@ void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     lv_dropdown_set_options(_dropdown_lora_sf, "7\n8\n9\n10\n11\n12");
     lv_obj_set_size(_dropdown_lora_sf, 50, 28);
     lv_obj_align(_dropdown_lora_sf, LV_ALIGN_LEFT_MID, 30, 0);
-    lv_obj_set_style_bg_color(_dropdown_lora_sf, lv_color_hex(0x2a2a2a), 0);
-    lv_obj_set_style_text_color(_dropdown_lora_sf, lv_color_hex(0xffffff), 0);
-    lv_obj_set_style_border_color(_dropdown_lora_sf, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_bg_color(_dropdown_lora_sf, Theme::surfaceInput(), 0);
+    lv_obj_set_style_text_color(_dropdown_lora_sf, Theme::textPrimary(), 0);
+    lv_obj_set_style_border_color(_dropdown_lora_sf, Theme::border(), 0);
     lv_obj_set_style_text_font(_dropdown_lora_sf, &lv_font_montserrat_14, 0);
 
     lv_obj_t* cr_label = lv_label_create(sfcr_row);
@@ -620,9 +621,9 @@ void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     lv_dropdown_set_options(_dropdown_lora_cr, "4/5\n4/6\n4/7\n4/8");
     lv_obj_set_size(_dropdown_lora_cr, 55, 28);
     lv_obj_align(_dropdown_lora_cr, LV_ALIGN_LEFT_MID, 115, 0);
-    lv_obj_set_style_bg_color(_dropdown_lora_cr, lv_color_hex(0x2a2a2a), 0);
-    lv_obj_set_style_text_color(_dropdown_lora_cr, lv_color_hex(0xffffff), 0);
-    lv_obj_set_style_border_color(_dropdown_lora_cr, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_bg_color(_dropdown_lora_cr, Theme::surfaceInput(), 0);
+    lv_obj_set_style_text_color(_dropdown_lora_cr, Theme::textPrimary(), 0);
+    lv_obj_set_style_border_color(_dropdown_lora_cr, Theme::border(), 0);
     lv_obj_set_style_text_font(_dropdown_lora_cr, &lv_font_montserrat_14, 0);
 
     // TX Power row
@@ -637,22 +638,22 @@ void SettingsScreen::create_interfaces_section(lv_obj_t* parent) {
     lv_obj_t* power_label = lv_label_create(power_row);
     lv_label_set_text(power_label, "  TX Power:");
     lv_obj_align(power_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(power_label, lv_color_hex(0x909090), 0);
+    lv_obj_set_style_text_color(power_label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(power_label, &lv_font_montserrat_14, 0);
 
     _slider_lora_power = lv_slider_create(power_row);
     lv_obj_set_size(_slider_lora_power, 100, 10);
     lv_obj_align(_slider_lora_power, LV_ALIGN_LEFT_MID, 75, 0);
     lv_slider_set_range(_slider_lora_power, 2, 22);
-    lv_obj_set_style_bg_color(_slider_lora_power, lv_color_hex(0x404040), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(_slider_lora_power, lv_color_hex(0xFFA726), LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(_slider_lora_power, lv_color_hex(0xffffff), LV_PART_KNOB);
+    lv_obj_set_style_bg_color(_slider_lora_power, Theme::border(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_slider_lora_power, Theme::primary(), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(_slider_lora_power, Theme::textPrimary(), LV_PART_KNOB);
     lv_obj_add_event_cb(_slider_lora_power, on_lora_power_changed, LV_EVENT_VALUE_CHANGED, this);
 
     _label_lora_power_value = lv_label_create(power_row);
     lv_label_set_text(_label_lora_power_value, "17 dBm");
     lv_obj_align(_label_lora_power_value, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_text_color(_label_lora_power_value, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_color(_label_lora_power_value, Theme::textPrimary(), 0);
     lv_obj_set_style_text_font(_label_lora_power_value, &lv_font_montserrat_14, 0);
 
     // Initially hide LoRa params if not enabled
@@ -674,20 +675,20 @@ void SettingsScreen::create_delivery_section(lv_obj_t* parent) {
     lv_obj_t* prop_label = lv_label_create(prop_nodes_row);
     lv_label_set_text(prop_label, "Propagation Nodes:");
     lv_obj_align(prop_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(prop_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(prop_label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(prop_label, &lv_font_montserrat_14, 0);
 
     _btn_propagation_nodes = lv_btn_create(prop_nodes_row);
     lv_obj_set_size(_btn_propagation_nodes, 70, 26);
     lv_obj_align(_btn_propagation_nodes, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(_btn_propagation_nodes, lv_color_hex(0x1976D2), 0);
-    lv_obj_set_style_bg_color(_btn_propagation_nodes, lv_color_hex(0x1565C0), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(_btn_propagation_nodes, Theme::primary(), 0);
+    lv_obj_set_style_bg_color(_btn_propagation_nodes, Theme::primaryPressed(), LV_STATE_PRESSED);
     lv_obj_add_event_cb(_btn_propagation_nodes, on_propagation_nodes_clicked, LV_EVENT_CLICKED, this);
 
     lv_obj_t* btn_label = lv_label_create(_btn_propagation_nodes);
     lv_label_set_text(btn_label, "View");
     lv_obj_center(btn_label);
-    lv_obj_set_style_text_color(btn_label, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_color(btn_label, Theme::textPrimary(), 0);
     lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_14, 0);
 
     // Fallback to Propagation switch row
@@ -702,14 +703,14 @@ void SettingsScreen::create_delivery_section(lv_obj_t* parent) {
     lv_obj_t* fallback_label = lv_label_create(fallback_row);
     lv_label_set_text(fallback_label, "Fallback to Prop:");
     lv_obj_align(fallback_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(fallback_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(fallback_label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(fallback_label, &lv_font_montserrat_14, 0);
 
     _switch_prop_fallback = lv_switch_create(fallback_row);
     lv_obj_set_size(_switch_prop_fallback, 40, 20);
     lv_obj_align(_switch_prop_fallback, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(_switch_prop_fallback, lv_color_hex(0x404040), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(_switch_prop_fallback, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(_switch_prop_fallback, Theme::border(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_prop_fallback, Theme::primary(), LV_PART_INDICATOR | LV_STATE_CHECKED);
 
     // Propagation Only switch row
     lv_obj_t* prop_only_row = lv_obj_create(parent);
@@ -723,14 +724,14 @@ void SettingsScreen::create_delivery_section(lv_obj_t* parent) {
     lv_obj_t* prop_only_label = lv_label_create(prop_only_row);
     lv_label_set_text(prop_only_label, "Propagation Only:");
     lv_obj_align(prop_only_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(prop_only_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(prop_only_label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(prop_only_label, &lv_font_montserrat_14, 0);
 
     _switch_prop_only = lv_switch_create(prop_only_row);
     lv_obj_set_size(_switch_prop_only, 40, 20);
     lv_obj_align(_switch_prop_only, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(_switch_prop_only, lv_color_hex(0x404040), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(_switch_prop_only, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(_switch_prop_only, Theme::border(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_prop_only, Theme::primary(), LV_PART_INDICATOR | LV_STATE_CHECKED);
 }
 
 void SettingsScreen::create_gps_section(lv_obj_t* parent) {
@@ -767,7 +768,7 @@ void SettingsScreen::create_advanced_section(lv_obj_t* parent) {
     lv_obj_t* announce_label = lv_label_create(announce_row);
     lv_label_set_text(announce_label, "Announce Interval:");
     lv_obj_align(announce_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(announce_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(announce_label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(announce_label, &lv_font_montserrat_14, 0);
 
     _ta_announce_interval = lv_textarea_create(announce_row);
@@ -776,9 +777,9 @@ void SettingsScreen::create_advanced_section(lv_obj_t* parent) {
     lv_textarea_set_one_line(_ta_announce_interval, true);
     lv_textarea_set_max_length(_ta_announce_interval, 5);
     lv_textarea_set_accepted_chars(_ta_announce_interval, "0123456789");
-    lv_obj_set_style_bg_color(_ta_announce_interval, lv_color_hex(0x2a2a2a), 0);
-    lv_obj_set_style_text_color(_ta_announce_interval, lv_color_hex(0xffffff), 0);
-    lv_obj_set_style_border_color(_ta_announce_interval, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_bg_color(_ta_announce_interval, Theme::surfaceInput(), 0);
+    lv_obj_set_style_text_color(_ta_announce_interval, Theme::textPrimary(), 0);
+    lv_obj_set_style_border_color(_ta_announce_interval, Theme::border(), 0);
     lv_obj_set_style_border_width(_ta_announce_interval, 1, 0);
     lv_obj_set_style_radius(_ta_announce_interval, 4, 0);
     lv_obj_set_style_pad_all(_ta_announce_interval, 4, 0);
@@ -794,7 +795,7 @@ void SettingsScreen::create_advanced_section(lv_obj_t* parent) {
     lv_obj_t* sec_label = lv_label_create(announce_row);
     lv_label_set_text(sec_label, "sec");
     lv_obj_align(sec_label, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_text_color(sec_label, lv_color_hex(0x808080), 0);
+    lv_obj_set_style_text_color(sec_label, Theme::textMuted(), 0);
     lv_obj_set_style_text_font(sec_label, &lv_font_montserrat_14, 0);
 
     // GPS sync row
@@ -809,14 +810,14 @@ void SettingsScreen::create_advanced_section(lv_obj_t* parent) {
     lv_obj_t* gps_sync_label = lv_label_create(gps_sync_row);
     lv_label_set_text(gps_sync_label, "GPS Time Sync:");
     lv_obj_align(gps_sync_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(gps_sync_label, lv_color_hex(0xb0b0b0), 0);
+    lv_obj_set_style_text_color(gps_sync_label, Theme::textTertiary(), 0);
     lv_obj_set_style_text_font(gps_sync_label, &lv_font_montserrat_14, 0);
 
     _switch_gps_sync = lv_switch_create(gps_sync_row);
     lv_obj_set_size(_switch_gps_sync, 40, 20);
     lv_obj_align(_switch_gps_sync, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(_switch_gps_sync, lv_color_hex(0x404040), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(_switch_gps_sync, lv_color_hex(0x4CAF50), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(_switch_gps_sync, Theme::border(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_switch_gps_sync, Theme::primary(), LV_PART_INDICATOR | LV_STATE_CHECKED);
 }
 
 void SettingsScreen::load_settings() {
@@ -825,7 +826,7 @@ void SettingsScreen::load_settings() {
 
     _settings.wifi_ssid = prefs.getString(KEY_WIFI_SSID, "");
     _settings.wifi_password = prefs.getString(KEY_WIFI_PASS, "");
-    _settings.tcp_host = prefs.getString(KEY_TCP_HOST, "YOUR_SERVER_IP");
+    _settings.tcp_host = prefs.getString(KEY_TCP_HOST, "sideband.connect.reticulum.network");
     _settings.tcp_port = prefs.getUShort(KEY_TCP_PORT, 4965);
     _settings.display_name = prefs.getString(KEY_DISPLAY_NAME, "");
     _settings.brightness = prefs.getUChar(KEY_BRIGHTNESS, 180);
@@ -836,7 +837,7 @@ void SettingsScreen::load_settings() {
 
     // Notification settings
     _settings.notification_sound = prefs.getBool(KEY_NOTIF_SND, true);
-    _settings.notification_volume = prefs.getUChar(KEY_NOTIF_VOL, 50);
+    _settings.notification_volume = prefs.getUChar(KEY_NOTIF_VOL, 10);
 
     // Interface settings
     _settings.tcp_enabled = prefs.getBool(KEY_TCP_ENABLED, true);
@@ -1171,10 +1172,10 @@ void SettingsScreen::update_gps_display() {
                         String(_gps->location.lat(), 4) + ", " +
                         String(_gps->location.lng(), 4);
         lv_label_set_text(_label_gps_coords, coords.c_str());
-        lv_obj_set_style_text_color(_label_gps_coords, lv_color_hex(0x4CAF50), 0);
+        lv_obj_set_style_text_color(_label_gps_coords, Theme::success(), 0);
     } else {
         lv_label_set_text(_label_gps_coords, "Location: No fix");
-        lv_obj_set_style_text_color(_label_gps_coords, lv_color_hex(0xF44336), 0);
+        lv_obj_set_style_text_color(_label_gps_coords, Theme::error(), 0);
     }
 
     // Altitude

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "ComposeScreen.h"
+#include "Theme.h"
 
 #ifdef ARDUINO
 
@@ -166,8 +167,8 @@ void ComposeScreen::create_button_area() {
     _btn_send = lv_btn_create(_button_area);
     lv_obj_set_size(_btn_send, 110, 36);
     lv_obj_add_event_cb(_btn_send, on_send_clicked, LV_EVENT_CLICKED, this);
-    lv_obj_set_style_bg_color(_btn_send, lv_color_hex(0x2e7d32), 0);  // Dark green
-    lv_obj_set_style_bg_color(_btn_send, lv_color_hex(0x388e3c), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(_btn_send, Theme::primary(), 0);
+    lv_obj_set_style_bg_color(_btn_send, Theme::primaryPressed(), LV_STATE_PRESSED);
 
     lv_obj_t* label_send = lv_label_create(_btn_send);
     lv_label_set_text(label_send, "Send");
