@@ -449,6 +449,17 @@ void BluedroidPlatform::setIdentityData(const Bytes& identity) {
 //=============================================================================
 
 bool BluedroidPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
+    // Protect against connecting when memory is critically low
+    if (ESP.getFreeHeap() < 40000) {
+        static uint32_t last_low_mem_warn = 0;
+        if (millis() - last_low_mem_warn > 10000) {
+            WARNING("BluedroidPlatform: Skipping connection - low memory (" +
+                    std::to_string(ESP.getFreeHeap()) + " bytes free)");
+            last_low_mem_warn = millis();
+        }
+        return false;
+    }
+
     if (_gattc_if == ESP_GATT_IF_NONE) {
         ERROR("BluedroidPlatform: GATTC not registered");
         return false;

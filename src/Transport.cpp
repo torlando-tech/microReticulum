@@ -82,7 +82,11 @@ using namespace RNS::Utilities;
 // CBA MCU
 /*static*/ //uint16_t Transport::_hashlist_maxsize		= 1000000;
 /*static*/ //uint16_t Transport::_hashlist_maxsize		= 100;
+#ifdef ARDUINO
+/*static*/ uint16_t Transport::_hashlist_maxsize		= 50;   // Reduced for MCU memory
+#else
 /*static*/ uint16_t Transport::_hashlist_maxsize		= 100;
+#endif
 // CBA ACCUMULATES
 // CBA MCU
 /*static*/ //uint16_t Transport::_max_pr_tags			= 32000;
@@ -90,9 +94,13 @@ using namespace RNS::Utilities;
 
 // CBA
 // CBA ACCUMULATES
+#ifdef ARDUINO
+/*static*/ uint16_t Transport::_path_table_maxsize		= 32;   // Reduced for MCU - each path stores full announce packet (~400 bytes)
+/*static*/ uint16_t Transport::_path_table_maxpersist	= 32;
+#else
 /*static*/ uint16_t Transport::_path_table_maxsize		= 100;
-// CBA ACCUMULATES
 /*static*/ uint16_t Transport::_path_table_maxpersist	= 100;
+#endif
 /*static*/ bool Transport::_probe_destination_enabled	= false;
 /*static*/ double Transport::_last_saved				= 0.0;
 /*static*/ float Transport::_save_interval				= 3600.0;
