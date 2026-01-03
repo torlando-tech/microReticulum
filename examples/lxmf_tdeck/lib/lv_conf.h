@@ -19,12 +19,14 @@
 /*====================
    MEMORY SETTINGS
  *====================*/
-#define LV_MEM_CUSTOM 0
-#define LV_MEM_SIZE (128 * 1024U)  /* 128KB for LVGL internal heap */
-#define LV_MEM_ADR 0
-#define LV_MEM_POOL_INCLUDE <stdlib.h>
-#define LV_MEM_POOL_ALLOC malloc
-#define LV_MEM_POOL_FREE free
+/* Hybrid allocator: small allocations use fast internal RAM,
+ * large allocations (>1KB) use PSRAM to preserve internal heap.
+ * This balances UI performance with memory availability. */
+#define LV_MEM_CUSTOM 1
+#define LV_MEM_CUSTOM_INCLUDE "lv_mem_hybrid.h"
+#define LV_MEM_CUSTOM_ALLOC lv_mem_hybrid_alloc
+#define LV_MEM_CUSTOM_FREE lv_mem_hybrid_free
+#define LV_MEM_CUSTOM_REALLOC lv_mem_hybrid_realloc
 
 /*====================
    HAL SETTINGS
