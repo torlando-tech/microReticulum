@@ -51,6 +51,10 @@ std::vector<Bytes> BLEFragmenter::fragment(const Bytes& data, uint16_t sequence_
     }
 
     uint16_t total_fragments = calculateFragmentCount(data.size());
+
+    // Pre-allocate vector to avoid incremental reallocations
+    fragments.reserve(total_fragments);
+
     size_t offset = 0;
 
     for (uint16_t i = 0; i < total_fragments; i++) {
@@ -82,8 +86,12 @@ std::vector<Bytes> BLEFragmenter::fragment(const Bytes& data, uint16_t sequence_
         fragments.push_back(createFragment(type, sequence, total_fragments, payload));
     }
 
-    TRACE("BLEFragmenter: Fragmented " + std::to_string(data.size()) +
-          " bytes into " + std::to_string(fragments.size()) + " fragments");
+    {
+        char buf[80];
+        snprintf(buf, sizeof(buf), "BLEFragmenter: Fragmented %zu bytes into %zu fragments",
+                 data.size(), fragments.size());
+        TRACE(buf);
+    }
 
     return fragments;
 }

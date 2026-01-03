@@ -1757,10 +1757,19 @@ void BluedroidPlatform::handleGattcSearchComplete(esp_ble_gattc_cb_param_t* para
         return;
     }
 
-    DEBUG("BluedroidPlatform: Found " + std::to_string(count) + " characteristics for conn_handle=" + std::to_string(conn_handle));
+    {
+        char buf[80];
+        snprintf(buf, sizeof(buf), "BluedroidPlatform: Found %u characteristics for conn_handle=%u", count, conn_handle);
+        DEBUG(buf);
+    }
 
-    // Get all characteristics
-    esp_gattc_char_elem_t* chars = new esp_gattc_char_elem_t[count];
+    // Get all characteristics - use fixed stack buffer to avoid heap fragmentation
+    // We only need RX, TX, Identity chars so 16 is plenty (most services have <10)
+    static const uint16_t MAX_CHARS = 16;
+    esp_gattc_char_elem_t chars[MAX_CHARS];
+    if (count > MAX_CHARS) {
+        count = MAX_CHARS;  // Limit to what we can handle
+    }
     status = esp_ble_gattc_get_all_char(
         _gattc_if,
         param->search_cmpl.conn_id,
@@ -1787,15 +1796,16 @@ void BluedroidPlatform::handleGattcSearchComplete(esp_ble_gattc_cb_param_t* para
             return memcmp(uuid.uuid.uuid128, expected, 16) == 0;
         };
 
+        char buf[64];
         for (uint16_t i = 0; i < count; i++) {
             if (uuidMatches(chars[i].uuid, UUID::RX_CHAR)) {
                 conn->rx_char_handle = chars[i].char_handle;
-                DEBUG("BluedroidPlatform: Found RX char, handle=" +
-                      std::to_string(conn->rx_char_handle));
+                snprintf(buf, sizeof(buf), "BluedroidPlatform: Found RX char, handle=%u", conn->rx_char_handle);
+                DEBUG(buf);
             } else if (uuidMatches(chars[i].uuid, UUID::TX_CHAR)) {
                 conn->tx_char_handle = chars[i].char_handle;
-                DEBUG("BluedroidPlatform: Found TX char, handle=" +
-                      std::to_string(conn->tx_char_handle));
+                snprintf(buf, sizeof(buf), "BluedroidPlatform: Found TX char, handle=%u", conn->tx_char_handle);
+                DEBUG(buf);
 
                 // Get descriptor for TX (CCCD)
                 uint16_t desc_count = 1;
@@ -1809,27 +1819,28 @@ void BluedroidPlatform::handleGattcSearchComplete(esp_ble_gattc_cb_param_t* para
                         chars[i].char_handle, cccd_uuid,
                         &descr, &desc_count) == ESP_GATT_OK && desc_count > 0) {
                     conn->tx_cccd_handle = descr.handle;
-                    DEBUG("BluedroidPlatform: Found TX CCCD, handle=" +
-                          std::to_string(conn->tx_cccd_handle));
+                    snprintf(buf, sizeof(buf), "BluedroidPlatform: Found TX CCCD, handle=%u", conn->tx_cccd_handle);
+                    DEBUG(buf);
                 }
             } else if (uuidMatches(chars[i].uuid, UUID::IDENTITY_CHAR)) {
                 conn->identity_char_handle = chars[i].char_handle;
-                DEBUG("BluedroidPlatform: Found Identity char, handle=" +
-                      std::to_string(conn->identity_char_handle));
+                snprintf(buf, sizeof(buf), "BluedroidPlatform: Found Identity char, handle=%u", conn->identity_char_handle);
+                DEBUG(buf);
             }
         }
     }
 
-    delete[] chars;
+    // chars is stack-allocated, no delete needed
 
     conn->discovery_state = BluedroidConnection::DiscoveryState::COMPLETE;
 
     bool success = (conn->rx_char_handle != 0 && conn->tx_char_handle != 0);
-    INFO("BluedroidPlatform: Service discovery complete for conn " + std::to_string(conn_handle) +
-         " RX=" + std::to_string(conn->rx_char_handle) +
-         " TX=" + std::to_string(conn->tx_char_handle) +
-         " CCCD=" + std::to_string(conn->tx_cccd_handle) +
-         " Identity=" + std::to_string(conn->identity_char_handle));
+    {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "BluedroidPlatform: Service discovery complete for conn %u RX=%u TX=%u CCCD=%u Identity=%u",
+                 conn_handle, conn->rx_char_handle, conn->tx_char_handle, conn->tx_cccd_handle, conn->identity_char_handle);
+        INFO(buf);
+    }
 
     if (_on_services_discovered) {
         ConnectionHandle ch = getConnection(conn_handle);
