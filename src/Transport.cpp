@@ -2664,6 +2664,11 @@ using namespace RNS::Utilities;
 
 						random_blobs.insert(random_blob);
 
+						// Enforce MAX_RANDOM_BLOBS limit to prevent unbounded memory growth
+						while (random_blobs.size() > Type::Transport::MAX_RANDOM_BLOBS) {
+							random_blobs.erase(random_blobs.begin());  // Remove oldest (smallest) blob
+						}
+
 						if ((Reticulum::transport_enabled() || Transport::from_local_client(packet)) && packet.context() != Type::Packet::PATH_RESPONSE) {
 							// Insert announce into announce table for retransmission
 
