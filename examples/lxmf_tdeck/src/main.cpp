@@ -1240,6 +1240,7 @@ void loop() {
     // Periodic heap monitoring (every 5 seconds)
     static uint32_t last_heap_check = 0;
     static uint32_t last_free_heap = 0;
+    static uint32_t last_table_check = 0;
     if (millis() - last_heap_check > 5000) {
         last_heap_check = millis();
         uint32_t free_heap = ESP.getFreeHeap();
@@ -1271,6 +1272,9 @@ void loop() {
                 RNS::Transport::packet_hashlist_count(),
                 RNS::Transport::interfaces_count(),
                 RNS::Transport::destinations_count());
+            Serial.printf("[IDENTITY] known_dest=%zu known_ratch=%zu\n",
+                RNS::Identity::known_destinations_count(),
+                RNS::Identity::known_ratchets_count());
         } else if (free_heap < 50000) {
             Serial.println("[HEAP] WARNING: Free heap below 50KB");
         }
@@ -1279,6 +1283,20 @@ void loop() {
         if (max_block < free_heap / 2) {
             Serial.printf("[HEAP] WARNING: Fragmentation detected (max_block=%u, free=%u)\n",
                 max_block, free_heap);
+        }
+
+        // Periodic table diagnostics (every 30 seconds)
+        if (millis() - last_table_check > 30000) {
+            last_table_check = millis();
+            Serial.printf("[DIAG] ikd=%zu ikr=%zu ann=%zu dest=%zu pkt=%zu held=%zu rev=%zu link=%zu\n",
+                RNS::Identity::known_destinations_count(),
+                RNS::Identity::known_ratchets_count(),
+                RNS::Transport::announce_table_count(),
+                RNS::Transport::destination_table_count(),
+                RNS::Transport::packet_hashlist_count(),
+                RNS::Transport::held_announces_count(),
+                RNS::Transport::reverse_table_count(),
+                RNS::Transport::link_table_count());
         }
 
         last_free_heap = free_heap;

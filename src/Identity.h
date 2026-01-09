@@ -61,6 +61,7 @@ namespace RNS {
 		// Ratchet cache for forward secrecy
 		static std::map<Bytes, Bytes> _known_ratchets;  // dest_hash -> ratchet_public_key
 		static bool _saving_known_ratchets;
+		static constexpr size_t KNOWN_RATCHETS_MAXSIZE = 128;  // Limit to prevent memory leak
 
 	public:
 		Identity(bool create_keys = true);
@@ -140,6 +141,8 @@ namespace RNS {
 		static Bytes recall_ratchet(const Bytes& destination_hash);
 		static bool save_known_ratchets();
 		static void load_known_ratchets();
+		static inline size_t known_ratchets_count() { return _known_ratchets.size(); }
+		static void cull_known_ratchets();
 
 		/*
 		Get a SHA-256 hash of passed data.

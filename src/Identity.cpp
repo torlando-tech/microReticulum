@@ -845,6 +845,11 @@ void Identity::prove(const Packet& packet) const {
 	DEBUG("Remembering ratchet for destination " + destination_hash.toHex());
 	DEBUG("  Ratchet public key: " + ratchet_public_key.toHex());
 
+	// Cull if map is getting too large
+	if (_known_ratchets.size() >= KNOWN_RATCHETS_MAXSIZE) {
+		cull_known_ratchets();
+	}
+
 	// Store or update ratchet in cache
 	_known_ratchets[destination_hash] = ratchet_public_key;
 
@@ -884,4 +889,23 @@ Recall ratchet public key for a destination hash.
 	// TODO: Implement loading from JSON file
 	// Similar to load_known_destinations()
 	DEBUG("Loading known ratchets (persistence not yet implemented)");
+}
+
+/*static*/ void Identity::cull_known_ratchets() {
+	// Simple culling: remove half of entries when limit is reached
+	// Since std::map doesn't track insertion order, we remove by iterator position
+	// which is arbitrary but deterministic (sorted by key)
+	size_t current_size = _known_ratchets.size();
+	if (current_size <= KNOWN_RATCHETS_MAXSIZE / 2) {
+		return;  // Already small enough
+	}
+
+	DEBUG("Culling known ratchets from " + std::to_string(current_size) +
+	      " to " + std::to_string(KNOWN_RATCHETS_MAXSIZE / 2));
+
+	size_t to_remove = current_size - (KNOWN_RATCHETS_MAXSIZE / 2);
+	auto iter = _known_ratchets.begin();
+	for (size_t i = 0; i < to_remove && iter != _known_ratchets.end(); ++i) {
+		iter = _known_ratchets.erase(iter);
+	}
 }
