@@ -251,10 +251,11 @@ void ChatScreen::load_more_messages() {
         INFO(log_buf);
     }
 
-    // Build list of new items to prepend
-    std::vector<MessageItem> new_items;
-    new_items.reserve(load_count);
-    for (size_t i = new_start_idx; i < _display_start_idx; i++) {
+    // Load and prepend messages directly (no temporary vector allocation)
+    // Process in reverse order so push_front maintains correct sequence
+    size_t items_added = 0;
+    for (size_t i = _display_start_idx; i > new_start_idx; ) {
+        --i;  // Decrement first since we're iterating backwards
         const auto& msg_hash = _all_message_hashes[i];
 
         ::LXMF::MessageStore::MessageMetadata meta = _message_store->load_message_metadata(msg_hash);
@@ -269,23 +270,16 @@ void ChatScreen::load_more_messages() {
         item.outgoing = !meta.incoming;
         item.delivered = (meta.state == static_cast<int>(::LXMF::Type::Message::DELIVERED));
         item.failed = (meta.state == static_cast<int>(::LXMF::Type::Message::FAILED));
-        new_items.push_back(item);
-    }
 
-    // Create bubbles at the top (prepend by inserting at index 0)
-    for (size_t i = 0; i < new_items.size(); i++) {
-        const auto& item = new_items[i];
-
-        // Create bubble
+        // Create bubble at index 0 (top of list)
         create_message_bubble(item);
-
-        // Move it to the correct position at the top
         lv_obj_t* bubble_row = lv_obj_get_child(_message_list, lv_obj_get_child_cnt(_message_list) - 1);
-        lv_obj_move_to_index(bubble_row, i);
-    }
+        lv_obj_move_to_index(bubble_row, 0);
 
-    // Prepend to our messages vector
-    _messages.insert(_messages.begin(), new_items.begin(), new_items.end());
+        // Prepend to deque (O(1) operation)
+        _messages.push_front(item);
+        items_added++;
+    }
     _display_start_idx = new_start_idx;
 
     _loading_more = false;

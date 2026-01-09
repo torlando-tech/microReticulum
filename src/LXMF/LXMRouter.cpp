@@ -286,7 +286,7 @@ void LXMRouter::process_outbound() {
 				if (_sent_callback) {
 					_sent_callback(message);
 				}
-				_pending_outbound.erase(_pending_outbound.begin());
+				_pending_outbound.pop_front();
 			} else {
 				// Propagation not ready yet - wait and retry
 				DEBUG("  Propagation delivery not ready, will retry...");
@@ -330,7 +330,7 @@ void LXMRouter::process_outbound() {
 				}
 
 				// Remove from pending queue
-				_pending_outbound.erase(_pending_outbound.begin());
+				_pending_outbound.pop_front();
 			} else {
 				ERROR("Failed to send OPPORTUNISTIC message");
 				message.state(Type::Message::FAILED);
@@ -340,7 +340,7 @@ void LXMRouter::process_outbound() {
 				}
 
 				_failed_outbound.push_back(message);
-				_pending_outbound.erase(_pending_outbound.begin());
+				_pending_outbound.pop_front();
 			}
 		} else {
 			// DIRECT delivery - need a link for large messages
@@ -385,7 +385,7 @@ void LXMRouter::process_outbound() {
 				}
 
 				// Remove from pending queue
-				_pending_outbound.erase(_pending_outbound.begin());
+				_pending_outbound.pop_front();
 			} else {
 				ERROR("Failed to send message via link");
 				message.state(Type::Message::FAILED);
@@ -397,7 +397,7 @@ void LXMRouter::process_outbound() {
 
 				// Move to failed queue
 				_failed_outbound.push_back(message);
-				_pending_outbound.erase(_pending_outbound.begin());
+				_pending_outbound.pop_front();
 			}
 		}
 
@@ -413,7 +413,7 @@ void LXMRouter::process_outbound() {
 
 		// Move to failed queue
 		_failed_outbound.push_back(message);
-		_pending_outbound.erase(_pending_outbound.begin());
+		_pending_outbound.pop_front();
 	}
 }
 
@@ -438,7 +438,7 @@ void LXMRouter::process_inbound() {
 		}
 
 		// Remove from pending queue
-		_pending_inbound.erase(_pending_inbound.begin());
+		_pending_inbound.pop_front();
 
 		snprintf(buf, sizeof(buf), "Inbound message processed (%zu remaining)", _pending_inbound.size());
 		INFO(buf);
@@ -447,7 +447,7 @@ void LXMRouter::process_inbound() {
 		snprintf(buf, sizeof(buf), "Exception processing inbound message: %s", e.what());
 		ERROR(buf);
 		// Discard message on error
-		_pending_inbound.erase(_pending_inbound.begin());
+		_pending_inbound.pop_front();
 	}
 }
 

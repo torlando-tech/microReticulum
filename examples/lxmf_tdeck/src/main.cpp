@@ -1235,10 +1235,10 @@ void loop() {
         }
     }
 
-    // Periodic heap monitoring (every 10 seconds)
+    // Periodic heap monitoring (every 5 seconds)
     static uint32_t last_heap_check = 0;
     static uint32_t last_free_heap = 0;
-    if (millis() - last_heap_check > 10000) {
+    if (millis() - last_heap_check > 5000) {
         last_heap_check = millis();
         uint32_t free_heap = ESP.getFreeHeap();
         uint32_t min_heap = ESP.getMinFreeHeap();
@@ -1248,6 +1248,7 @@ void loop() {
 
         Serial.printf("[HEAP] free=%u min=%u max_block=%u delta=%+d stack_hwm=%u\n",
             free_heap, min_heap, max_block, delta, stack_hwm);
+        Serial.flush();
 
         // Threshold warnings
         if (free_heap < 20000) {

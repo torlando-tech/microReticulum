@@ -178,8 +178,11 @@ void AnnounceListScreen::refresh() {
             return a.timestamp > b.timestamp;
         });
 
-    std::string count_msg = "  Found " + std::to_string(_announces.size()) + " announced destinations";
-    INFO(count_msg.c_str());
+    {
+        char log_buf[64];
+        snprintf(log_buf, sizeof(log_buf), "  Found %zu announced destinations", _announces.size());
+        INFO(log_buf);
+    }
 
     if (_announces.empty()) {
         show_empty_state();
@@ -188,8 +191,9 @@ void AnnounceListScreen::refresh() {
         const size_t MAX_DISPLAY = 20;
         size_t display_count = std::min(_announces.size(), MAX_DISPLAY);
 
-        // Reserve pool capacity to avoid reallocations (which would invalidate pointers)
+        // Reserve capacity to avoid reallocations during population
         _dest_hash_pool.reserve(display_count);
+        _announce_containers.reserve(display_count);
 
         size_t count = 0;
         for (const auto& item : _announces) {

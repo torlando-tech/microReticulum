@@ -194,11 +194,16 @@ void ConversationListScreen::refresh() {
     // Load conversations from store
     std::vector<Bytes> peer_hashes = _message_store->get_conversations();
 
-    // Reserve pool capacity to avoid reallocations (which would invalidate pointers)
+    // Reserve capacity to avoid reallocations during population
     _peer_hash_pool.reserve(peer_hashes.size());
+    _conversations.reserve(peer_hashes.size());
+    _conversation_containers.reserve(peer_hashes.size());
 
-    std::string count_msg = "  Found " + std::to_string(peer_hashes.size()) + " conversations";
-    INFO(count_msg.c_str());
+    {
+        char log_buf[48];
+        snprintf(log_buf, sizeof(log_buf), "  Found %zu conversations", peer_hashes.size());
+        INFO(log_buf);
+    }
 
     for (const auto& peer_hash : peer_hashes) {
         std::vector<Bytes> messages = _message_store->get_messages_for_conversation(peer_hash);

@@ -10,6 +10,7 @@
 
 #include <map>
 #include <vector>
+#include <deque>
 #include <set>
 #include <string>
 #include <functional>
@@ -497,10 +498,10 @@ namespace LXMF {
 		RNS::Destination _delivery_destination;    // For receiving messages
 		std::string _storage_path;                 // Storage path for persistence
 
-		// Message queues
-		std::vector<LXMessage> _pending_outbound;  // Messages waiting to be sent
-		std::vector<LXMessage> _pending_inbound;   // Messages received, waiting for processing
-		std::vector<LXMessage> _failed_outbound;   // Messages that failed to send
+		// Message queues (deque for efficient front/back operations)
+		std::deque<LXMessage> _pending_outbound;  // Messages waiting to be sent
+		std::deque<LXMessage> _pending_inbound;   // Messages received, waiting for processing
+		std::deque<LXMessage> _failed_outbound;   // Messages that failed to send
 
 		// Link management for DIRECT delivery
 		std::map<RNS::Bytes, RNS::Link> _direct_links;  // dest_hash -> Link
