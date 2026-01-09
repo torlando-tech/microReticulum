@@ -4,8 +4,6 @@
 #include "Transport.h"
 #include "Utilities/OS.h"
 
-#include <algorithm>
-
 using namespace RNS;
 using namespace RNS::Type::Interface;
 
@@ -41,7 +39,7 @@ void Interface::handle_incoming(const Bytes& data) {
 }
 
 void Interface::process_announce_queue() {
-	if (!_impl || _impl->_announce_queue.empty()) {
+	if (!_impl || _impl->announce_queue_empty()) {
 		return;
 	}
 
@@ -54,48 +52,61 @@ void Interface::process_announce_queue() {
 	static constexpr double MCU_ANNOUNCE_LIFE = Type::Reticulum::QUEUED_ANNOUNCE_LIFE;
 #endif
 
-	// Remove stale entries
-	_impl->_announce_queue.remove_if([now](const AnnounceEntry& entry) {
-		return now > (entry._time + MCU_ANNOUNCE_LIFE);
-	});
+	// Remove stale entries (iterate backwards to safely remove)
+	for (size_t i = _impl->announce_queue_size(); i > 0; i--) {
+		const AnnounceEntry& entry = _impl->announce_queue_at(i - 1);
+		if (now > (entry._time + MCU_ANNOUNCE_LIFE)) {
+			_impl->announce_queue_remove_at(i - 1);
+		}
+	}
 
 	// Limit queue size for MCU (remove oldest if over limit)
 #ifdef ARDUINO
 	static constexpr size_t MCU_MAX_QUEUED_ANNOUNCES = 16;
-	while (_impl->_announce_queue.size() > MCU_MAX_QUEUED_ANNOUNCES) {
-		_impl->_announce_queue.pop_front();
+	while (_impl->announce_queue_size() > MCU_MAX_QUEUED_ANNOUNCES) {
+		AnnounceEntry discarded;
+		_impl->announce_queue_pop(discarded);
 	}
 #endif
 
 	// Check if we're allowed to send
-	if (_impl->_announce_queue.empty() || now < _impl->_announce_allowed_at) {
+	if (_impl->announce_queue_empty() || now < _impl->_announce_allowed_at) {
 		return;
 	}
 
 	// Find entry with minimum hops
-	auto min_it = std::min_element(
-		_impl->_announce_queue.begin(),
-		_impl->_announce_queue.end(),
-		[](const AnnounceEntry& a, const AnnounceEntry& b) {
-			if (a._hops != b._hops) return a._hops < b._hops;
-			return a._time < b._time;  // Oldest first for same hop count
+	size_t min_index = 0;
+	bool found = false;
+	for (size_t i = 0; i < _impl->announce_queue_size(); i++) {
+		const AnnounceEntry& entry = _impl->announce_queue_at(i);
+		if (!found) {
+			min_index = i;
+			found = true;
+		} else {
+			const AnnounceEntry& min_entry = _impl->announce_queue_at(min_index);
+			if (entry._hops < min_entry._hops ||
+			    (entry._hops == min_entry._hops && entry._time < min_entry._time)) {
+				min_index = i;
+			}
 		}
-	);
+	}
 
-	if (min_it != _impl->_announce_queue.end()) {
+	if (found) {
+		const AnnounceEntry& min_entry = _impl->announce_queue_at(min_index);
+
 		// Calculate wait time for next announce
 		uint32_t wait_time = 0;
 		if (_impl->_bitrate > 0 && _impl->_announce_cap > 0) {
-			uint32_t tx_time = (min_it->_raw.size() * 8) / _impl->_bitrate;
+			uint32_t tx_time = (min_entry._raw.size() * 8) / _impl->_bitrate;
 			wait_time = (tx_time / _impl->_announce_cap);
 		}
 		_impl->_announce_allowed_at = now + wait_time;
 
 		// Transmit the announce
-		send_outgoing(min_it->_raw);
+		send_outgoing(min_entry._raw);
 
 		// Remove from queue
-		_impl->_announce_queue.erase(min_it);
+		_impl->announce_queue_remove_at(min_index);
 	}
 }
 

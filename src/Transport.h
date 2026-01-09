@@ -106,13 +106,13 @@ namespace RNS {
 		// CBA TODO Analyze safety of using Packet references here
 		class DestinationEntry {
 		public:
+			static constexpr size_t RANDOM_BLOBS_SIZE = 8;
 			DestinationEntry() {}
-			DestinationEntry(double timestamp, const Bytes& received_from, uint8_t announce_hops, double expires, const std::set<Bytes>& random_blobs, const Bytes& receiving_interface, const Bytes& packet) :
+			DestinationEntry(double timestamp, const Bytes& received_from, uint8_t announce_hops, double expires, const Bytes& receiving_interface, const Bytes& packet) :
 				_timestamp(timestamp),
 				_received_from(received_from),
 				_hops(announce_hops),
 				_expires(expires),
-				_random_blobs(random_blobs),
 				_receiving_interface(receiving_interface),
 				_announce_packet(packet)
 			{
@@ -120,17 +120,41 @@ namespace RNS {
 		public:
 			inline Interface receiving_interface() const { return find_interface_from_hash(_receiving_interface); }
 			inline Packet announce_packet() const { return get_cached_packet(_announce_packet); }
+			bool random_blobs_contains(const Bytes& blob) const {
+				for (size_t i = 0; i < _random_blobs_count; i++) {
+					if (_random_blobs[i] == blob) return true;
+				}
+				return false;
+			}
+			bool random_blobs_add(const Bytes& blob) {
+				if (random_blobs_contains(blob)) return false;
+				if (_random_blobs_count >= RANDOM_BLOBS_SIZE) {
+					// Remove oldest (shift array left)
+					for (size_t i = 0; i < RANDOM_BLOBS_SIZE - 1; i++) {
+						_random_blobs[i] = _random_blobs[i + 1];
+					}
+					_random_blobs[RANDOM_BLOBS_SIZE - 1] = blob;
+					return true;
+				}
+				_random_blobs[_random_blobs_count++] = blob;
+				return true;
+			}
+			size_t random_blobs_count() const { return _random_blobs_count; }
+			const Bytes& random_blobs_get(size_t idx) const { return _random_blobs[idx]; }
 		public:
 			double _timestamp = 0;
 			Bytes _received_from;
 			uint8_t _hops = 0;
 			double _expires = 0;
-			std::set<Bytes> _random_blobs;
 			//Interface _receiving_interface = {Type::NONE};
 			Bytes _receiving_interface;
 			//const Packet& _announce_packet;
 			//Packet _announce_packet = {Type::NONE};
 			Bytes _announce_packet;
+		private:
+			Bytes _random_blobs[RANDOM_BLOBS_SIZE];
+			size_t _random_blobs_count = 0;
+		public:
 			inline bool operator < (const DestinationEntry& entry) const {
 				// sort by ascending timestamp (oldest entries at the top)
 				return _timestamp < entry._timestamp;
@@ -146,8 +170,8 @@ namespace RNS {
 					" receiving_interface=" + _receiving_interface.toHex() +
 					" announce_packet=" + _announce_packet.toHex();
 				dump += " random_blobs=(";
-				for (auto& blob : _random_blobs) {
-					dump += blob.toHex() + ",";
+				for (size_t i = 0; i < _random_blobs_count; i++) {
+					dump += _random_blobs[i].toHex() + ",";
 				}
 				dump += ")";
 				return dump;
@@ -276,6 +300,13 @@ namespace RNS {
 		// CBA TODO Analyze safety of using Inrerface references here
 		class TunnelEntry {
 		public:
+			static constexpr size_t SERIALISED_PATHS_SIZE = 8;
+			struct SerialisedPathSlot {
+				bool in_use = false;
+				Bytes destination_hash;
+				DestinationEntry entry;
+				void clear() { in_use = false; destination_hash.clear(); entry = DestinationEntry(); }
+			};
 			TunnelEntry() {}
 			TunnelEntry(const Bytes& tunnel_id, const Bytes& interface_hash, double expires) :
 				_tunnel_id(tunnel_id),
@@ -286,29 +317,75 @@ namespace RNS {
 			void clear() {
 				_tunnel_id.clear();
 				_interface_hash.clear();
-				_serialised_paths.clear();
+				for (size_t i = 0; i < SERIALISED_PATHS_SIZE; i++) {
+					_serialised_paths[i].clear();
+				}
 				_expires = 0;
+			}
+			SerialisedPathSlot* find_serialised_path(const Bytes& hash) {
+				for (size_t i = 0; i < SERIALISED_PATHS_SIZE; i++) {
+					if (_serialised_paths[i].in_use && _serialised_paths[i].destination_hash == hash) {
+						return &_serialised_paths[i];
+					}
+				}
+				return nullptr;
+			}
+			SerialisedPathSlot* find_empty_serialised_path() {
+				for (size_t i = 0; i < SERIALISED_PATHS_SIZE; i++) {
+					if (!_serialised_paths[i].in_use) return &_serialised_paths[i];
+				}
+				return nullptr;
+			}
+			size_t serialised_paths_count() const {
+				size_t count = 0;
+				for (size_t i = 0; i < SERIALISED_PATHS_SIZE; i++) {
+					if (_serialised_paths[i].in_use) count++;
+				}
+				return count;
 			}
 		public:
 			Bytes _tunnel_id;
 			Bytes _interface_hash;
-			std::map<Bytes, DestinationEntry> _serialised_paths;
+			SerialisedPathSlot _serialised_paths[SERIALISED_PATHS_SIZE];
 			double _expires = 0;
 		};
 
 		class RateEntry {
 		public:
+			static constexpr size_t TIMESTAMPS_SIZE = 16;
 			RateEntry() {}
 			RateEntry(double now) :
 				_last(now)
 			{
-				_timestamps.push_back(now);
+				timestamps_add(now);
+			}
+			void timestamps_add(double ts) {
+				_timestamps[_timestamps_head] = ts;
+				_timestamps_head = (_timestamps_head + 1) % TIMESTAMPS_SIZE;
+				if (_timestamps_count < TIMESTAMPS_SIZE) _timestamps_count++;
+			}
+			size_t timestamps_count() const { return _timestamps_count; }
+			double timestamps_get(size_t idx) const {
+				// Get timestamp by index (0 = oldest)
+				if (idx >= _timestamps_count) return 0.0;
+				size_t actual_idx = (_timestamps_head + TIMESTAMPS_SIZE - _timestamps_count + idx) % TIMESTAMPS_SIZE;
+				return _timestamps[actual_idx];
+			}
+			void clear() {
+				_last = 0.0;
+				_rate_violations = 0.0;
+				_blocked_until = 0.0;
+				_timestamps_head = 0;
+				_timestamps_count = 0;
 			}
 		public:
 			double _last = 0.0;
 			double _rate_violations = 0.0;
 			double _blocked_until = 0.0;
-			std::vector<double> _timestamps;
+		private:
+			double _timestamps[TIMESTAMPS_SIZE] = {0};
+			size_t _timestamps_head = 0;
+			size_t _timestamps_count = 0;
 		};
 
 		// Fixed-size pool structures for zero heap fragmentation

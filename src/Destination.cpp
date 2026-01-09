@@ -195,17 +195,13 @@ Packet Destination::announce(const Bytes& app_data, bool path_response, const In
 	}
 
 	double now = OS::time();
-    auto it = _object->_path_responses.begin();
-    while (it != _object->_path_responses.end()) {
-		// vector
-		//Response& entry = *it;
-		// map
-		PathResponse& entry = (*it).second;
-		if (now > (entry.first + PR_TAG_WINDOW)) {
-			it = _object->_path_responses.erase(it);
-		}
-		else {
-			++it;
+	// Clean up expired path responses from fixed pool
+	for (size_t i = 0; i < Object::PATH_RESPONSES_SIZE; i++) {
+		if (_object->_path_responses[i].in_use) {
+			PathResponse& entry = _object->_path_responses[i].response;
+			if (now > (entry.first + PR_TAG_WINDOW)) {
+				_object->_path_responses[i].clear();
+			}
 		}
 	}
 
@@ -238,7 +234,17 @@ Packet Destination::announce(const Bytes& app_data, bool path_response, const In
 	TRACE("Destination::announce: path test finished");
 */
 
-	if (path_response && !tag.empty() && _object->_path_responses.find(tag) != _object->_path_responses.end()) {
+	// Search for existing path response in fixed pool
+	Object::PathResponseSlot* found_slot = nullptr;
+	if (path_response && !tag.empty()) {
+		for (size_t i = 0; i < Object::PATH_RESPONSES_SIZE; i++) {
+			if (_object->_path_responses[i].in_use && _object->_path_responses[i].tag == tag) {
+				found_slot = &_object->_path_responses[i];
+				break;
+			}
+		}
+	}
+	if (found_slot) {
 		// This code is currently not used, since Transport will block duplicate
 		// path requests based on tags. When multi-path support is implemented in
 		// Transport, this will allow Transport to detect redundant paths to the
@@ -248,7 +254,7 @@ Packet Destination::announce(const Bytes& app_data, bool path_response, const In
 		// potentially also be useful in determining characteristics of the
 		// multiple available paths, and to choose the best one.
 		//z TRACE("Using cached announce data for answering path request with tag "+RNS.prettyhexrep(tag));
-		announce_data << _object->_path_responses[tag].second;
+		announce_data << found_slot->response.second;
 	}
 	else {
 		Bytes destination_hash = _object->_hash;
@@ -285,7 +291,7 @@ Packet Destination::announce(const Bytes& app_data, bool path_response, const In
 		announce_data << _object->_identity.get_public_key() << _object->_name_hash << random_hash << signature;
 
 		// Include ratchet public key if ratchets are enabled
-		if (_object->_ratchets_enabled && !_object->_ratchets.empty()) {
+		if (_object->_ratchets_enabled && _object->_ratchets_count > 0) {
 			Bytes ratchet_pub = get_ratchet_public_bytes();
 			if (ratchet_pub) {
 				DEBUG("Including ratchet in announce for " + _object->_hexhash);
@@ -298,8 +304,15 @@ Packet Destination::announce(const Bytes& app_data, bool path_response, const In
 			announce_data << new_app_data;
 		}
 
-		// CBA ACCUMULATES
-		_object->_path_responses.insert({tag, {OS::time(), announce_data}});
+		// CBA ACCUMULATES - insert into fixed pool
+		for (size_t i = 0; i < Object::PATH_RESPONSES_SIZE; i++) {
+			if (!_object->_path_responses[i].in_use) {
+				_object->_path_responses[i].in_use = true;
+				_object->_path_responses[i].tag = tag;
+				_object->_path_responses[i].response = {OS::time(), announce_data};
+				break;
+			}
+		}
 	}
 	//TRACE("Destination::announce: announce_data:" + announce_data.toHex());
 
@@ -498,7 +511,7 @@ Signs information for ``RNS.Destination.SINGLE`` type destination.
 
 bool Destination::has_link(const Link& link) {
 	assert(_object);
-	return (_object->_links.count(link) > 0);
+	return _object->_links.find(link) != _object->_links.end();
 }
 
 void Destination::remove_link(const Link& link) {
@@ -535,7 +548,7 @@ void Destination::enable_ratchets(const char* ratchets_path) {
 	// TODO: Implement _load_ratchets() to load from JSON file
 
 	// If no ratchets exist, create the first one
-	if (_object->_ratchets.empty()) {
+	if (_object->_ratchets_count == 0) {
 		rotate_ratchets();
 	}
 }
@@ -555,7 +568,7 @@ void Destination::disable_ratchets() {
 	INFO("Disabling ratchets for destination " + _object->_hexhash);
 
 	_object->_ratchets_enabled = false;
-	_object->_ratchets.clear();
+	ratchets_clear();
 	_object->_latest_ratchet_id = {Bytes::NONE};
 	_object->_latest_ratchet_time = 0.0;
 }
@@ -563,8 +576,8 @@ void Destination::disable_ratchets() {
 /*
 Rotate ratchets for this destination.
 
-Creates a new ratchet and adds it to the front of the ratchets vector.
-Maintains a maximum of 128 ratchets (oldest are discarded).
+Creates a new ratchet and adds it to the circular buffer.
+Maintains a maximum of 128 ratchets (oldest are overwritten).
 
 Ratchets are automatically rotated based on _ratchet_interval (default 30 minutes).
 */
@@ -579,7 +592,7 @@ void Destination::rotate_ratchets(bool force) {
 	double current_time = Utilities::OS::time();
 
 	// Check if enough time has elapsed since last rotation (unless forced)
-	if (!force && !_object->_ratchets.empty() &&
+	if (!force && _object->_ratchets_count > 0 &&
 	    (current_time - _object->_latest_ratchet_time) < _object->_ratchet_interval) {
 		DEBUG("Skipping ratchet rotation - interval not elapsed");
 		DEBUG("  Time since last: " + std::to_string(current_time - _object->_latest_ratchet_time) + "s");
@@ -592,21 +605,14 @@ void Destination::rotate_ratchets(bool force) {
 	// Generate new ratchet
 	Cryptography::Ratchet new_ratchet = Cryptography::Ratchet::generate();
 
-	// Add to front of vector (most recent first)
-	_object->_ratchets.insert(_object->_ratchets.begin(), new_ratchet);
+	// Add to circular buffer
+	ratchets_add(new_ratchet);
 
 	// Update latest ratchet tracking
 	_object->_latest_ratchet_id = new_ratchet.get_id();
 	_object->_latest_ratchet_time = current_time;
 
-	// Trim to maximum ratchets (128)
-	if (_object->_ratchets.size() > Cryptography::Ratchet::MAX_RATCHETS) {
-		INFO("Trimming ratchets from " + std::to_string(_object->_ratchets.size()) +
-		     " to " + std::to_string(Cryptography::Ratchet::MAX_RATCHETS));
-		_object->_ratchets.resize(Cryptography::Ratchet::MAX_RATCHETS);
-	}
-
-	DEBUG("  Total ratchets: " + std::to_string(_object->_ratchets.size()));
+	DEBUG("  Total ratchets: " + std::to_string(_object->_ratchets_count));
 	DEBUG("  Latest ratchet ID: " + _object->_latest_ratchet_id.toHex());
 
 	// Persist ratchets to storage
@@ -621,7 +627,7 @@ Get the latest ratchet ID for this destination.
 Bytes Destination::get_latest_ratchet_id() const {
 	assert(_object);
 
-	if (!_object->_ratchets_enabled || _object->_ratchets.empty()) {
+	if (!_object->_ratchets_enabled || _object->_ratchets_count == 0) {
 		return {Bytes::NONE};
 	}
 
@@ -636,10 +642,77 @@ Get the latest ratchet public bytes for inclusion in announces.
 Bytes Destination::get_ratchet_public_bytes() const {
 	assert(_object);
 
-	if (!_object->_ratchets_enabled || _object->_ratchets.empty()) {
+	if (!_object->_ratchets_enabled || _object->_ratchets_count == 0) {
 		return {Bytes::NONE};
 	}
 
-	// Return public key of latest (first) ratchet
-	return _object->_ratchets[0].public_bytes();
+	// Return public key of latest ratchet (most recently added)
+	// The most recent ratchet is at the tail of the circular buffer
+	// tail = (head + count - 1) % size, but since we're adding at the "front" logically,
+	// the newest entry is the one before head (or wrapped around)
+	size_t newest_idx = (_object->_ratchets_head + Object::RATCHETS_SIZE - 1) % Object::RATCHETS_SIZE;
+	return _object->_ratchets[newest_idx].public_bytes();
+}
+
+/*
+Add a ratchet to the circular buffer.
+
+:param ratchet: The ratchet to add
+:returns: true if added successfully
+*/
+bool Destination::ratchets_add(const Cryptography::Ratchet& ratchet) {
+	assert(_object);
+
+	// Calculate the insertion index (one before head, wrapping around)
+	// This inserts at the "front" so newest entries are easily accessible
+	size_t insert_idx;
+	if (_object->_ratchets_count == 0) {
+		insert_idx = 0;
+		_object->_ratchets_head = 0;
+	} else {
+		insert_idx = (_object->_ratchets_head + Object::RATCHETS_SIZE - 1) % Object::RATCHETS_SIZE;
+		_object->_ratchets_head = insert_idx;
+	}
+
+	_object->_ratchets[insert_idx] = ratchet;
+
+	if (_object->_ratchets_count < Object::RATCHETS_SIZE) {
+		_object->_ratchets_count++;
+	}
+	// When count == RATCHETS_SIZE, we're overwriting the oldest entry (which was at head)
+
+	return true;
+}
+
+/*
+Find a ratchet by its public key.
+
+:param public_key: The public key to search for
+:returns: Pointer to the ratchet if found, nullptr otherwise
+*/
+const Cryptography::Ratchet* Destination::ratchets_find(const Bytes& public_key) const {
+	assert(_object);
+
+	for (size_t i = 0; i < _object->_ratchets_count; i++) {
+		size_t idx = (_object->_ratchets_head + i) % Object::RATCHETS_SIZE;
+		if (_object->_ratchets[idx].public_bytes() == public_key) {
+			return &_object->_ratchets[idx];
+		}
+	}
+
+	return nullptr;
+}
+
+/*
+Clear all ratchets from the circular buffer.
+*/
+void Destination::ratchets_clear() {
+	assert(_object);
+
+	// Reset to default-constructed ratchets
+	for (size_t i = 0; i < Object::RATCHETS_SIZE; i++) {
+		_object->_ratchets[i] = Cryptography::Ratchet();
+	}
+	_object->_ratchets_head = 0;
+	_object->_ratchets_count = 0;
 }

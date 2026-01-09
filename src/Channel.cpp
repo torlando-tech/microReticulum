@@ -45,9 +45,9 @@ bool Channel::is_ready_to_send() const {
 size_t Channel::_outstanding_count() const {
     if (!_object) return 0;
     size_t count = 0;
-    for (const auto& env : _object->_tx_ring) {
+    _object->tx_ring_foreach([&count](const Envelope& env) {
         if (env.tracked()) count++;
-    }
+    });
     return count;
 }
 
@@ -63,7 +63,7 @@ size_t Channel::mdu() const {
 
 size_t Channel::tx_ring_size() const {
     if (!_object) return 0;
-    return _object->_tx_ring.size();
+    return _object->tx_ring_size();
 }
 
 double Channel::link_rtt() const {
@@ -80,8 +80,8 @@ void Channel::_shutdown() {
     if (!_object) return;
     TRACE("Channel: Shutting down");
     _object->_ready = false;
-    _object->_tx_ring.clear();
-    _object->_rx_ring.clear();
+    _object->tx_ring_clear();
+    _object->rx_ring_clear();
 }
 
 void Channel::send(const MessageBase& message) {
@@ -151,9 +151,12 @@ void Channel::send(const MessageBase& message) {
     envelope.set_packet(packet);
     envelope.set_timestamp(OS::time());
     envelope.set_tracked(true);
-    _object->_tx_ring.push_back(std::move(envelope));
+    if (!_object->tx_ring_push_back(std::move(envelope))) {
+        ERROR("Channel::send: TX ring full");
+        return;
+    }
 
-    TRACEF("Channel::send: Packet sent, TX ring size=%zu", _object->_tx_ring.size());
+    TRACEF("Channel::send: Packet sent, TX ring size=%zu", _object->tx_ring_size());
 }
 
 void Channel::_receive(const Bytes& plaintext) {
@@ -226,11 +229,9 @@ void Channel::_receive(const Bytes& plaintext) {
     }
 
     // Check for duplicate in RX ring
-    for (const auto& existing : _object->_rx_ring) {
-        if (existing.sequence() == sequence) {
-            TRACEF("Channel::_receive: Duplicate sequence %u, dropping", sequence);
-            return;
-        }
+    if (_object->rx_ring_contains_sequence(sequence)) {
+        TRACEF("Channel::_receive: Duplicate sequence %u, dropping", sequence);
+        return;
     }
 
     // Emplace envelope in RX ring (in sequence order)
@@ -245,37 +246,22 @@ void Channel::_emplace_envelope(Envelope& envelope) {
 
     uint16_t sequence = envelope.sequence();
 
-    // Insert in sequence order
-    auto it = _object->_rx_ring.begin();
-    while (it != _object->_rx_ring.end()) {
-        // Calculate relative position
-        int32_t diff = static_cast<int32_t>(sequence) - static_cast<int32_t>(it->sequence());
-        if (diff < 0) {
-            diff += Type::Channel::SEQ_MODULUS;
-        }
-        // Normalize to handle wraparound
-        if (diff >= static_cast<int32_t>(Type::Channel::SEQ_MODULUS / 2)) {
-            diff -= Type::Channel::SEQ_MODULUS;
-        }
-
-        if (diff < 0) {
-            // Insert before this position
-            break;
-        }
-        ++it;
+    // Insert in sequence order using the fixed-size buffer method
+    if (!_object->rx_ring_insert_ordered(std::move(envelope))) {
+        ERROR("Channel::_emplace_envelope: RX ring full");
+        return;
     }
 
-    _object->_rx_ring.insert(it, std::move(envelope));
     TRACEF("Channel::_emplace_envelope: Inserted seq=%u, ring size=%zu",
-           sequence, _object->_rx_ring.size());
+           sequence, _object->rx_ring_size());
 }
 
 void Channel::_process_rx_ring() {
     if (!_object) return;
 
     // Process contiguous messages starting from expected sequence
-    while (!_object->_rx_ring.empty()) {
-        Envelope& front = _object->_rx_ring.front();
+    while (!_object->rx_ring_empty()) {
+        Envelope& front = _object->rx_ring_front();
 
         if (front.sequence() != _object->_next_rx_sequence) {
             // Gap in sequence, stop processing
@@ -292,7 +278,7 @@ void Channel::_process_rx_ring() {
             (_object->_next_rx_sequence + 1) % Type::Channel::SEQ_MODULUS;
 
         // Remove from ring
-        _object->_rx_ring.pop_front();
+        _object->rx_ring_pop_front();
     }
 }
 
@@ -326,31 +312,30 @@ void Channel::_on_packet_delivered(const Packet& packet) {
     TRACE("Channel::_on_packet_delivered");
 
     // Find envelope in TX ring by packet
-    for (auto it = _object->_tx_ring.begin(); it != _object->_tx_ring.end(); ++it) {
-        if (it->packet() == packet) {
-            uint16_t seq = it->sequence();
-            DEBUGF("Channel::_on_packet_delivered: seq=%u delivered", seq);
+    Envelope* env = _object->tx_ring_find_by_packet(packet);
+    if (env) {
+        uint16_t seq = env->sequence();
+        DEBUGF("Channel::_on_packet_delivered: seq=%u delivered", seq);
 
-            // Update RTT from packet receipt if available
-            // Note: We need to make a mutable copy to call get_rtt() since it's not const
-            if (packet.receipt()) {
-                PacketReceipt receipt = packet.receipt();
-                double packet_rtt = receipt.get_rtt();
-                if (packet_rtt > 0) {
-                    _update_rtt(packet_rtt);
-                }
+        // Update RTT from packet receipt if available
+        // Note: We need to make a mutable copy to call get_rtt() since it's not const
+        if (packet.receipt()) {
+            PacketReceipt receipt = packet.receipt();
+            double packet_rtt = receipt.get_rtt();
+            if (packet_rtt > 0) {
+                _update_rtt(packet_rtt);
             }
-
-            // Remove from TX ring
-            _object->_tx_ring.erase(it);
-
-            // Increase window (success)
-            if (_object->_window < _object->_window_max) {
-                _object->_window++;
-                TRACEF("Channel: Window increased to %u", _object->_window);
-            }
-            return;
         }
+
+        // Remove from TX ring
+        _object->tx_ring_remove_by_packet(packet);
+
+        // Increase window (success)
+        if (_object->_window < _object->_window_max) {
+            _object->_window++;
+            TRACEF("Channel: Window increased to %u", _object->_window);
+        }
+        return;
     }
 
     TRACE("Channel::_on_packet_delivered: Packet not found in TX ring");
@@ -362,33 +347,30 @@ void Channel::_on_packet_timeout(const Packet& packet) {
     TRACE("Channel::_on_packet_timeout");
 
     // Find envelope in TX ring
-    for (auto& envelope : _object->_tx_ring) {
-        if (envelope.packet() == packet) {
-            envelope.increment_tries();
-            uint8_t tries = envelope.tries();
+    Envelope* envelope = _object->tx_ring_find_by_packet(packet);
+    if (envelope) {
+        envelope->increment_tries();
+        uint8_t tries = envelope->tries();
 
-            DEBUGF("Channel::_on_packet_timeout: seq=%u, tries=%u/%u",
-                   envelope.sequence(), tries, _object->_max_tries);
+        DEBUGF("Channel::_on_packet_timeout: seq=%u, tries=%u/%u",
+               envelope->sequence(), tries, _object->_max_tries);
 
-            if (tries >= _object->_max_tries) {
-                // Max retries exceeded - tear down link
-                ERROR("Channel: Max retries exceeded, tearing down link");
-                _object->_link.teardown();
-                return;
-            }
-
-            // Decrease window on timeout
-            if (_object->_window > _object->_window_min) {
-                _object->_window--;
-                TRACEF("Channel: Window decreased to %u", _object->_window);
-            }
-
-            // Resend the packet
-            envelope.set_timestamp(OS::time());
-            envelope.packet().resend();
-
+        if (tries >= _object->_max_tries) {
+            // Max retries exceeded - tear down link
+            ERROR("Channel: Max retries exceeded, tearing down link");
+            _object->_link.teardown();
             return;
         }
+
+        // Decrease window on timeout
+        if (_object->_window > _object->_window_min) {
+            _object->_window--;
+            TRACEF("Channel: Window decreased to %u", _object->_window);
+        }
+
+        // Resend the packet
+        envelope->set_timestamp(OS::time());
+        envelope->packet().resend();
     }
 }
 
@@ -451,7 +433,7 @@ double Channel::_calculate_timeout(const Envelope& envelope) const {
     if (!_object) return 5.0;  // Default
 
     double rtt = _object->_rtt > 0 ? _object->_rtt : 0.5;  // Default RTT 0.5s
-    size_t ring_size = _object->_tx_ring.size();
+    size_t ring_size = _object->tx_ring_size();
     uint8_t tries = envelope.tries();
 
     // Formula from Python: 1.5^(tries-1) * max(rtt * 2.5, 0.025) * (ring_size + 1.5)
@@ -467,9 +449,13 @@ void Channel::_job() {
 
     double now = OS::time();
 
+    // Collect sequence numbers that need timeout handling (can't modify ring during iteration)
+    uint16_t timed_out_seqs[ChannelData::TX_RING_SIZE];
+    size_t timed_out_count = 0;
+
     // Check for timeouts in TX ring
-    for (auto& envelope : _object->_tx_ring) {
-        if (!envelope.tracked()) continue;
+    _object->tx_ring_foreach([&](Envelope& envelope) {
+        if (!envelope.tracked()) return;
 
         double timeout = _calculate_timeout(envelope);
         double age = now - envelope.timestamp();
@@ -477,7 +463,18 @@ void Channel::_job() {
         if (age > timeout) {
             DEBUGF("Channel::_job: Envelope seq=%u timed out (age=%.2fs > timeout=%.2fs)",
                    envelope.sequence(), age, timeout);
-            _on_packet_timeout(envelope.packet());
+            if (timed_out_count < ChannelData::TX_RING_SIZE) {
+                timed_out_seqs[timed_out_count++] = envelope.sequence();
+            }
+        }
+    });
+
+    // Handle timeouts outside of iteration
+    for (size_t i = 0; i < timed_out_count; i++) {
+        // Find the envelope again by sequence and get its packet
+        Envelope* env = _object->tx_ring_find_by_sequence(timed_out_seqs[i]);
+        if (env) {
+            _on_packet_timeout(env->packet());
         }
     }
 }

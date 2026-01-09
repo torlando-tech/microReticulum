@@ -8,6 +8,9 @@
  *
  * The reassembler is keyed by peer identity (16 bytes), not MAC address,
  * to survive BLE MAC address rotation.
+ *
+ * Uses fixed-size pools instead of STL containers to eliminate heap fragmentation
+ * on embedded systems.
  */
 #pragma once
 
@@ -16,12 +19,16 @@
 #include "../Bytes.h"
 #include "../Utilities/OS.h"
 
-#include <map>
-#include <vector>
 #include <functional>
 #include <cstdint>
+#include <cstring>
 
 namespace RNS { namespace BLE {
+
+// Pool sizing constants for fixed-size allocations
+static constexpr size_t MAX_PENDING_REASSEMBLIES = 8;
+static constexpr size_t MAX_FRAGMENTS_PER_REASSEMBLY = 32;
+static constexpr size_t MAX_FRAGMENT_PAYLOAD_SIZE = 512;
 
 class BLEReassembler {
 public:
@@ -83,7 +90,7 @@ public:
     /**
      * @brief Get count of pending (incomplete) reassemblies
      */
-    size_t pendingCount() const { return _pending.size(); }
+    size_t pendingCount() const;
 
     /**
      * @brief Clear all pending reassemblies for a specific peer
@@ -103,24 +110,69 @@ public:
 
 private:
     /**
-     * @brief Information about a single received fragment
+     * @brief Information about a single received fragment (fixed-size)
      */
     struct FragmentInfo {
-        Bytes data;
+        uint8_t data[MAX_FRAGMENT_PAYLOAD_SIZE];
+        size_t data_size = 0;
         bool received = false;
+
+        void clear() {
+            data_size = 0;
+            received = false;
+        }
     };
 
     /**
-     * @brief State for a pending (incomplete) reassembly
+     * @brief State for a pending (incomplete) reassembly (fixed-size)
      */
     struct PendingReassembly {
         Bytes peer_identity;
         uint16_t total_fragments = 0;
         uint16_t received_count = 0;
-        std::vector<FragmentInfo> fragments;
+        FragmentInfo fragments[MAX_FRAGMENTS_PER_REASSEMBLY];
         double started_at = 0.0;
         double last_activity = 0.0;
+
+        void clear() {
+            peer_identity = Bytes();
+            total_fragments = 0;
+            received_count = 0;
+            for (size_t i = 0; i < MAX_FRAGMENTS_PER_REASSEMBLY; i++) {
+                fragments[i].clear();
+            }
+            started_at = 0.0;
+            last_activity = 0.0;
+        }
     };
+
+    /**
+     * @brief Slot in the fixed-size pool for pending reassemblies
+     */
+    struct PendingReassemblySlot {
+        bool in_use = false;
+        Bytes transfer_id;  // key (peer_identity)
+        PendingReassembly reassembly;
+
+        void clear() {
+            in_use = false;
+            transfer_id = Bytes();
+            reassembly.clear();
+        }
+    };
+
+    /**
+     * @brief Find a slot by peer identity
+     * @return Pointer to slot or nullptr if not found
+     */
+    PendingReassemblySlot* findSlot(const Bytes& peer_identity);
+    const PendingReassemblySlot* findSlot(const Bytes& peer_identity) const;
+
+    /**
+     * @brief Allocate a new slot for a peer
+     * @return Pointer to slot or nullptr if pool is full
+     */
+    PendingReassemblySlot* allocateSlot(const Bytes& peer_identity);
 
     /**
      * @brief Concatenate all fragments in order to produce the complete packet
@@ -129,11 +181,12 @@ private:
 
     /**
      * @brief Start a new reassembly session
+     * @return true if started, false if pool is full or too many fragments
      */
-    void startReassembly(const Bytes& peer_identity, uint16_t total_fragments);
+    bool startReassembly(const Bytes& peer_identity, uint16_t total_fragments);
 
-    // Pending reassemblies keyed by peer identity
-    std::map<Bytes, PendingReassembly> _pending;
+    // Fixed-size pool of pending reassemblies
+    PendingReassemblySlot _pending_pool[MAX_PENDING_REASSEMBLIES];
 
     // Callbacks
     ReassemblyCallback _reassembly_callback = nullptr;

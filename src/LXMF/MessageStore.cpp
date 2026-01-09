@@ -9,6 +9,68 @@
 using namespace LXMF;
 using namespace RNS;
 
+// ConversationInfo helper methods
+bool MessageStore::ConversationInfo::add_message_hash(const Bytes& hash) {
+	// Check if already exists
+	if (has_message(hash)) {
+		return false;
+	}
+	// Check if pool is full
+	if (message_count >= MAX_MESSAGES_PER_CONVERSATION) {
+		return false;
+	}
+	// Copy hash to fixed array
+	size_t len = std::min(hash.size(), MESSAGE_HASH_SIZE);
+	memcpy(message_hashes[message_count], hash.data(), len);
+	if (len < MESSAGE_HASH_SIZE) {
+		memset(message_hashes[message_count] + len, 0, MESSAGE_HASH_SIZE - len);
+	}
+	++message_count;
+	return true;
+}
+
+bool MessageStore::ConversationInfo::has_message(const Bytes& hash) const {
+	if (hash.size() == 0 || hash.size() > MESSAGE_HASH_SIZE) return false;
+	for (size_t i = 0; i < message_count; ++i) {
+		if (memcmp(message_hashes[i], hash.data(), hash.size()) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool MessageStore::ConversationInfo::remove_message_hash(const Bytes& hash) {
+	if (hash.size() == 0 || hash.size() > MESSAGE_HASH_SIZE) return false;
+	for (size_t i = 0; i < message_count; ++i) {
+		if (memcmp(message_hashes[i], hash.data(), hash.size()) == 0) {
+			// Shift remaining elements down
+			for (size_t j = i; j < message_count - 1; ++j) {
+				memcpy(message_hashes[j], message_hashes[j + 1], MESSAGE_HASH_SIZE);
+			}
+			memset(message_hashes[message_count - 1], 0, MESSAGE_HASH_SIZE);
+			--message_count;
+			return true;
+		}
+	}
+	return false;
+}
+
+void MessageStore::ConversationInfo::clear() {
+	memset(peer_hash, 0, PEER_HASH_SIZE);
+	memset(message_hashes, 0, sizeof(message_hashes));
+	message_count = 0;
+	last_activity = 0.0;
+	unread_count = 0;
+	memset(last_message_hash, 0, MESSAGE_HASH_SIZE);
+}
+
+// ConversationSlot helper method
+void MessageStore::ConversationSlot::clear() {
+	in_use = false;
+	memset(peer_hash, 0, PEER_HASH_SIZE);
+	info.clear();
+}
+
 // Constructor
 MessageStore::MessageStore(const std::string& base_path) :
 	_base_path(base_path),
@@ -16,10 +78,15 @@ MessageStore::MessageStore(const std::string& base_path) :
 {
 	INFO("Initializing MessageStore at: " + _base_path);
 
+	// Initialize pool
+	for (size_t i = 0; i < MAX_CONVERSATIONS; ++i) {
+		_conversations_pool[i].clear();
+	}
+
 	if (initialize_storage()) {
 		load_index();
 		_initialized = true;
-		INFO("MessageStore initialized with " + std::to_string(_conversations.size()) + " conversations");
+		INFO("MessageStore initialized with " + std::to_string(count_conversations()) + " conversations");
 	} else {
 		ERROR("Failed to initialize MessageStore");
 	}
@@ -69,36 +136,52 @@ void MessageStore::load_index() {
 			return;
 		}
 
-		// Load conversations
+		// Load conversations into pool
 		JsonArray conversations = _json_doc["conversations"].as<JsonArray>();
+		size_t slot_index = 0;
 		for (JsonObject conv : conversations) {
-			ConversationInfo info;
+			if (slot_index >= MAX_CONVERSATIONS) {
+				WARNING("Too many conversations in index, some will be skipped");
+				break;
+			}
+
+			ConversationSlot& slot = _conversations_pool[slot_index];
+			slot.in_use = true;
 
 			// Parse peer hash
 			const char* peer_hex = conv["peer_hash"];
-			info.peer_hash.assignHex(peer_hex);
+			Bytes peer_bytes;
+			peer_bytes.assignHex(peer_hex);
+			slot.set_peer_hash(peer_bytes);
+			slot.info.set_peer_hash(peer_bytes);
 
 			// Parse message hashes
 			JsonArray messages = conv["messages"].as<JsonArray>();
 			for (const char* msg_hex : messages) {
+				if (slot.info.message_count >= MAX_MESSAGES_PER_CONVERSATION) {
+					WARNING("Too many messages in conversation, some will be skipped");
+					break;
+				}
 				Bytes msg_hash;
 				msg_hash.assignHex(msg_hex);
-				info.message_hashes.push_back(msg_hash);
+				slot.info.add_message_hash(msg_hash);
 			}
 
 			// Parse metadata
-			info.last_activity = conv["last_activity"] | 0.0;
-			info.unread_count = conv["unread_count"] | 0;
+			slot.info.last_activity = conv["last_activity"] | 0.0;
+			slot.info.unread_count = conv["unread_count"] | 0;
 
 			if (conv.containsKey("last_message_hash")) {
 				const char* last_msg_hex = conv["last_message_hash"];
-				info.last_message_hash.assignHex(last_msg_hex);
+				Bytes last_msg_bytes;
+				last_msg_bytes.assignHex(last_msg_hex);
+				slot.info.set_last_message_hash(last_msg_bytes);
 			}
 
-			_conversations[info.peer_hash] = info;
+			++slot_index;
 		}
 
-		DEBUG("Loaded " + std::to_string(_conversations.size()) + " conversations from index");
+		DEBUG("Loaded " + std::to_string(count_conversations()) + " conversations from index");
 
 	} catch (const std::exception& e) {
 		ERROR("Exception loading conversation index: " + std::string(e.what()));
@@ -114,23 +197,29 @@ bool MessageStore::save_index() {
 		_json_doc.clear();
 		JsonArray conversations = _json_doc["conversations"].to<JsonArray>();
 
-		// Serialize each conversation
-		for (const auto& pair : _conversations) {
-			const ConversationInfo& info = pair.second;
+		// Serialize each active conversation from pool
+		for (size_t i = 0; i < MAX_CONVERSATIONS; ++i) {
+			const ConversationSlot& slot = _conversations_pool[i];
+			if (!slot.in_use) {
+				continue;
+			}
+
+			const ConversationInfo& info = slot.info;
 
 			JsonObject conv = conversations.add<JsonObject>();
-			conv["peer_hash"] = info.peer_hash.toHex();
+			conv["peer_hash"] = slot.peer_hash_bytes().toHex();
 			conv["last_activity"] = info.last_activity;
 			conv["unread_count"] = info.unread_count;
 
-			if (info.last_message_hash) {
-				conv["last_message_hash"] = info.last_message_hash.toHex();
+			Bytes last_msg = info.last_message_hash_bytes();
+			if (last_msg) {
+				conv["last_message_hash"] = last_msg.toHex();
 			}
 
 			// Serialize message hashes
 			JsonArray messages = conv["messages"].to<JsonArray>();
-			for (const Bytes& hash : info.message_hashes) {
-				messages.add(hash.toHex());
+			for (size_t j = 0; j < info.message_count; ++j) {
+				messages.add(info.message_hash_bytes(j).toHex());
 			}
 		}
 
@@ -199,33 +288,32 @@ bool MessageStore::save_message(const LXMessage& message) {
 		// For incoming: peer = source, for outgoing: peer = destination
 		Bytes peer_hash = message.incoming() ? message.source_hash() : message.destination_hash();
 
-		// Get or create conversation
-		ConversationInfo& conv = _conversations[peer_hash];
-		if (!conv.peer_hash) {
-			conv.peer_hash = peer_hash;
-			DEBUG("  Created new conversation with: " + peer_hash.toHex());
+		// Get or create conversation slot
+		ConversationSlot* slot = get_or_create_conversation(peer_hash);
+		if (!slot) {
+			ERROR("Conversation pool is full, cannot add message");
+			return false;
 		}
+
+		ConversationInfo& conv = slot->info;
 
 		// Add message to conversation (if not already present)
-		bool already_exists = false;
-		for (const Bytes& hash : conv.message_hashes) {
-			if (hash == message.hash()) {
-				already_exists = true;
-				break;
-			}
-		}
+		bool already_exists = conv.has_message(message.hash());
 
 		if (!already_exists) {
-			conv.message_hashes.push_back(message.hash());
-			conv.last_activity = message.timestamp();
-			conv.last_message_hash = message.hash();
+			if (!conv.add_message_hash(message.hash())) {
+				WARNING("Message pool full for conversation: " + peer_hash.toHex());
+			} else {
+				conv.last_activity = message.timestamp();
+				conv.set_last_message_hash(message.hash());
 
-			// Increment unread count for incoming messages
-			if (message.incoming()) {
-				conv.unread_count++;
+				// Increment unread count for incoming messages
+				if (message.incoming()) {
+					conv.unread_count++;
+				}
+
+				DEBUG("  Added to conversation (now " + std::to_string(conv.message_count) + " messages)");
 			}
-
-			DEBUG("  Added to conversation (now " + std::to_string(conv.message_hashes.size()) + " messages)");
 		}
 
 		// Save updated index
@@ -409,18 +497,20 @@ bool MessageStore::delete_message(const Bytes& message_hash) {
 	}
 
 	// Update conversation index - remove from all conversations
-	for (auto& pair : _conversations) {
-		ConversationInfo& conv = pair.second;
-		auto it = std::find(conv.message_hashes.begin(), conv.message_hashes.end(), message_hash);
-		if (it != conv.message_hashes.end()) {
-			conv.message_hashes.erase(it);
+	for (size_t i = 0; i < MAX_CONVERSATIONS; ++i) {
+		ConversationSlot& slot = _conversations_pool[i];
+		if (!slot.in_use) {
+			continue;
+		}
 
+		ConversationInfo& conv = slot.info;
+		if (conv.remove_message_hash(message_hash)) {
 			// Update last message if this was it
-			if (conv.last_message_hash == message_hash) {
-				if (!conv.message_hashes.empty()) {
-					conv.last_message_hash = conv.message_hashes.back();
+			if (conv.last_message_hash_bytes() == message_hash) {
+				if (conv.message_count > 0) {
+					conv.set_last_message_hash(conv.message_hash_bytes(conv.message_count - 1));
 				} else {
-					conv.last_message_hash = Bytes();
+					memset(conv.last_message_hash, 0, MESSAGE_HASH_SIZE);
 				}
 			}
 
@@ -438,8 +528,11 @@ bool MessageStore::delete_message(const Bytes& message_hash) {
 std::vector<Bytes> MessageStore::get_conversations() {
 	std::vector<std::pair<double, Bytes>> sorted;
 
-	for (const auto& pair : _conversations) {
-		sorted.push_back({pair.second.last_activity, pair.first});
+	for (size_t i = 0; i < MAX_CONVERSATIONS; ++i) {
+		const ConversationSlot& slot = _conversations_pool[i];
+		if (slot.in_use) {
+			sorted.push_back({slot.info.last_activity, slot.peer_hash_bytes()});
+		}
 	}
 
 	// Sort by last activity (most recent first)
@@ -456,27 +549,32 @@ std::vector<Bytes> MessageStore::get_conversations() {
 
 // Get conversation info
 MessageStore::ConversationInfo MessageStore::get_conversation_info(const Bytes& peer_hash) {
-	auto it = _conversations.find(peer_hash);
-	if (it != _conversations.end()) {
-		return it->second;
+	const ConversationSlot* slot = find_conversation(peer_hash);
+	if (slot) {
+		return slot->info;
 	}
 	return ConversationInfo();
 }
 
 // Get messages for conversation
 std::vector<Bytes> MessageStore::get_messages_for_conversation(const Bytes& peer_hash) {
-	auto it = _conversations.find(peer_hash);
-	if (it != _conversations.end()) {
-		return it->second.message_hashes;
+	const ConversationSlot* slot = find_conversation(peer_hash);
+	if (slot) {
+		std::vector<Bytes> result;
+		result.reserve(slot->info.message_count);
+		for (size_t i = 0; i < slot->info.message_count; ++i) {
+			result.push_back(slot->info.message_hash_bytes(i));
+		}
+		return result;
 	}
 	return std::vector<Bytes>();
 }
 
 // Mark conversation as read
 void MessageStore::mark_conversation_read(const Bytes& peer_hash) {
-	auto it = _conversations.find(peer_hash);
-	if (it != _conversations.end()) {
-		it->second.unread_count = 0;
+	ConversationSlot* slot = find_conversation(peer_hash);
+	if (slot) {
+		slot->info.unread_count = 0;
 		save_index();
 		DEBUG("Marked conversation as read: " + peer_hash.toHex());
 	}
@@ -484,8 +582,8 @@ void MessageStore::mark_conversation_read(const Bytes& peer_hash) {
 
 // Delete entire conversation
 bool MessageStore::delete_conversation(const Bytes& peer_hash) {
-	auto it = _conversations.find(peer_hash);
-	if (it == _conversations.end()) {
+	ConversationSlot* slot = find_conversation(peer_hash);
+	if (!slot) {
 		WARNING("Conversation not found: " + peer_hash.toHex());
 		return false;
 	}
@@ -493,15 +591,15 @@ bool MessageStore::delete_conversation(const Bytes& peer_hash) {
 	INFO("Deleting conversation: " + peer_hash.toHex());
 
 	// Delete all message files
-	for (const Bytes& message_hash : it->second.message_hashes) {
-		std::string message_path = get_message_path(message_hash);
+	for (size_t i = 0; i < slot->info.message_count; ++i) {
+		std::string message_path = get_message_path(slot->info.message_hash_bytes(i));
 		if (Utilities::OS::file_exists(message_path.c_str())) {
 			Utilities::OS::remove_file(message_path.c_str());
 		}
 	}
 
-	// Remove from index
-	_conversations.erase(it);
+	// Clear slot and mark as not in use
+	slot->clear();
 	save_index();
 
 	INFO("Conversation deleted");
@@ -511,22 +609,26 @@ bool MessageStore::delete_conversation(const Bytes& peer_hash) {
 // Get total message count
 size_t MessageStore::get_message_count() const {
 	size_t count = 0;
-	for (const auto& pair : _conversations) {
-		count += pair.second.message_hashes.size();
+	for (size_t i = 0; i < MAX_CONVERSATIONS; ++i) {
+		if (_conversations_pool[i].in_use) {
+			count += _conversations_pool[i].info.message_count;
+		}
 	}
 	return count;
 }
 
 // Get conversation count
 size_t MessageStore::get_conversation_count() const {
-	return _conversations.size();
+	return count_conversations();
 }
 
 // Get total unread count
 size_t MessageStore::get_unread_count() const {
 	size_t count = 0;
-	for (const auto& pair : _conversations) {
-		count += pair.second.unread_count;
+	for (size_t i = 0; i < MAX_CONVERSATIONS; ++i) {
+		if (_conversations_pool[i].in_use) {
+			count += _conversations_pool[i].info.unread_count;
+		}
 	}
 	return count;
 }
@@ -536,17 +638,19 @@ bool MessageStore::clear_all() {
 	INFO("Clearing all message store data");
 
 	// Delete all message files
-	for (const auto& pair : _conversations) {
-		for (const Bytes& message_hash : pair.second.message_hashes) {
-			std::string message_path = get_message_path(message_hash);
+	for (size_t i = 0; i < MAX_CONVERSATIONS; ++i) {
+		ConversationSlot& slot = _conversations_pool[i];
+		if (!slot.in_use) {
+			continue;
+		}
+		for (size_t j = 0; j < slot.info.message_count; ++j) {
+			std::string message_path = get_message_path(slot.info.message_hash_bytes(j));
 			if (Utilities::OS::file_exists(message_path.c_str())) {
 				Utilities::OS::remove_file(message_path.c_str());
 			}
 		}
+		slot.clear();
 	}
-
-	// Clear in-memory index
-	_conversations.clear();
 
 	// Save empty index
 	save_index();
@@ -576,4 +680,56 @@ Bytes MessageStore::get_peer_hash(const LXMessage& message, const Bytes& our_has
 	} else {
 		return message.destination_hash();
 	}
+}
+
+// Find a conversation slot by peer hash
+MessageStore::ConversationSlot* MessageStore::find_conversation(const Bytes& peer_hash) {
+	for (size_t i = 0; i < MAX_CONVERSATIONS; ++i) {
+		if (_conversations_pool[i].in_use && _conversations_pool[i].peer_hash_equals(peer_hash)) {
+			return &_conversations_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+const MessageStore::ConversationSlot* MessageStore::find_conversation(const Bytes& peer_hash) const {
+	for (size_t i = 0; i < MAX_CONVERSATIONS; ++i) {
+		if (_conversations_pool[i].in_use && _conversations_pool[i].peer_hash_equals(peer_hash)) {
+			return &_conversations_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+// Get or create a conversation slot for a peer
+MessageStore::ConversationSlot* MessageStore::get_or_create_conversation(const Bytes& peer_hash) {
+	// First try to find existing
+	ConversationSlot* slot = find_conversation(peer_hash);
+	if (slot) {
+		return slot;
+	}
+
+	// Find a free slot
+	for (size_t i = 0; i < MAX_CONVERSATIONS; ++i) {
+		if (!_conversations_pool[i].in_use) {
+			_conversations_pool[i].in_use = true;
+			_conversations_pool[i].set_peer_hash(peer_hash);
+			_conversations_pool[i].info.set_peer_hash(peer_hash);
+			DEBUG("  Created new conversation with: " + peer_hash.toHex());
+			return &_conversations_pool[i];
+		}
+	}
+
+	return nullptr;  // Pool is full
+}
+
+// Count number of active conversations in pool
+size_t MessageStore::count_conversations() const {
+	size_t count = 0;
+	for (size_t i = 0; i < MAX_CONVERSATIONS; ++i) {
+		if (_conversations_pool[i].in_use) {
+			++count;
+		}
+	}
+	return count;
 }

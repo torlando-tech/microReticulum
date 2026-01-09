@@ -13,8 +13,6 @@
 #include "Cryptography/Token.h"
 #include "SegmentAccumulator.h"
 
-#include <set>
-
 namespace RNS {
 
 	class LinkData {
@@ -99,9 +97,18 @@ namespace RNS {
 		Bytes _shared_key;
 		Bytes _derived_key;
 
-		std::set<Resource> _incoming_resources;
-		std::set<Resource> _outgoing_resources;
-		std::set<RNS::RequestReceipt> _pending_requests;
+		// Fixed-size pools for resources and requests (zero heap fragmentation)
+		static constexpr size_t INCOMING_RESOURCES_SIZE = 8;
+		Resource _incoming_resources[INCOMING_RESOURCES_SIZE];
+		size_t _incoming_resources_count = 0;
+
+		static constexpr size_t OUTGOING_RESOURCES_SIZE = 8;
+		Resource _outgoing_resources[OUTGOING_RESOURCES_SIZE];
+		size_t _outgoing_resources_count = 0;
+
+		static constexpr size_t PENDING_REQUESTS_SIZE = 8;
+		RNS::RequestReceipt _pending_requests[PENDING_REQUESTS_SIZE];
+		size_t _pending_requests_count = 0;
 
 		// Multi-segment resource accumulator
 		SegmentAccumulator _segment_accumulator;

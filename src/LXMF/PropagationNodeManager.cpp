@@ -40,10 +40,22 @@ void PropagationNodeManager::received_announce(
 	info.hops = Transport::hops_to(destination_hash);
 
 	// Check if this is an update to an existing node
-	bool is_update = _nodes.find(destination_hash) != _nodes.end();
+	PropagationNodeSlot* existing_slot = find_node_slot(destination_hash);
+	bool is_update = (existing_slot != nullptr);
 
 	// Store/update node
-	_nodes[destination_hash] = info;
+	PropagationNodeSlot* slot = existing_slot;
+	if (!slot) {
+		slot = find_empty_node_slot();
+		if (!slot) {
+			WARNING("PropagationNodeManager: Pool full, cannot add node " + hash_str);
+			return;
+		}
+	}
+
+	slot->in_use = true;
+	slot->node_hash = destination_hash;
+	slot->info = info;
 
 	std::string action = is_update ? "Updated" : "Discovered";
 	if (info.enabled) {
@@ -158,10 +170,12 @@ PropagationNodeInfo PropagationNodeManager::parse_announce_data(const Bytes& app
 
 std::vector<PropagationNodeInfo> PropagationNodeManager::get_nodes() const {
 	std::vector<PropagationNodeInfo> result;
-	result.reserve(_nodes.size());
+	result.reserve(nodes_count());
 
-	for (const auto& pair : _nodes) {
-		result.push_back(pair.second);
+	for (size_t i = 0; i < MAX_PROPAGATION_NODES; ++i) {
+		if (_nodes_pool[i].in_use) {
+			result.push_back(_nodes_pool[i].info);
+		}
 	}
 
 	// Sort by hops (closest first), then by last_seen (most recent first)
@@ -176,15 +190,15 @@ std::vector<PropagationNodeInfo> PropagationNodeManager::get_nodes() const {
 }
 
 PropagationNodeInfo PropagationNodeManager::get_node(const Bytes& hash) const {
-	auto it = _nodes.find(hash);
-	if (it != _nodes.end()) {
-		return it->second;
+	const PropagationNodeSlot* slot = find_node_slot(hash);
+	if (slot) {
+		return slot->info;
 	}
 	return {};
 }
 
 bool PropagationNodeManager::has_node(const Bytes& hash) const {
-	return _nodes.find(hash) != _nodes.end();
+	return find_node_slot(hash) != nullptr;
 }
 
 void PropagationNodeManager::set_selected_node(const Bytes& hash) {
@@ -210,8 +224,11 @@ Bytes PropagationNodeManager::get_best_node() const {
 	best.hops = 0xFF;
 	best.last_seen = 0;
 
-	for (const auto& pair : _nodes) {
-		const PropagationNodeInfo& node = pair.second;
+	for (size_t i = 0; i < MAX_PROPAGATION_NODES; ++i) {
+		if (!_nodes_pool[i].in_use) {
+			continue;
+		}
+		const PropagationNodeInfo& node = _nodes_pool[i].info;
 
 		// Skip disabled nodes
 		if (!node.enabled) {
@@ -242,8 +259,8 @@ Bytes PropagationNodeManager::get_best_node() const {
 Bytes PropagationNodeManager::get_effective_node() const {
 	if (_selected_node.size() > 0) {
 		// Verify selected node is still valid
-		auto it = _nodes.find(_selected_node);
-		if (it != _nodes.end() && it->second.enabled) {
+		const PropagationNodeSlot* slot = find_node_slot(_selected_node);
+		if (slot && slot->info.enabled) {
 			return _selected_node;
 		}
 	}
@@ -254,20 +271,56 @@ Bytes PropagationNodeManager::get_effective_node() const {
 
 void PropagationNodeManager::clean_stale_nodes() {
 	double now = Utilities::OS::time();
-	std::vector<Bytes> to_remove;
+	bool removed_any = false;
 
-	for (const auto& pair : _nodes) {
-		if (now - pair.second.last_seen > NODE_STALE_TIMEOUT) {
-			to_remove.push_back(pair.first);
+	for (size_t i = 0; i < MAX_PROPAGATION_NODES; ++i) {
+		if (_nodes_pool[i].in_use &&
+		    now - _nodes_pool[i].info.last_seen > NODE_STALE_TIMEOUT) {
+			INFO("PropagationNodeManager: Removing stale node " +
+			     _nodes_pool[i].node_hash.toHex().substr(0, 16) + "...");
+			_nodes_pool[i].clear();
+			removed_any = true;
 		}
 	}
 
-	for (const Bytes& hash : to_remove) {
-		INFO("PropagationNodeManager: Removing stale node " + hash.toHex().substr(0, 16) + "...");
-		_nodes.erase(hash);
-	}
-
-	if (!to_remove.empty() && _update_callback) {
+	if (removed_any && _update_callback) {
 		_update_callback();
 	}
+}
+
+PropagationNodeSlot* PropagationNodeManager::find_node_slot(const Bytes& hash) {
+	for (size_t i = 0; i < MAX_PROPAGATION_NODES; ++i) {
+		if (_nodes_pool[i].in_use && _nodes_pool[i].node_hash == hash) {
+			return &_nodes_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+const PropagationNodeSlot* PropagationNodeManager::find_node_slot(const Bytes& hash) const {
+	for (size_t i = 0; i < MAX_PROPAGATION_NODES; ++i) {
+		if (_nodes_pool[i].in_use && _nodes_pool[i].node_hash == hash) {
+			return &_nodes_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+PropagationNodeSlot* PropagationNodeManager::find_empty_node_slot() {
+	for (size_t i = 0; i < MAX_PROPAGATION_NODES; ++i) {
+		if (!_nodes_pool[i].in_use) {
+			return &_nodes_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+size_t PropagationNodeManager::nodes_count() const {
+	size_t count = 0;
+	for (size_t i = 0; i < MAX_PROPAGATION_NODES; ++i) {
+		if (_nodes_pool[i].in_use) {
+			++count;
+		}
+	}
+	return count;
 }

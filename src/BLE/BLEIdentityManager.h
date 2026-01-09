@@ -12,6 +12,8 @@
  *
  * The identity is the first 16 bytes of the Reticulum transport identity hash,
  * which remains stable across MAC address rotations.
+ *
+ * Uses fixed-size pools instead of STL containers to eliminate heap fragmentation.
  */
 #pragma once
 
@@ -19,7 +21,6 @@
 #include "../Bytes.h"
 #include "../Utilities/OS.h"
 
-#include <map>
 #include <functional>
 #include <cstdint>
 
@@ -27,6 +28,11 @@ namespace RNS { namespace BLE {
 
 class BLEIdentityManager {
 public:
+    //=========================================================================
+    // Pool Configuration
+    //=========================================================================
+    static constexpr size_t ADDRESS_IDENTITY_POOL_SIZE = 16;
+    static constexpr size_t HANDSHAKE_POOL_SIZE = 4;
     /**
      * @brief Callback when handshake completes successfully
      *
@@ -201,7 +207,7 @@ public:
     /**
      * @brief Get count of known peer identities
      */
-    size_t knownPeerCount() const { return _address_to_identity.size(); }
+    size_t knownPeerCount() const;
 
     /**
      * @brief Check if handshake is in progress for a MAC
@@ -223,27 +229,108 @@ private:
      * @brief State for an in-progress handshake
      */
     struct HandshakeSession {
+        bool in_use = false;
         Bytes mac_address;
         Bytes peer_identity;
         HandshakeState state = HandshakeState::NONE;
         bool is_central = false;
         double started_at = 0.0;
+
+        void clear() {
+            in_use = false;
+            mac_address.clear();
+            peer_identity.clear();
+            state = HandshakeState::NONE;
+            is_central = false;
+            started_at = 0.0;
+        }
     };
+
+    /**
+     * @brief Slot for address-to-identity mapping
+     */
+    struct AddressIdentitySlot {
+        bool in_use = false;
+        Bytes mac_address;    // 6-byte MAC key
+        Bytes identity;       // 16-byte identity value
+
+        void clear() {
+            in_use = false;
+            mac_address.clear();
+            identity.clear();
+        }
+    };
+
+    //=========================================================================
+    // Pool Helper Methods - Address to Identity Mapping
+    //=========================================================================
+
+    /**
+     * @brief Find slot by MAC address
+     */
+    AddressIdentitySlot* findAddressToIdentitySlot(const Bytes& mac);
+    const AddressIdentitySlot* findAddressToIdentitySlot(const Bytes& mac) const;
+
+    /**
+     * @brief Find slot by identity
+     */
+    AddressIdentitySlot* findIdentityToAddressSlot(const Bytes& identity);
+    const AddressIdentitySlot* findIdentityToAddressSlot(const Bytes& identity) const;
+
+    /**
+     * @brief Find an empty slot in the address-identity pool
+     */
+    AddressIdentitySlot* findEmptyAddressIdentitySlot();
+
+    /**
+     * @brief Add or update address-identity mapping
+     * @return true if successful, false if pool is full
+     */
+    bool setAddressIdentityMapping(const Bytes& mac, const Bytes& identity);
+
+    /**
+     * @brief Remove mapping by MAC address
+     */
+    void removeAddressIdentityMapping(const Bytes& mac);
+
+    //=========================================================================
+    // Pool Helper Methods - Handshake Sessions
+    //=========================================================================
+
+    /**
+     * @brief Find handshake session by MAC
+     */
+    HandshakeSession* findHandshakeSession(const Bytes& mac);
+    const HandshakeSession* findHandshakeSession(const Bytes& mac) const;
+
+    /**
+     * @brief Find an empty handshake session slot
+     */
+    HandshakeSession* findEmptyHandshakeSlot();
 
     /**
      * @brief Get or create a handshake session for a MAC
      */
-    HandshakeSession& getOrCreateSession(const Bytes& mac_address);
+    HandshakeSession* getOrCreateSession(const Bytes& mac_address);
+
+    /**
+     * @brief Remove handshake session by MAC
+     */
+    void removeHandshakeSession(const Bytes& mac);
+
+    //=========================================================================
+    // Fixed-size Pool Storage
+    //=========================================================================
 
     // Our local identity hash (16 bytes)
     Bytes _local_identity;
 
     // Bidirectional mappings (survive MAC rotation via identity)
-    std::map<Bytes, Bytes> _address_to_identity;  // MAC -> Identity
-    std::map<Bytes, Bytes> _identity_to_address;  // Identity -> MAC
+    // Note: We use the same pool for both directions since they share the same data
+    AddressIdentitySlot _address_identity_pool[ADDRESS_IDENTITY_POOL_SIZE];
 
     // Active handshake sessions (keyed by MAC)
-    std::map<Bytes, HandshakeSession> _handshakes;
+    HandshakeSession _handshakes_pool[HANDSHAKE_POOL_SIZE];
 
     // Callbacks
     HandshakeCompleteCallback _handshake_complete_callback = nullptr;

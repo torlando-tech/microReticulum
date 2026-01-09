@@ -199,3 +199,9 @@ Bytes Bytes::mid(size_t beginpos) const {
 	}
 	 return {data() + beginpos, size() - beginpos};
 }
+
+// MsgPack serialization - packs Bytes as binary data
+#include <MsgPack.h>
+void Bytes::to_msgpack(MsgPack::Packer& packer) const {
+	packer.pack(data(), size());
+}

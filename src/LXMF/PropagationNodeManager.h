@@ -5,12 +5,14 @@
 #include "../Identity.h"
 #include "../Transport.h"
 
-#include <map>
 #include <vector>
 #include <functional>
 #include <memory>
 
 namespace LXMF {
+
+	// Maximum number of propagation nodes to track (fixed pool size)
+	static constexpr size_t MAX_PROPAGATION_NODES = 32;
 
 	/**
 	 * @brief Information about a discovered propagation node
@@ -30,6 +32,23 @@ namespace LXMF {
 
 		// Check if this node info is valid
 		operator bool() const { return node_hash.size() > 0; }
+	};
+
+	/**
+	 * @brief Fixed-size slot for propagation node storage
+	 *
+	 * Used to avoid heap fragmentation from std::map operations.
+	 */
+	struct PropagationNodeSlot {
+		bool in_use = false;
+		RNS::Bytes node_hash;  // key for lookup
+		PropagationNodeInfo info;
+
+		void clear() {
+			in_use = false;
+			node_hash = RNS::Bytes();
+			info = PropagationNodeInfo();
+		}
 	};
 
 	/**
@@ -113,7 +132,7 @@ namespace LXMF {
 		 *
 		 * @return Number of nodes
 		 */
-		size_t node_count() const { return _nodes.size(); }
+		size_t node_count() const { return nodes_count(); }
 
 		/**
 		 * @brief Manually select a propagation node
@@ -182,8 +201,31 @@ namespace LXMF {
 		 */
 		PropagationNodeInfo parse_announce_data(const RNS::Bytes& app_data);
 
+		/**
+		 * @brief Find a node slot by hash
+		 *
+		 * @param hash Destination hash to search for
+		 * @return Pointer to slot if found, nullptr otherwise
+		 */
+		PropagationNodeSlot* find_node_slot(const RNS::Bytes& hash);
+		const PropagationNodeSlot* find_node_slot(const RNS::Bytes& hash) const;
+
+		/**
+		 * @brief Find an empty slot in the pool
+		 *
+		 * @return Pointer to empty slot, nullptr if pool is full
+		 */
+		PropagationNodeSlot* find_empty_node_slot();
+
+		/**
+		 * @brief Get the number of nodes currently in use
+		 *
+		 * @return Number of active nodes in the pool
+		 */
+		size_t nodes_count() const;
+
 	private:
-		std::map<RNS::Bytes, PropagationNodeInfo> _nodes;
+		PropagationNodeSlot _nodes_pool[MAX_PROPAGATION_NODES];
 		RNS::Bytes _selected_node;
 		NodeUpdateCallback _update_callback;
 	};

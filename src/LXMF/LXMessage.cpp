@@ -16,14 +16,12 @@ LXMessage::LXMessage(
 	const Destination& source,
 	const Bytes& content,
 	const Bytes& title,
-	const std::map<Bytes, Bytes>& fields,
 	Type::Message::Method desired_method
 ) :
 	_destination(destination),
 	_source(source),
 	_content(content),
 	_title(title),
-	_fields(fields),
 	_desired_method(desired_method),
 	_method(desired_method)
 {
@@ -47,7 +45,6 @@ LXMessage::LXMessage(
 	const Bytes& source_hash,
 	const Bytes& content,
 	const Bytes& title,
-	const std::map<Bytes, Bytes>& fields,
 	Type::Message::Method desired_method
 ) :
 	_destination(RNS::Type::NONE),
@@ -56,7 +53,6 @@ LXMessage::LXMessage(
 	_source_hash(source_hash),
 	_content(content),
 	_title(title),
-	_fields(fields),
 	_desired_method(desired_method),
 	_method(desired_method)
 {
@@ -65,6 +61,55 @@ LXMessage::LXMessage(
 
 LXMessage::~LXMessage() {
 	TRACE("LXMessage destroyed");
+}
+
+// Field helper methods for fixed-size array
+bool LXMessage::fields_set(const Bytes& key, const Bytes& value) {
+	// Check if key already exists, update if so
+	for (size_t i = 0; i < MAX_FIELDS; ++i) {
+		if (_fields_pool[i].in_use && _fields_pool[i].key == key) {
+			_fields_pool[i].value = value;
+			_packed_valid = false;
+			return true;
+		}
+	}
+
+	// Find an empty slot
+	for (size_t i = 0; i < MAX_FIELDS; ++i) {
+		if (!_fields_pool[i].in_use) {
+			_fields_pool[i].in_use = true;
+			_fields_pool[i].key = key;
+			_fields_pool[i].value = value;
+			++_fields_count;
+			_packed_valid = false;
+			return true;
+		}
+	}
+
+	// Pool is full
+	WARNING("LXMessage field pool full, cannot add more fields");
+	return false;
+}
+
+const Bytes* LXMessage::fields_get(const Bytes& key) const {
+	for (size_t i = 0; i < MAX_FIELDS; ++i) {
+		if (_fields_pool[i].in_use && _fields_pool[i].key == key) {
+			return &_fields_pool[i].value;
+		}
+	}
+	return nullptr;
+}
+
+bool LXMessage::fields_has(const Bytes& key) const {
+	return fields_get(key) != nullptr;
+}
+
+void LXMessage::fields_clear() {
+	for (size_t i = 0; i < MAX_FIELDS; ++i) {
+		_fields_pool[i].clear();
+	}
+	_fields_count = 0;
+	_packed_valid = false;
 }
 
 // Pack the message into binary format
@@ -98,11 +143,13 @@ const Bytes& LXMessage::pack() {
 	// Element 2: content (binary)
 	packer.packBinary(_content.data(), _content.size());
 
-	// Element 3: fields (map) - pack empty map for now since fields are rarely used
-	packer.packMapSize(_fields.size());
-	for (const auto& field : _fields) {
-		packer.packBinary(field.first.data(), field.first.size());
-		packer.packBinary(field.second.data(), field.second.size());
+	// Element 3: fields (map) - iterate over fixed array
+	packer.packMapSize(_fields_count);
+	for (size_t i = 0; i < MAX_FIELDS; ++i) {
+		if (_fields_pool[i].in_use) {
+			packer.packBinary(_fields_pool[i].key.data(), _fields_pool[i].key.size());
+			packer.packBinary(_fields_pool[i].value.data(), _fields_pool[i].value.size());
+		}
 	}
 
 	// Element 4 (optional): stamp - 32 bytes
@@ -223,7 +270,10 @@ LXMessage LXMessage::unpack_from_bytes(const Bytes& lxmf_bytes, Type::Message::M
 	double timestamp = 0.0;
 	Bytes title;
 	Bytes content;
-	std::map<Bytes, Bytes> fields;
+
+	// Temporary storage for fields before copying to message
+	FieldEntry temp_fields[MAX_FIELDS];
+	size_t temp_fields_count = 0;
 
 	Bytes stamp;  // Optional 5th element
 
@@ -259,17 +309,23 @@ LXMessage LXMessage::unpack_from_bytes(const Bytes& lxmf_bytes, Type::Message::M
 		unpacker.deserialize(map_size);
 		DEBUG("  Msgpack map size: " + std::to_string(map_size.size()));
 
-		// Unpack each field (key-value pairs)
-		for (size_t i = 0; i < map_size.size(); ++i) {
+		// Unpack each field (key-value pairs) into temporary storage
+		for (size_t i = 0; i < map_size.size() && temp_fields_count < MAX_FIELDS; ++i) {
 			MsgPack::bin_t<uint8_t> key_bin;
 			MsgPack::bin_t<uint8_t> value_bin;
 
 			unpacker.deserialize(key_bin);
 			unpacker.deserialize(value_bin);
 
-			Bytes key(key_bin);
-			Bytes value(value_bin);
-			fields[key] = value;
+			temp_fields[temp_fields_count].in_use = true;
+			temp_fields[temp_fields_count].key = Bytes(key_bin);
+			temp_fields[temp_fields_count].value = Bytes(value_bin);
+			++temp_fields_count;
+		}
+
+		if (map_size.size() > MAX_FIELDS) {
+			WARNING("LXMF message has " + std::to_string(map_size.size()) +
+					" fields, but max is " + std::to_string(MAX_FIELDS) + " - some fields truncated");
 		}
 
 		// Unpack stamp (element 4) - optional, 32 bytes
@@ -288,10 +344,15 @@ LXMessage LXMessage::unpack_from_bytes(const Bytes& lxmf_bytes, Type::Message::M
 	DEBUG("  Timestamp: " + std::to_string(timestamp));
 	DEBUG("  Title size: " + std::to_string(title.size()) + " bytes");
 	DEBUG("  Content size: " + std::to_string(content.size()) + " bytes");
-	DEBUG("  Fields: " + std::to_string(fields.size()));
+	DEBUG("  Fields: " + std::to_string(temp_fields_count));
 
 	// 3. Create message object
-	LXMessage message(destination_hash, source_hash, content, title, fields, original_method);
+	LXMessage message(destination_hash, source_hash, content, title, original_method);
+
+	// Copy fields to message
+	for (size_t i = 0; i < temp_fields_count; ++i) {
+		message.fields_set(temp_fields[i].key, temp_fields[i].value);
+	}
 	message._timestamp = timestamp;
 	message._signature = signature;
 	message._packed = lxmf_bytes;
@@ -387,10 +448,12 @@ bool LXMessage::validate_signature() {
 	packer.serialize(_timestamp);
 	packer.serialize(_title);
 	packer.serialize(_content);
-	packer.serialize((uint32_t)_fields.size());
-	for (const auto& field : _fields) {
-		packer.serialize(field.first);
-		packer.serialize(field.second);
+	packer.serialize((uint32_t)_fields_count);
+	for (size_t i = 0; i < MAX_FIELDS; ++i) {
+		if (_fields_pool[i].in_use) {
+			packer.serialize(_fields_pool[i].key);
+			packer.serialize(_fields_pool[i].value);
+		}
 	}
 	Bytes packed_payload(packer.data(), packer.size());
 	hashed_part << packed_payload;

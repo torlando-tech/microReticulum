@@ -156,20 +156,26 @@ void testLXMessageFields() {
 	Destination dest(dest_identity, RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "lxmf", "delivery");
 	Destination source(source_identity, RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "lxmf", "delivery");
 
-	// Create fields map
-	std::map<Bytes, Bytes> fields;
-	fields[Bytes("field1")] = Bytes("value1");
-	fields[Bytes("field2")] = Bytes("value2");
+	// Create message and set fields using new API
+	LXMessage message(dest, source, Bytes("Content"), Bytes("Title"));
+	message.fields_set(Bytes("field1"), Bytes("value1"));
+	message.fields_set(Bytes("field2"), Bytes("value2"));
 
-	LXMessage message(dest, source, Bytes("Content"), Bytes("Title"), fields);
 	const Bytes& packed = message.pack();
 
 	// Unpack and verify fields
 	Identity::remember(Identity::get_random_hash(), source.hash(), source_identity.get_public_key());
 	LXMessage unpacked = LXMessage::unpack_from_bytes(packed);
 
-	TEST_ASSERT_EQUAL_size_t(2, unpacked.fields().size());
-	// Note: Full field validation would require proper map comparison
+	TEST_ASSERT_EQUAL_size_t(2, unpacked.fields_count());
+
+	// Verify field values
+	const Bytes* val1 = unpacked.fields_get(Bytes("field1"));
+	const Bytes* val2 = unpacked.fields_get(Bytes("field2"));
+	TEST_ASSERT_NOT_NULL(val1);
+	TEST_ASSERT_NOT_NULL(val2);
+	TEST_ASSERT_TRUE(*val1 == Bytes("value1"));
+	TEST_ASSERT_TRUE(*val2 == Bytes("value2"));
 }
 
 void testPythonInterop() {

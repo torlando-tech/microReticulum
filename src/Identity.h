@@ -21,30 +21,71 @@ namespace RNS {
 	class Identity {
 
 	private:
+		// Fixed-size arrays to avoid Bytes object metadata overhead (~24 bytes each)
+		// This eliminates heap fragmentation from known destinations cache
+		static constexpr size_t DEST_HASH_SIZE = 16;    // RNS truncated hash
+		static constexpr size_t PACKET_HASH_SIZE = 32;  // SHA256 full hash
+		static constexpr size_t PUBLIC_KEY_SIZE = 64;   // Ed25519 + X25519 public keys
+
 		class IdentityEntry {
 		public:
-			IdentityEntry() : _timestamp(0) {}
-			IdentityEntry(double timestamp, const Bytes& packet_hash, const Bytes& public_key, const Bytes& app_data) :
-				_timestamp(timestamp),
-				_packet_hash(packet_hash),
-				_public_key(public_key),
-				_app_data(app_data)
-			{
+			IdentityEntry() : _timestamp(0) {
+				memset(_packet_hash, 0, PACKET_HASH_SIZE);
+				memset(_public_key, 0, PUBLIC_KEY_SIZE);
 			}
+			IdentityEntry(double timestamp, const Bytes& packet_hash, const Bytes& public_key, const Bytes& app_data)
+				: _timestamp(timestamp), _app_data(app_data)
+			{
+				set_packet_hash(packet_hash);
+				set_public_key(public_key);
+			}
+
+			// Helper methods for fixed array access
+			Bytes packet_hash_bytes() const { return Bytes(_packet_hash, PACKET_HASH_SIZE); }
+			Bytes public_key_bytes() const { return Bytes(_public_key, PUBLIC_KEY_SIZE); }
+			void set_packet_hash(const Bytes& b) {
+				size_t len = std::min(b.size(), PACKET_HASH_SIZE);
+				memcpy(_packet_hash, b.data(), len);
+				if (len < PACKET_HASH_SIZE) memset(_packet_hash + len, 0, PACKET_HASH_SIZE - len);
+			}
+			void set_public_key(const Bytes& b) {
+				size_t len = std::min(b.size(), PUBLIC_KEY_SIZE);
+				memcpy(_public_key, b.data(), len);
+				if (len < PUBLIC_KEY_SIZE) memset(_public_key + len, 0, PUBLIC_KEY_SIZE - len);
+			}
+
 		public:
 			double _timestamp = 0;
-			Bytes _packet_hash;
-			Bytes _public_key;
-			Bytes _app_data;
+			uint8_t _packet_hash[PACKET_HASH_SIZE];   // Fixed array - no heap alloc
+			uint8_t _public_key[PUBLIC_KEY_SIZE];    // Fixed array - no heap alloc
+			Bytes _app_data;  // Keep as Bytes - variable size, typically small or empty
 		};
 
 		// Fixed pool for known destinations (replaces std::map<Bytes, IdentityEntry>)
-		static constexpr size_t KNOWN_DESTINATIONS_SIZE = 512;
+		// Memory: 192 slots × ~121 bytes = ~23KB (reduced from ~38KB with Bytes objects)
+		// Eliminated: 3 Bytes objects per slot × 24 bytes metadata = 72 bytes saved per slot
+		static constexpr size_t KNOWN_DESTINATIONS_SIZE = 192;
 		struct KnownDestinationSlot {
 			bool in_use = false;
-			Bytes destination_hash;
+			uint8_t destination_hash[DEST_HASH_SIZE];  // Fixed array - no heap alloc
 			IdentityEntry entry;
-			void clear() { in_use = false; destination_hash.clear(); entry = IdentityEntry(); }
+
+			// Helper methods
+			Bytes hash_bytes() const { return Bytes(destination_hash, DEST_HASH_SIZE); }
+			void set_hash(const Bytes& b) {
+				size_t len = std::min(b.size(), DEST_HASH_SIZE);
+				memcpy(destination_hash, b.data(), len);
+				if (len < DEST_HASH_SIZE) memset(destination_hash + len, 0, DEST_HASH_SIZE - len);
+			}
+			bool hash_equals(const Bytes& b) const {
+				if (b.size() != DEST_HASH_SIZE) return false;
+				return memcmp(destination_hash, b.data(), DEST_HASH_SIZE) == 0;
+			}
+			void clear() {
+				in_use = false;
+				memset(destination_hash, 0, DEST_HASH_SIZE);
+				entry = IdentityEntry();
+			}
 		};
 		static KnownDestinationSlot _known_destinations_pool[KNOWN_DESTINATIONS_SIZE];
 
@@ -58,10 +99,45 @@ namespace RNS {
 		// CBA
 		static uint16_t _known_destinations_maxsize;
 
-		// Ratchet cache for forward secrecy
-		static std::map<Bytes, Bytes> _known_ratchets;  // dest_hash -> ratchet_public_key
+		// Ratchet cache for forward secrecy - fixed pool
+		// Memory: 128 slots × ~57 bytes = ~7.3KB (reduced from ~13KB with Bytes objects)
+		static constexpr size_t KNOWN_RATCHETS_SIZE = 128;
+		static constexpr size_t RATCHET_KEY_SIZE = 32;  // X25519 public key
+		struct KnownRatchetSlot {
+			bool in_use = false;
+			uint8_t destination_hash[DEST_HASH_SIZE];  // Fixed array - no heap alloc
+			uint8_t ratchet_public_key[RATCHET_KEY_SIZE];  // Fixed array - no heap alloc
+			double timestamp = 0;  // For LRU-style culling
+
+			// Helper methods
+			Bytes hash_bytes() const { return Bytes(destination_hash, DEST_HASH_SIZE); }
+			Bytes ratchet_bytes() const { return Bytes(ratchet_public_key, RATCHET_KEY_SIZE); }
+			void set_hash(const Bytes& b) {
+				size_t len = std::min(b.size(), DEST_HASH_SIZE);
+				memcpy(destination_hash, b.data(), len);
+				if (len < DEST_HASH_SIZE) memset(destination_hash + len, 0, DEST_HASH_SIZE - len);
+			}
+			void set_ratchet(const Bytes& b) {
+				size_t len = std::min(b.size(), RATCHET_KEY_SIZE);
+				memcpy(ratchet_public_key, b.data(), len);
+				if (len < RATCHET_KEY_SIZE) memset(ratchet_public_key + len, 0, RATCHET_KEY_SIZE - len);
+			}
+			bool hash_equals(const Bytes& b) const {
+				if (b.size() != DEST_HASH_SIZE) return false;
+				return memcmp(destination_hash, b.data(), DEST_HASH_SIZE) == 0;
+			}
+			void clear() {
+				in_use = false;
+				memset(destination_hash, 0, DEST_HASH_SIZE);
+				memset(ratchet_public_key, 0, RATCHET_KEY_SIZE);
+				timestamp = 0;
+			}
+		};
+		static KnownRatchetSlot _known_ratchets_pool[KNOWN_RATCHETS_SIZE];
 		static bool _saving_known_ratchets;
-		static constexpr size_t KNOWN_RATCHETS_MAXSIZE = 128;  // Limit to prevent memory leak
+
+		static KnownRatchetSlot* find_known_ratchet_slot(const Bytes& dest_hash);
+		static KnownRatchetSlot* find_empty_known_ratchet_slot();
 
 	public:
 		Identity(bool create_keys = true);
@@ -141,7 +217,7 @@ namespace RNS {
 		static Bytes recall_ratchet(const Bytes& destination_hash);
 		static bool save_known_ratchets();
 		static void load_known_ratchets();
-		static inline size_t known_ratchets_count() { return _known_ratchets.size(); }
+		static size_t known_ratchets_count();
 		static void cull_known_ratchets();
 
 		/*

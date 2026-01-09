@@ -713,11 +713,11 @@ void Link::teardown_packet(const Packet& packet) {
 
 void Link::link_closed() {
 	assert(_object);
-	for (auto& resource : _object->_incoming_resources) {
-		const_cast<Resource&>(resource).cancel();
+	for (size_t i = 0; i < _object->_incoming_resources_count; i++) {
+		_object->_incoming_resources[i].cancel();
 	}
-	for (auto& resource : _object->_outgoing_resources) {
-		const_cast<Resource&>(resource).cancel();
+	for (size_t i = 0; i < _object->_outgoing_resources_count; i++) {
+		_object->_outgoing_resources[i].cancel();
 	}
 	if (_object->_channel) {
 		_object->_channel._shutdown();
@@ -840,15 +840,16 @@ void Link::loop() {
 	assert(_object);
 
 	// Check timeouts for all active resources on this link
-	// Copy the sets since check_timeout may modify them via callbacks
-	auto incoming_copy = _object->_incoming_resources;
-	for (auto& resource : incoming_copy) {
-		const_cast<Resource&>(resource).check_timeout();
+	// We iterate by index since check_timeout may modify the arrays via callbacks
+	// Store count first since it may change during iteration
+	size_t incoming_count = _object->_incoming_resources_count;
+	for (size_t i = 0; i < incoming_count && i < _object->_incoming_resources_count; i++) {
+		_object->_incoming_resources[i].check_timeout();
 	}
 
-	auto outgoing_copy = _object->_outgoing_resources;
-	for (auto& resource : outgoing_copy) {
-		const_cast<Resource&>(resource).check_timeout();
+	size_t outgoing_count = _object->_outgoing_resources_count;
+	for (size_t i = 0; i < outgoing_count && i < _object->_outgoing_resources_count; i++) {
+		_object->_outgoing_resources[i].check_timeout();
 	}
 }
 
@@ -860,15 +861,15 @@ void Link::handle_request(const Bytes& request_id, const ResourceRequest& resour
 		//p path_hash    = unpacked_request[1]
 		//p request_data = unpacked_request[2]
 
-		auto handler_iter = _object->_destination.request_handlers().find(resource_request._path_hash);
-		if (handler_iter != _object->_destination.request_handlers().end()) {
+		const RequestHandler* request_handler_ptr = _object->_destination.find_request_handler(resource_request._path_hash);
+		if (request_handler_ptr) {
 			TRACE("Link::handle_request: Found handler");
-			RequestHandler request_handler = (*handler_iter).second;
+			const RequestHandler& request_handler = *request_handler_ptr;
 
 			bool allowed = false;
 			if (request_handler._allow != Type::Destination::ALLOW_NONE) {
 				if (request_handler._allow == Type::Destination::ALLOW_LIST) {
-					if (_object->__remote_identity && request_handler._allowed_list.count(_object->__remote_identity.hash()) > 0) {
+					if (_object->__remote_identity && request_handler.allowed_list_contains(_object->__remote_identity.hash())) {
 						allowed = true;
 					}
 				}
@@ -926,7 +927,8 @@ void Link::handle_response(const Bytes& request_id, const Bytes& response_data, 
 	assert(_object);
 	if (_object->_status == Type::Link::ACTIVE) {
 		RNS::RequestReceipt remove = {Type::NONE};
-		for (RNS::RequestReceipt pending_request : _object->_pending_requests) {
+		for (size_t i = 0; i < _object->_pending_requests_count; i++) {
+			RNS::RequestReceipt& pending_request = _object->_pending_requests[i];
 			if (pending_request.request_id() == request_id) {
 				remove = pending_request;
 				try {
@@ -944,9 +946,7 @@ void Link::handle_response(const Bytes& request_id, const Bytes& response_data, 
 			}
 		}
 		if (remove) {
-			if (_object->_pending_requests.count(remove) > 0) {
-				_object->_pending_requests.erase(remove);
-			}
+			pending_requests_remove(remove);
 		}
 	}
 }
@@ -998,7 +998,8 @@ void Link::response_resource_concluded(const Resource& resource) {
 	}
 	else {
 		DEBUGF("Incoming response resource failed with status: %d", resource.status());
-		for (RNS::RequestReceipt pending_request : _object->_pending_requests) {
+		for (size_t i = 0; i < _object->_pending_requests_count; i++) {
+			RNS::RequestReceipt& pending_request = _object->_pending_requests[i];
 			if (pending_request.request_id() == resource.request_id()) {
 				pending_request.request_timed_out({Type::NONE});
 			}
@@ -1288,9 +1289,9 @@ void Link::receive(const Packet& packet) {
 					if (plaintext) {
 						DEBUG("Link::receive: Received RESOURCE_HMU");
 						// Find matching resource and update its hashmap
-						for (auto& resource : _object->_incoming_resources) {
+						for (size_t i = 0; i < _object->_incoming_resources_count; i++) {
 							// HMU packet contains resource hash for matching
-							const_cast<Resource&>(resource).hashmap_update_packet(plaintext);
+							_object->_incoming_resources[i].hashmap_update_packet(plaintext);
 						}
 					}
 					break;
@@ -1317,12 +1318,11 @@ void Link::receive(const Packet& packet) {
 					// We pass the raw data to receive_part for hash matching.
 					const_cast<Packet&>(packet).plaintext(packet.data());
 					DEBUG("Link::receive: Received RESOURCE data");
-					// Copy the set before iterating - receive_part may trigger
-					// resource_concluded() which erases from _incoming_resources,
-					// invalidating iterators during the range-based for loop.
-					auto incoming_copy = _object->_incoming_resources;
-					for (auto& resource : incoming_copy) {
-						const_cast<Resource&>(resource).receive_part(packet);
+					// Iterate by index - receive_part may trigger resource_concluded()
+					// which can modify the array. Store count first since it may change.
+					size_t incoming_count = _object->_incoming_resources_count;
+					for (size_t i = 0; i < incoming_count && i < _object->_incoming_resources_count; i++) {
+						_object->_incoming_resources[i].receive_part(packet);
 					}
 					break;
 				}
@@ -1342,10 +1342,10 @@ void Link::receive(const Packet& packet) {
 						Bytes resource_hash = plaintext.mid(offset, Type::Identity::HASHLENGTH / 8);
 
 						// Find matching outgoing resource
-						for (auto& resource : _object->_outgoing_resources) {
-							if (resource.hash() == resource_hash) {
+						for (size_t i = 0; i < _object->_outgoing_resources_count; i++) {
+							if (_object->_outgoing_resources[i].hash() == resource_hash) {
 								DEBUG("Link::receive: Found matching outgoing resource, routing request");
-								const_cast<Resource&>(resource).request(plaintext);
+								_object->_outgoing_resources[i].request(plaintext);
 								break;
 							}
 						}
@@ -1359,16 +1359,17 @@ void Link::receive(const Packet& packet) {
 					if (plaintext) {
 						DEBUG("Link::receive: Received RESOURCE_ICL (initiator cancel)");
 						Bytes resource_hash = plaintext.left(Type::Identity::HASHLENGTH / 8);
-						// Copy set before iterating as we may modify it
-						auto incoming_copy = _object->_incoming_resources;
-						for (auto& resource : incoming_copy) {
-							if (resource.hash() == resource_hash) {
+						// Store count first since resource_concluded may modify the array
+						size_t incoming_count = _object->_incoming_resources_count;
+						for (size_t i = 0; i < incoming_count && i < _object->_incoming_resources_count; i++) {
+							if (_object->_incoming_resources[i].hash() == resource_hash) {
 								DEBUG("Link::receive: Found matching incoming resource, marking failed");
 								// Mark as failed without sending cancel back (avoid infinite loop)
-								const_cast<Resource&>(resource)._object->_status = Type::Resource::FAILED;
-								resource_concluded(resource);
+								_object->_incoming_resources[i]._object->_status = Type::Resource::FAILED;
+								Resource res_copy = _object->_incoming_resources[i];
+								resource_concluded(res_copy);
 								if (_object->_callbacks._resource_concluded) {
-									_object->_callbacks._resource_concluded(resource);
+									_object->_callbacks._resource_concluded(res_copy);
 								}
 								break;
 							}
@@ -1383,16 +1384,17 @@ void Link::receive(const Packet& packet) {
 					if (plaintext) {
 						DEBUG("Link::receive: Received RESOURCE_RCL (receiver cancel)");
 						Bytes resource_hash = plaintext.left(Type::Identity::HASHLENGTH / 8);
-						// Copy set before iterating as we may modify it
-						auto outgoing_copy = _object->_outgoing_resources;
-						for (auto& resource : outgoing_copy) {
-							if (resource.hash() == resource_hash) {
+						// Store count first since resource_concluded may modify the array
+						size_t outgoing_count = _object->_outgoing_resources_count;
+						for (size_t i = 0; i < outgoing_count && i < _object->_outgoing_resources_count; i++) {
+							if (_object->_outgoing_resources[i].hash() == resource_hash) {
 								DEBUG("Link::receive: Found matching outgoing resource, marking failed");
 								// Mark as failed without sending cancel back (avoid infinite loop)
-								const_cast<Resource&>(resource)._object->_status = Type::Resource::FAILED;
-								resource_concluded(resource);
+								_object->_outgoing_resources[i]._object->_status = Type::Resource::FAILED;
+								Resource res_copy = _object->_outgoing_resources[i];
+								resource_concluded(res_copy);
 								if (_object->_callbacks._resource_concluded) {
-									_object->_callbacks._resource_concluded(resource);
+									_object->_callbacks._resource_concluded(res_copy);
 								}
 								break;
 							}
@@ -1430,10 +1432,10 @@ void Link::receive(const Packet& packet) {
 				if (packet.context() == Type::Packet::RESOURCE_PRF) {
 					DEBUG("Link::receive: Received RESOURCE_PRF");
 					Bytes resource_hash = packet.data().left(Type::Identity::HASHLENGTH/8);
-					for (auto& resource : _object->_outgoing_resources) {
-						if (resource_hash == resource.hash()) {
+					for (size_t i = 0; i < _object->_outgoing_resources_count; i++) {
+						if (resource_hash == _object->_outgoing_resources[i].hash()) {
 							DEBUG("Link::receive: Found matching outgoing resource for proof");
-							const_cast<Resource&>(resource).validate_proof(packet.data());
+							_object->_outgoing_resources[i].validate_proof(packet.data());
 							break;
 						}
 					}
@@ -1535,12 +1537,8 @@ void Link::set_resource_concluded_callback(Callbacks::resource_concluded callbac
 
 void Link::resource_concluded(const Resource& resource) {
 	assert(_object);
-	if (_object->_incoming_resources.count(resource) > 0) {
-		_object->_incoming_resources.erase(resource);
-	}
-	if (_object->_outgoing_resources.count(resource) > 0) {
-		_object->_outgoing_resources.erase(resource);
-	}
+	incoming_resources_remove(resource);
+	outgoing_resources_remove(resource);
 }
 
 /*
@@ -1561,18 +1559,18 @@ void Link::set_resource_strategy(resource_strategy strategy) {
 
 void Link::register_outgoing_resource(const Resource& resource) {
 	assert(_object);
-	_object->_outgoing_resources.insert(resource);
+	outgoing_resources_add(resource);
 }
 
 void Link::register_incoming_resource(const Resource& resource) {
 	assert(_object);
-	_object->_incoming_resources.insert(resource);
+	incoming_resources_add(resource);
 }
 
 bool Link::has_incoming_resource(const Resource& resource) {
 	assert(_object);
-	for (const auto& incoming_resource : _object->_incoming_resources) {
-		if (incoming_resource.hash() == resource.hash()) {
+	for (size_t i = 0; i < _object->_incoming_resources_count; i++) {
+		if (_object->_incoming_resources[i].hash() == resource.hash()) {
 			return true;
 		}
 	}
@@ -1581,27 +1579,21 @@ bool Link::has_incoming_resource(const Resource& resource) {
 
 void Link::cancel_outgoing_resource(const Resource& resource) {
 	assert(_object);
-	if (_object->_outgoing_resources.count(resource) > 0) {
-		_object->_outgoing_resources.erase(resource);
-	}
-	else {
+	if (!outgoing_resources_remove(resource)) {
 		ERROR("Attempt to cancel a non-existing outgoing resource");
 	}
 }
 
 void Link::cancel_incoming_resource(const Resource& resource) {
 	assert(_object);
-	if (_object->_incoming_resources.count(resource)) {
-		_object->_incoming_resources.erase(resource);
-	}
-	else {
+	if (!incoming_resources_remove(resource)) {
 		ERROR("Attempt to cancel a non-existing incoming resource");
 	}
 }
 
 bool Link::ready_for_new_resource() {
 	assert(_object);
-	return (_object->_outgoing_resources.size() > 0);
+	return (_object->_outgoing_resources_count > 0);
 }
 
 SegmentAccumulator& Link::segment_accumulator() {
@@ -1752,9 +1744,109 @@ double Link::last_inbound() const {
 	return _object->_last_inbound;
 }
 
-std::set<RNS::RequestReceipt>& Link::pending_requests() const {
+// Fixed-size pool helper methods for pending requests
+bool Link::pending_requests_contains(const RequestReceipt& r) const {
 	assert(_object);
-	return _object->_pending_requests;
+	for (size_t i = 0; i < _object->_pending_requests_count; i++) {
+		if (_object->_pending_requests[i]._object.get() == r._object.get()) return true;
+	}
+	return false;
+}
+
+bool Link::pending_requests_add(const RequestReceipt& r) {
+	assert(_object);
+	if (_object->_pending_requests_count >= LinkData::PENDING_REQUESTS_SIZE) return false;
+	_object->_pending_requests[_object->_pending_requests_count++] = r;
+	return true;
+}
+
+bool Link::pending_requests_remove(const RequestReceipt& r) {
+	assert(_object);
+	for (size_t i = 0; i < _object->_pending_requests_count; i++) {
+		if (_object->_pending_requests[i]._object.get() == r._object.get()) {
+			for (size_t j = i; j < _object->_pending_requests_count - 1; j++) {
+				_object->_pending_requests[j] = _object->_pending_requests[j + 1];
+			}
+			_object->_pending_requests[--_object->_pending_requests_count] = RequestReceipt(Type::NONE);
+			return true;
+		}
+	}
+	return false;
+}
+
+size_t Link::pending_requests_count() const {
+	assert(_object);
+	return _object->_pending_requests_count;
+}
+
+// Fixed-size pool helper methods for incoming resources
+bool Link::incoming_resources_contains(const Resource& r) const {
+	assert(_object);
+	for (size_t i = 0; i < _object->_incoming_resources_count; i++) {
+		if (_object->_incoming_resources[i]._object.get() == r._object.get()) return true;
+	}
+	return false;
+}
+
+bool Link::incoming_resources_add(const Resource& r) {
+	assert(_object);
+	if (_object->_incoming_resources_count >= LinkData::INCOMING_RESOURCES_SIZE) return false;
+	_object->_incoming_resources[_object->_incoming_resources_count++] = r;
+	return true;
+}
+
+bool Link::incoming_resources_remove(const Resource& r) {
+	assert(_object);
+	for (size_t i = 0; i < _object->_incoming_resources_count; i++) {
+		if (_object->_incoming_resources[i]._object.get() == r._object.get()) {
+			for (size_t j = i; j < _object->_incoming_resources_count - 1; j++) {
+				_object->_incoming_resources[j] = _object->_incoming_resources[j + 1];
+			}
+			_object->_incoming_resources[--_object->_incoming_resources_count] = Resource(Type::NONE);
+			return true;
+		}
+	}
+	return false;
+}
+
+size_t Link::incoming_resources_count() const {
+	assert(_object);
+	return _object->_incoming_resources_count;
+}
+
+// Fixed-size pool helper methods for outgoing resources
+bool Link::outgoing_resources_contains(const Resource& r) const {
+	assert(_object);
+	for (size_t i = 0; i < _object->_outgoing_resources_count; i++) {
+		if (_object->_outgoing_resources[i]._object.get() == r._object.get()) return true;
+	}
+	return false;
+}
+
+bool Link::outgoing_resources_add(const Resource& r) {
+	assert(_object);
+	if (_object->_outgoing_resources_count >= LinkData::OUTGOING_RESOURCES_SIZE) return false;
+	_object->_outgoing_resources[_object->_outgoing_resources_count++] = r;
+	return true;
+}
+
+bool Link::outgoing_resources_remove(const Resource& r) {
+	assert(_object);
+	for (size_t i = 0; i < _object->_outgoing_resources_count; i++) {
+		if (_object->_outgoing_resources[i]._object.get() == r._object.get()) {
+			for (size_t j = i; j < _object->_outgoing_resources_count - 1; j++) {
+				_object->_outgoing_resources[j] = _object->_outgoing_resources[j + 1];
+			}
+			_object->_outgoing_resources[--_object->_outgoing_resources_count] = Resource(Type::NONE);
+			return true;
+		}
+	}
+	return false;
+}
+
+size_t Link::outgoing_resources_count() const {
+	assert(_object);
+	return _object->_outgoing_resources_count;
 }
 
 Type::Link::teardown_reason Link::teardown_reason() const {
@@ -1888,7 +1980,7 @@ RequestReceipt::RequestReceipt(const Link& link, const PacketReceipt& packet_rec
 	_object->_callbacks._failed = failed_callback;
 	_object->_callbacks._progress = progress_callback;
 
-	_object->_link.pending_requests().insert(*this);
+	_object->_link.pending_requests_add(*this);
 }
 
 void RequestReceipt::request_resource_concluded(const Resource& resource) {
@@ -1908,7 +2000,7 @@ void RequestReceipt::request_resource_concluded(const Resource& resource) {
 		DEBUGF("Sending request %s as resource failed with status: %d", _object->_request_id.toHex().c_str(), resource.status());
 		_object->_status = Type::RequestReceipt::FAILED;
 		_object->_concluded_at = OS::time();
-		_object->_link.pending_requests().erase(*this);
+		_object->_link.pending_requests_remove(*this);
 		if (_object->_callbacks._failed != nullptr) {
 			try {
 				_object->_callbacks._failed(*this);
@@ -1938,7 +2030,7 @@ void RequestReceipt::request_timed_out(const PacketReceipt& packet_receipt) {
 	assert(_object);
 	_object->_status = Type::RequestReceipt::FAILED;
 	_object->_concluded_at = OS::time();
-	_object->_link.pending_requests().erase(*this);
+	_object->_link.pending_requests_remove(*this);
 
 	if (_object->_callbacks._failed != nullptr) {
 		try {

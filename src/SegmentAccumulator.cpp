@@ -17,6 +17,35 @@ void SegmentAccumulator::set_segment_callback(SegmentCallback callback) {
 	_segment_callback = callback;
 }
 
+SegmentAccumulator::PendingTransferSlot* SegmentAccumulator::find_slot(const Bytes& transfer_id) {
+	for (size_t i = 0; i < MAX_PENDING_TRANSFERS; i++) {
+		if (_pending_pool[i].in_use && _pending_pool[i].transfer_id == transfer_id) {
+			return &_pending_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+const SegmentAccumulator::PendingTransferSlot* SegmentAccumulator::find_slot(const Bytes& transfer_id) const {
+	for (size_t i = 0; i < MAX_PENDING_TRANSFERS; i++) {
+		if (_pending_pool[i].in_use && _pending_pool[i].transfer_id == transfer_id) {
+			return &_pending_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+SegmentAccumulator::PendingTransferSlot* SegmentAccumulator::allocate_slot(const Bytes& transfer_id) {
+	for (size_t i = 0; i < MAX_PENDING_TRANSFERS; i++) {
+		if (!_pending_pool[i].in_use) {
+			_pending_pool[i].in_use = true;
+			_pending_pool[i].transfer_id = transfer_id;
+			return &_pending_pool[i];
+		}
+	}
+	return nullptr;  // Pool is full
+}
+
 bool SegmentAccumulator::segment_completed(const Resource& resource) {
 	// Check if this is a multi-segment resource
 	if (!resource.is_segmented()) {
@@ -40,17 +69,32 @@ bool SegmentAccumulator::segment_completed(const Resource& resource) {
 		hash_short.c_str(),
 		resource.data().size());
 
+	// Validate total_segments doesn't exceed our fixed array size
+	if (total_segments > static_cast<int>(MAX_SEGMENTS_PER_TRANSFER)) {
+		ERRORF("SegmentAccumulator: Transfer has %d segments, exceeds max %zu",
+			total_segments, MAX_SEGMENTS_PER_TRANSFER);
+		return true;  // We handled it (by rejecting)
+	}
+
 	double now = OS::time();
 
-	// Create or get pending transfer
-	auto it = _pending.find(original_hash);
-	if (it == _pending.end()) {
-		// New transfer - initialize
-		PendingTransfer transfer;
+	// Find or create pending transfer
+	PendingTransferSlot* slot = find_slot(original_hash);
+	if (slot == nullptr) {
+		// New transfer - allocate a slot
+		slot = allocate_slot(original_hash);
+		if (slot == nullptr) {
+			ERRORF("SegmentAccumulator: Cannot track transfer %s, pool full (%zu max)",
+				hash_short.c_str(), MAX_PENDING_TRANSFERS);
+			return true;  // We handled it (by rejecting due to pool exhaustion)
+		}
+
+		// Initialize the transfer
+		PendingTransfer& transfer = slot->transfer;
 		transfer.original_hash = original_hash;
 		transfer.total_segments = total_segments;
 		transfer.received_count = 0;
-		transfer.segments.resize(total_segments);
+		transfer.segment_count = static_cast<size_t>(total_segments);
 		transfer.started_at = now;
 		transfer.last_activity = now;
 
@@ -60,15 +104,11 @@ bool SegmentAccumulator::segment_completed(const Resource& resource) {
 			transfer.segments[i].received = false;
 		}
 
-		_pending[original_hash] = std::move(transfer);
-		it = _pending.find(original_hash);
-
-		std::string hash_short = original_hash.toHex().substr(0, 16);
 		INFOF("SegmentAccumulator: Started tracking %d-segment transfer for %s",
 			total_segments, hash_short.c_str());
 	}
 
-	PendingTransfer& transfer = it->second;
+	PendingTransfer& transfer = slot->transfer;
 	transfer.last_activity = now;
 
 	// Validate segment index
@@ -114,8 +154,8 @@ bool SegmentAccumulator::segment_completed(const Resource& resource) {
 			_accumulated_callback(complete_data, original_hash);
 		}
 
-		// Cleanup
-		_pending.erase(it);
+		// Cleanup - clear the slot
+		slot->clear();
 	}
 
 	return true;  // We handled this multi-segment resource
@@ -124,8 +164,8 @@ bool SegmentAccumulator::segment_completed(const Resource& resource) {
 Bytes SegmentAccumulator::assemble_segments(const PendingTransfer& transfer) {
 	// Calculate total size
 	size_t total_size = 0;
-	for (const auto& seg : transfer.segments) {
-		total_size += seg.data_size;
+	for (int i = 0; i < transfer.total_segments; i++) {
+		total_size += transfer.segments[i].data_size;
 	}
 
 	// Concatenate in order
@@ -146,10 +186,13 @@ Bytes SegmentAccumulator::assemble_segments(const PendingTransfer& transfer) {
 
 void SegmentAccumulator::check_timeouts(double timeout_seconds) {
 	double now = OS::time();
-	std::vector<Bytes> to_remove;
 
-	for (const auto& pair : _pending) {
-		const PendingTransfer& transfer = pair.second;
+	for (size_t i = 0; i < MAX_PENDING_TRANSFERS; i++) {
+		if (!_pending_pool[i].in_use) {
+			continue;
+		}
+
+		const PendingTransfer& transfer = _pending_pool[i].transfer;
 		double inactive_time = now - transfer.last_activity;
 
 		if (inactive_time > timeout_seconds) {
@@ -157,30 +200,32 @@ void SegmentAccumulator::check_timeouts(double timeout_seconds) {
 			WARNINGF("SegmentAccumulator: Transfer %s timed out (%.1fs inactive, %d/%d segments)",
 				hash_short.c_str(),
 				inactive_time, transfer.received_count, transfer.total_segments);
-			to_remove.push_back(pair.first);
+			_pending_pool[i].clear();
 		}
-	}
-
-	for (const Bytes& hash : to_remove) {
-		_pending.erase(hash);
 	}
 }
 
 void SegmentAccumulator::cleanup(const Bytes& original_hash) {
-	auto it = _pending.find(original_hash);
-	if (it != _pending.end()) {
+	PendingTransferSlot* slot = find_slot(original_hash);
+	if (slot != nullptr) {
 		std::string hash_short = original_hash.toHex().substr(0, 16);
 		DEBUGF("SegmentAccumulator: Cleaning up transfer %s (%d/%d segments received)",
 			hash_short.c_str(),
-			it->second.received_count, it->second.total_segments);
-		_pending.erase(it);
+			slot->transfer.received_count, slot->transfer.total_segments);
+		slot->clear();
 	}
 }
 
 bool SegmentAccumulator::has_pending(const Bytes& original_hash) const {
-	return _pending.find(original_hash) != _pending.end();
+	return find_slot(original_hash) != nullptr;
 }
 
 size_t SegmentAccumulator::pending_count() const {
-	return _pending.size();
+	size_t count = 0;
+	for (size_t i = 0; i < MAX_PENDING_TRANSFERS; i++) {
+		if (_pending_pool[i].in_use) {
+			count++;
+		}
+	}
+	return count;
 }

@@ -12,7 +12,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include <map>
 #include <set>
 #include <cassert>
 #include <stdint.h>
@@ -28,16 +27,49 @@ namespace RNS {
 		//p response_generator(path, data, request_id, link_id, remote_identity, requested_at)
 		using response_generator = Bytes(*)(const Bytes& path, const Bytes& data, const Bytes& request_id, const Bytes& link_id, const Identity& remote_identity, double requested_at);
 	public:
+		static constexpr size_t ALLOWED_LIST_SIZE = 16;
+
+		RequestHandler() = default;
 		RequestHandler(const RequestHandler& handler) {
 			_path = handler._path;
 			_response_generator = handler._response_generator;
 			_allow = handler._allow;
-			_allowed_list = handler._allowed_list;
+			_allowed_list_count = handler._allowed_list_count;
+			for (size_t i = 0; i < _allowed_list_count; i++) {
+				_allowed_list[i] = handler._allowed_list[i];
+			}
 		}
+		RequestHandler& operator=(const RequestHandler& handler) {
+			if (this != &handler) {
+				_path = handler._path;
+				_response_generator = handler._response_generator;
+				_allow = handler._allow;
+				_allowed_list_count = handler._allowed_list_count;
+				for (size_t i = 0; i < _allowed_list_count; i++) {
+					_allowed_list[i] = handler._allowed_list[i];
+				}
+			}
+			return *this;
+		}
+
+		bool allowed_list_contains(const Bytes& hash) const {
+			for (size_t i = 0; i < _allowed_list_count; i++) {
+				if (_allowed_list[i] == hash) return true;
+			}
+			return false;
+		}
+		bool allowed_list_add(const Bytes& hash) {
+			if (allowed_list_contains(hash)) return false;
+			if (_allowed_list_count >= ALLOWED_LIST_SIZE) return false;
+			_allowed_list[_allowed_list_count++] = hash;
+			return true;
+		}
+
 		Bytes _path;
 		response_generator _response_generator = nullptr;
 		Type::Destination::request_policies _allow = Type::Destination::ALLOW_NONE;
-		std::set<Bytes> _allowed_list;
+		Bytes _allowed_list[ALLOWED_LIST_SIZE];
+		size_t _allowed_list_count = 0;
 	};
 
     /**
@@ -188,6 +220,12 @@ namespace RNS {
 		Bytes get_latest_ratchet_id() const;
 		Bytes get_ratchet_public_bytes() const;
 
+		// Ratchet circular buffer helpers
+		bool ratchets_add(const Cryptography::Ratchet& ratchet);  // Add new, overwrite oldest if full
+		const Cryptography::Ratchet* ratchets_find(const Bytes& public_key) const;
+		inline size_t ratchets_count() const { assert(_object); return _object->_ratchets_count; }
+		void ratchets_clear();
+
 		// CBA
 		bool has_link(const Link& link);
 		void remove_link(const Link& link);
@@ -205,8 +243,34 @@ namespace RNS {
 		//inline Type::Link::status status() const { assert(_object); return _object->_status; }
 		inline const Callbacks& callbacks() const { assert(_object); return _object->_callbacks; }
 		inline const Identity& identity() const { assert(_object); return _object->_identity; }
-		inline const std::map<Bytes, PathResponse>& path_responses() const { assert(_object); return _object->_path_responses; }
-		inline const std::map<Bytes, RequestHandler>& request_handlers() const { assert(_object); return _object->_request_handlers; }
+		// Fixed pool accessors - use count and index for iteration
+		inline size_t path_responses_count() const {
+			assert(_object);
+			size_t count = 0;
+			for (size_t i = 0; i < Object::PATH_RESPONSES_SIZE; i++) {
+				if (_object->_path_responses[i].in_use) count++;
+			}
+			return count;
+		}
+		inline size_t request_handlers_count() const {
+			assert(_object);
+			size_t count = 0;
+			for (size_t i = 0; i < Object::REQUEST_HANDLERS_SIZE; i++) {
+				if (_object->_request_handlers[i].in_use) count++;
+			}
+			return count;
+		}
+		inline size_t links_count() const { assert(_object); return _object->_links.size(); }
+		// Find request handler by path hash, returns nullptr if not found
+		inline const RequestHandler* find_request_handler(const Bytes& path_hash) const {
+			assert(_object);
+			for (size_t i = 0; i < Object::REQUEST_HANDLERS_SIZE; i++) {
+				if (_object->_request_handlers[i].in_use && _object->_request_handlers[i].path_hash == path_hash) {
+					return &_object->_request_handlers[i].handler;
+				}
+			}
+			return nullptr;
+		}
 
 		// setters
 		// CBA Don't allow changing destination hash after construction since it's used as key in collections
@@ -222,18 +286,36 @@ namespace RNS {
 	private:
 		class Object {
 		public:
+			// Fixed pool sizes for zero heap fragmentation
+			static constexpr size_t REQUEST_HANDLERS_SIZE = 8;
+			static constexpr size_t PATH_RESPONSES_SIZE = 8;
+
+			struct RequestHandlerSlot {
+				bool in_use = false;
+				Bytes path_hash;
+				RequestHandler handler;
+				void clear() { in_use = false; path_hash.clear(); handler = RequestHandler(); }
+			};
+
+			struct PathResponseSlot {
+				bool in_use = false;
+				Bytes tag;
+				PathResponse response;
+				void clear() { in_use = false; tag.clear(); response = PathResponse(); }
+			};
+
 			Object(const Identity& identity) : _identity(identity) { MEM("Destination::Data object created, this: " + std::to_string((uintptr_t)this)); }
 			virtual ~Object() { MEM("Destination::Data object destroyed, this: " + std::to_string((uintptr_t)this)); }
 		private:
 			bool _accept_link_requests = true;
 			Callbacks _callbacks;
-			std::map<Bytes, RequestHandler> _request_handlers;
+			RequestHandlerSlot _request_handlers[REQUEST_HANDLERS_SIZE];
 			Type::Destination::types _type;
 			Type::Destination::directions _direction;
 			Type::Destination::proof_strategies _proof_strategy = Type::Destination::PROVE_NONE;
 			uint16_t _mtu = 0;
 
-			std::map<Bytes, PathResponse> _path_responses;
+			PathResponseSlot _path_responses[PATH_RESPONSES_SIZE];
 			std::set<Link> _links;
 
 			Identity _identity;
@@ -260,8 +342,11 @@ namespace RNS {
 			//uint16_t _tx = 0;
 			//uint32_t _txbytes = 0;
 
-			// Ratchet support for forward secrecy
-			std::vector<Cryptography::Ratchet> _ratchets;  // Circular buffer, max 128
+			// Ratchet support for forward secrecy - fixed-size circular buffer
+			static constexpr size_t RATCHETS_SIZE = 128;
+			Cryptography::Ratchet _ratchets[RATCHETS_SIZE];
+			size_t _ratchets_head = 0;   // Oldest entry index
+			size_t _ratchets_count = 0;  // Number of valid entries
 			Bytes _latest_ratchet_id;
 			double _latest_ratchet_time = 0.0;
 			double _ratchet_interval = Cryptography::Ratchet::DEFAULT_RATCHET_INTERVAL;

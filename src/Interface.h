@@ -7,7 +7,6 @@
 
 #include <ArduinoJson.h>
 
-#include <list>
 #include <memory>
 #include <map>
 #include <string>
@@ -89,7 +88,76 @@ namespace RNS {
 		bool _FIXED_MTU = false;
 		double _announce_allowed_at = 0;
 		float _announce_cap = 0.0;
-		std::list<AnnounceEntry> _announce_queue;
+
+		// Circular buffer for announce queue (eliminates heap fragmentation)
+		static constexpr size_t ANNOUNCE_QUEUE_SIZE = 32;
+		AnnounceEntry _announce_queue_pool[ANNOUNCE_QUEUE_SIZE];
+		size_t _announce_queue_head = 0;
+		size_t _announce_queue_tail = 0;
+		size_t _announce_queue_count = 0;
+
+	public:
+		// Circular buffer helpers (public for Transport access)
+		bool announce_queue_push(const AnnounceEntry& entry) {
+			if (_announce_queue_count >= ANNOUNCE_QUEUE_SIZE) {
+				return false;  // Queue full
+			}
+			_announce_queue_pool[_announce_queue_tail] = entry;
+			_announce_queue_tail = (_announce_queue_tail + 1) % ANNOUNCE_QUEUE_SIZE;
+			_announce_queue_count++;
+			return true;
+		}
+
+		bool announce_queue_pop(AnnounceEntry& entry) {
+			if (_announce_queue_count == 0) {
+				return false;  // Queue empty
+			}
+			entry = _announce_queue_pool[_announce_queue_head];
+			_announce_queue_pool[_announce_queue_head] = AnnounceEntry();  // Clear old entry
+			_announce_queue_head = (_announce_queue_head + 1) % ANNOUNCE_QUEUE_SIZE;
+			_announce_queue_count--;
+			return true;
+		}
+
+		bool announce_queue_empty() const { return _announce_queue_count == 0; }
+		size_t announce_queue_size() const { return _announce_queue_count; }
+
+		// Get entry at logical index (0 = head/oldest)
+		AnnounceEntry& announce_queue_at(size_t index) {
+			return _announce_queue_pool[(_announce_queue_head + index) % ANNOUNCE_QUEUE_SIZE];
+		}
+
+		const AnnounceEntry& announce_queue_at(size_t index) const {
+			return _announce_queue_pool[(_announce_queue_head + index) % ANNOUNCE_QUEUE_SIZE];
+		}
+
+		// Remove entry at logical index
+		void announce_queue_remove_at(size_t index) {
+			if (index >= _announce_queue_count) return;
+			// Shift elements after index forward
+			for (size_t i = index; i < _announce_queue_count - 1; i++) {
+				size_t curr = (_announce_queue_head + i) % ANNOUNCE_QUEUE_SIZE;
+				size_t next = (_announce_queue_head + i + 1) % ANNOUNCE_QUEUE_SIZE;
+				_announce_queue_pool[curr] = _announce_queue_pool[next];
+			}
+			// Clear the last element
+			size_t last = (_announce_queue_head + _announce_queue_count - 1) % ANNOUNCE_QUEUE_SIZE;
+			_announce_queue_pool[last] = AnnounceEntry();
+			_announce_queue_tail = (_announce_queue_tail + ANNOUNCE_QUEUE_SIZE - 1) % ANNOUNCE_QUEUE_SIZE;
+			_announce_queue_count--;
+		}
+
+		// Clear all entries
+		void announce_queue_clear() {
+			for (size_t i = 0; i < _announce_queue_count; i++) {
+				_announce_queue_pool[(_announce_queue_head + i) % ANNOUNCE_QUEUE_SIZE] = AnnounceEntry();
+			}
+			_announce_queue_head = 0;
+			_announce_queue_tail = 0;
+			_announce_queue_count = 0;
+		}
+
+	protected:
 		bool _is_connected_to_shared_instance = false;
 		bool _is_local_shared_instance = false;
 		//Bytes _hash;
@@ -168,7 +236,7 @@ namespace RNS {
 		void process_announce_queue();
 
 		// CBA ACCUMULATES
-		inline void add_announce(AnnounceEntry& entry) { assert(_impl); _impl->_announce_queue.push_back(entry); }
+		inline bool add_announce(const AnnounceEntry& entry) { assert(_impl); return _impl->announce_queue_push(entry); }
 
 	protected:
 		inline void send_outgoing(const Bytes& data) { assert(_impl); _impl->send_outgoing(data); }
@@ -206,7 +274,10 @@ namespace RNS {
 		inline bool FIXED_MTU() const { assert(_impl); return _impl->_FIXED_MTU; }
 		inline double announce_allowed_at() const { assert(_impl); return _impl->_announce_allowed_at; }
 		inline float announce_cap() const { assert(_impl); return _impl->_announce_cap; }
-		inline std::list<AnnounceEntry>& announce_queue() const { assert(_impl); return _impl->_announce_queue; }
+		// Announce queue accessors (circular buffer)
+		inline size_t announce_queue_size() const { assert(_impl); return _impl->announce_queue_size(); }
+		inline bool announce_queue_empty() const { assert(_impl); return _impl->announce_queue_empty(); }
+		inline void announce_queue_clear() { assert(_impl); _impl->announce_queue_clear(); }
 		inline bool is_connected_to_shared_instance() const { assert(_impl); return _impl->_is_connected_to_shared_instance; }
 		inline bool is_local_shared_instance() const { assert(_impl); return _impl->_is_local_shared_instance; }
 		inline HInterface parent_interface() const { assert(_impl); return _impl->_parent_interface; }

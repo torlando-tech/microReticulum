@@ -6,59 +6,230 @@
 #include "../Transport.h"
 #include "../Resource.h"
 
-#include <map>
-#include <set>
 #include <MsgPack.h>
 
 using namespace LXMF;
 using namespace RNS;
 
-// Static router registry for callback dispatch
-static std::map<Bytes, LXMRouter*> _router_registry;
+// ============== Static Fixed Pool Definitions ==============
 
-// Static pending proofs map (packet_hash -> message_hash)
-std::map<Bytes, Bytes> LXMRouter::_pending_proofs;
+// Router registry fixed pool (zero heap fragmentation)
+static constexpr size_t ROUTER_REGISTRY_SIZE = 4;
+static constexpr size_t REGISTRY_HASH_SIZE = 16;  // Truncated hash size
+struct RouterRegistrySlot {
+	bool in_use = false;
+	uint8_t destination_hash[REGISTRY_HASH_SIZE];
+	LXMRouter* router = nullptr;
+	Bytes destination_hash_bytes() const { return Bytes(destination_hash, REGISTRY_HASH_SIZE); }
+	void set_destination_hash(const Bytes& b) {
+		size_t len = std::min(b.size(), REGISTRY_HASH_SIZE);
+		memcpy(destination_hash, b.data(), len);
+		if (len < REGISTRY_HASH_SIZE) memset(destination_hash + len, 0, REGISTRY_HASH_SIZE - len);
+	}
+	bool destination_hash_equals(const Bytes& b) const {
+		if (b.size() != REGISTRY_HASH_SIZE) return false;
+		return memcmp(destination_hash, b.data(), REGISTRY_HASH_SIZE) == 0;
+	}
+	void clear() {
+		in_use = false;
+		memset(destination_hash, 0, REGISTRY_HASH_SIZE);
+		router = nullptr;
+	}
+};
+static RouterRegistrySlot _router_registry_pool[ROUTER_REGISTRY_SIZE];
 
-// Static pending outbound resources map (resource_hash -> message_hash)
-// Used to track DIRECT delivery completion
-static std::map<Bytes, Bytes> _pending_outbound_resources;
+static RouterRegistrySlot* find_router_registry_slot(const Bytes& hash) {
+	for (size_t i = 0; i < ROUTER_REGISTRY_SIZE; i++) {
+		if (_router_registry_pool[i].in_use && _router_registry_pool[i].destination_hash_equals(hash)) {
+			return &_router_registry_pool[i];
+		}
+	}
+	return nullptr;
+}
 
-// Static pending propagation resources map (resource_hash -> message_hash)
-// Used to track PROPAGATED delivery completion
-std::map<Bytes, Bytes> LXMRouter::_pending_propagation_resources;
+static RouterRegistrySlot* find_empty_router_registry_slot() {
+	for (size_t i = 0; i < ROUTER_REGISTRY_SIZE; i++) {
+		if (!_router_registry_pool[i].in_use) {
+			return &_router_registry_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+// Outbound resources fixed pool (zero heap fragmentation)
+// Fixed arrays eliminate ~0.8KB Bytes metadata overhead (16 slots × 2 Bytes × 24 bytes)
+static constexpr size_t OUTBOUND_RESOURCES_SIZE = 16;
+static constexpr size_t OUTBOUND_HASH_SIZE = 32;  // SHA256 hash size
+struct OutboundResourceSlot {
+	bool in_use = false;
+	uint8_t resource_hash[OUTBOUND_HASH_SIZE];
+	uint8_t message_hash[OUTBOUND_HASH_SIZE];
+	Bytes resource_hash_bytes() const { return Bytes(resource_hash, OUTBOUND_HASH_SIZE); }
+	Bytes message_hash_bytes() const { return Bytes(message_hash, OUTBOUND_HASH_SIZE); }
+	void set_resource_hash(const Bytes& b) {
+		size_t len = std::min(b.size(), OUTBOUND_HASH_SIZE);
+		memcpy(resource_hash, b.data(), len);
+		if (len < OUTBOUND_HASH_SIZE) memset(resource_hash + len, 0, OUTBOUND_HASH_SIZE - len);
+	}
+	void set_message_hash(const Bytes& b) {
+		size_t len = std::min(b.size(), OUTBOUND_HASH_SIZE);
+		memcpy(message_hash, b.data(), len);
+		if (len < OUTBOUND_HASH_SIZE) memset(message_hash + len, 0, OUTBOUND_HASH_SIZE - len);
+	}
+	bool resource_hash_equals(const Bytes& b) const {
+		if (b.size() != OUTBOUND_HASH_SIZE) return false;
+		return memcmp(resource_hash, b.data(), OUTBOUND_HASH_SIZE) == 0;
+	}
+	void clear() {
+		in_use = false;
+		memset(resource_hash, 0, OUTBOUND_HASH_SIZE);
+		memset(message_hash, 0, OUTBOUND_HASH_SIZE);
+	}
+};
+static OutboundResourceSlot _outbound_resources_pool[OUTBOUND_RESOURCES_SIZE];
+
+static OutboundResourceSlot* find_outbound_resource_slot(const Bytes& hash) {
+	for (size_t i = 0; i < OUTBOUND_RESOURCES_SIZE; i++) {
+		if (_outbound_resources_pool[i].in_use && _outbound_resources_pool[i].resource_hash_equals(hash)) {
+			return &_outbound_resources_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+static OutboundResourceSlot* find_empty_outbound_resource_slot() {
+	for (size_t i = 0; i < OUTBOUND_RESOURCES_SIZE; i++) {
+		if (!_outbound_resources_pool[i].in_use) {
+			return &_outbound_resources_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+// Static pending proofs pool definition
+LXMRouter::PendingProofSlot LXMRouter::_pending_proofs_pool[LXMRouter::PENDING_PROOFS_SIZE];
+
+// Static pending propagation resources pool definition
+LXMRouter::PropResourceSlot LXMRouter::_pending_prop_resources_pool[LXMRouter::PENDING_PROP_RESOURCES_SIZE];
+
+// ============== End Static Fixed Pool Definitions ==============
+
+// ============== Fixed Pool Helper Functions ==============
+
+LXMRouter::DirectLinkSlot* LXMRouter::find_direct_link_slot(const Bytes& hash) {
+	for (size_t i = 0; i < DIRECT_LINKS_SIZE; i++) {
+		if (_direct_links_pool[i].in_use && _direct_links_pool[i].destination_hash_equals(hash)) {
+			return &_direct_links_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+LXMRouter::DirectLinkSlot* LXMRouter::find_empty_direct_link_slot() {
+	for (size_t i = 0; i < DIRECT_LINKS_SIZE; i++) {
+		if (!_direct_links_pool[i].in_use) {
+			return &_direct_links_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+size_t LXMRouter::direct_links_count() {
+	size_t count = 0;
+	for (size_t i = 0; i < DIRECT_LINKS_SIZE; i++) {
+		if (_direct_links_pool[i].in_use) count++;
+	}
+	return count;
+}
+
+LXMRouter::PendingProofSlot* LXMRouter::find_pending_proof_slot(const Bytes& hash) {
+	for (size_t i = 0; i < PENDING_PROOFS_SIZE; i++) {
+		if (_pending_proofs_pool[i].in_use && _pending_proofs_pool[i].packet_hash_equals(hash)) {
+			return &_pending_proofs_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+LXMRouter::PendingProofSlot* LXMRouter::find_empty_pending_proof_slot() {
+	for (size_t i = 0; i < PENDING_PROOFS_SIZE; i++) {
+		if (!_pending_proofs_pool[i].in_use) {
+			return &_pending_proofs_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+LXMRouter::PropResourceSlot* LXMRouter::find_prop_resource_slot(const Bytes& hash) {
+	for (size_t i = 0; i < PENDING_PROP_RESOURCES_SIZE; i++) {
+		if (_pending_prop_resources_pool[i].in_use && _pending_prop_resources_pool[i].resource_hash_equals(hash)) {
+			return &_pending_prop_resources_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+LXMRouter::PropResourceSlot* LXMRouter::find_empty_prop_resource_slot() {
+	for (size_t i = 0; i < PENDING_PROP_RESOURCES_SIZE; i++) {
+		if (!_pending_prop_resources_pool[i].in_use) {
+			return &_pending_prop_resources_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+bool LXMRouter::transient_ids_contains(const Bytes& id) {
+	for (size_t i = 0; i < _transient_ids_count; i++) {
+		size_t idx = (_transient_ids_head + TRANSIENT_IDS_SIZE - _transient_ids_count + i) % TRANSIENT_IDS_SIZE;
+		if (_transient_ids_buffer[idx] == id) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void LXMRouter::transient_ids_add(const Bytes& id) {
+	_transient_ids_buffer[_transient_ids_head] = id;
+	_transient_ids_head = (_transient_ids_head + 1) % TRANSIENT_IDS_SIZE;
+	if (_transient_ids_count < TRANSIENT_IDS_SIZE) {
+		_transient_ids_count++;
+	}
+}
+
+// ============== End Fixed Pool Helper Functions ==============
 
 // Static packet callback for destination
 static void static_packet_callback(const Bytes& data, const Packet& packet) {
 	// Look up router by destination hash
-	auto it = _router_registry.find(packet.destination_hash());
-	if (it != _router_registry.end()) {
-		it->second->on_packet(data, packet);
+	RouterRegistrySlot* slot = find_router_registry_slot(packet.destination_hash());
+	if (slot) {
+		slot->router->on_packet(data, packet);
 	}
 }
 
 // Static link callbacks
 static void static_link_established_callback(Link& link) {
 	// Find router that owns this link destination
-	auto it = _router_registry.find(link.destination().hash());
-	if (it != _router_registry.end()) {
-		it->second->on_link_established(link);
+	RouterRegistrySlot* slot = find_router_registry_slot(link.destination().hash());
+	if (slot) {
+		slot->router->on_link_established(link);
 	}
 }
 
 static void static_link_closed_callback(Link& link) {
 	// Find router that owns this link destination
-	auto it = _router_registry.find(link.destination().hash());
-	if (it != _router_registry.end()) {
-		it->second->on_link_closed(link);
+	RouterRegistrySlot* slot = find_router_registry_slot(link.destination().hash());
+	if (slot) {
+		slot->router->on_link_closed(link);
 	}
 }
 
 // Static callback for incoming link established on delivery destination
 static void static_delivery_link_established_callback(Link& link) {
 	// Find router that owns this destination
-	auto it = _router_registry.find(link.destination().hash());
-	if (it != _router_registry.end()) {
-		it->second->on_incoming_link_established(link);
+	RouterRegistrySlot* slot = find_router_registry_slot(link.destination().hash());
+	if (slot) {
+		slot->router->on_incoming_link_established(link);
 	}
 }
 
@@ -71,9 +242,9 @@ static void static_resource_concluded_callback(const Resource& resource) {
 	}
 
 	// Find router that owns this link's destination
-	auto it = _router_registry.find(link.destination().hash());
-	if (it != _router_registry.end()) {
-		it->second->on_resource_concluded(resource);
+	RouterRegistrySlot* slot = find_router_registry_slot(link.destination().hash());
+	if (slot) {
+		slot->router->on_resource_concluded(resource);
 	}
 }
 
@@ -88,13 +259,13 @@ static void static_outbound_resource_concluded(const Resource& resource) {
 	DEBUG(buf);
 
 	// Check if this resource is one we're tracking
-	auto it = _pending_outbound_resources.find(resource_hash);
-	if (it == _pending_outbound_resources.end()) {
+	OutboundResourceSlot* slot = find_outbound_resource_slot(resource_hash);
+	if (!slot) {
 		DEBUG("  Resource not in pending outbound map");
 		return;
 	}
 
-	Bytes message_hash = it->second;
+	Bytes message_hash = slot->message_hash_bytes();
 
 	// Check if resource completed successfully
 	if (resource.status() == RNS::Type::Resource::COMPLETE) {
@@ -109,7 +280,7 @@ static void static_outbound_resource_concluded(const Resource& resource) {
 	}
 
 	// Remove from pending map
-	_pending_outbound_resources.erase(it);
+	slot->clear();
 }
 
 // Static proof callback - called when delivery proof is received
@@ -119,32 +290,43 @@ void LXMRouter::static_proof_callback(const PacketReceipt& receipt) {
 	char buf[128];
 
 	// Look up message hash for this packet
-	auto it = _pending_proofs.find(packet_hash);
-	if (it != _pending_proofs.end()) {
-		Bytes message_hash = it->second;
+	PendingProofSlot* slot = find_pending_proof_slot(packet_hash);
+	if (slot) {
+		Bytes message_hash = slot->message_hash_bytes();
 		snprintf(buf, sizeof(buf), "Delivery proof received for message %.16s...", message_hash.toHex().c_str());
 		INFO(buf);
 
-		// Use set to avoid calling callback multiple times for same router
-		std::set<LXMRouter*> notified_routers;
+		// Track notified routers to avoid duplicates (max ROUTER_REGISTRY_SIZE)
+		LXMRouter* notified_routers[ROUTER_REGISTRY_SIZE];
+		size_t notified_count = 0;
 
 		// Find the router that sent this message and call its delivered callback
-		for (auto& router_entry : _router_registry) {
-			LXMRouter* router = router_entry.second;
-			if (router && router->_delivered_callback && notified_routers.find(router) == notified_routers.end()) {
-				notified_routers.insert(router);
-				// Create a minimal message with just the hash for the callback
-				// The callback can look up full message from storage if needed
-				Bytes empty_hash;
-				LXMessage msg(empty_hash, empty_hash);
-				msg.hash(message_hash);
-				msg.state(Type::Message::DELIVERED);
-				router->_delivered_callback(msg);
+		for (size_t i = 0; i < ROUTER_REGISTRY_SIZE; i++) {
+			if (_router_registry_pool[i].in_use) {
+				LXMRouter* router = _router_registry_pool[i].router;
+				// Check if already notified
+				bool already_notified = false;
+				for (size_t j = 0; j < notified_count; j++) {
+					if (notified_routers[j] == router) {
+						already_notified = true;
+						break;
+					}
+				}
+				if (!already_notified && router && router->_delivered_callback) {
+					notified_routers[notified_count++] = router;
+					// Create a minimal message with just the hash for the callback
+					// The callback can look up full message from storage if needed
+					Bytes empty_hash;
+					LXMessage msg(empty_hash, empty_hash);
+					msg.hash(message_hash);
+					msg.state(Type::Message::DELIVERED);
+					router->_delivered_callback(msg);
+				}
 			}
 		}
 
 		// Remove from pending proofs
-		_pending_proofs.erase(it);
+		slot->clear();
 	} else {
 		snprintf(buf, sizeof(buf), "Received proof for unknown packet: %.16s...", packet_hash.toHex().c_str());
 		DEBUG(buf);
@@ -174,7 +356,14 @@ LXMRouter::LXMRouter(
 	);
 
 	// Register this router in global registry for callback dispatch
-	_router_registry[_delivery_destination.hash()] = this;
+	RouterRegistrySlot* slot = find_empty_router_registry_slot();
+	if (slot) {
+		slot->in_use = true;
+		slot->set_destination_hash(_delivery_destination.hash());
+		slot->router = this;
+	} else {
+		ERROR("Router registry full - cannot register router!");
+	}
 
 	// Register packet callback for receiving LXMF messages (OPPORTUNISTIC)
 	_delivery_destination.set_packet_callback(static_packet_callback);
@@ -202,9 +391,95 @@ LXMRouter::LXMRouter(
 
 LXMRouter::~LXMRouter() {
 	// Unregister from global registry
-	_router_registry.erase(_delivery_destination.hash());
+	RouterRegistrySlot* slot = find_router_registry_slot(_delivery_destination.hash());
+	if (slot) {
+		slot->clear();
+	}
 	TRACE("LXMRouter destroyed");
 }
+
+// ============== Circular Buffer Helpers ==============
+
+bool LXMRouter::pending_outbound_push(const LXMessage& msg) {
+	if (_pending_outbound_count >= PENDING_OUTBOUND_SIZE) {
+		WARNING("Pending outbound queue full, dropping oldest message");
+		// Advance tail to drop oldest
+		_pending_outbound_pool[_pending_outbound_tail] = LXMessage();  // Clear slot
+		_pending_outbound_tail = (_pending_outbound_tail + 1) % PENDING_OUTBOUND_SIZE;
+		_pending_outbound_count--;
+	}
+	_pending_outbound_pool[_pending_outbound_head] = msg;
+	_pending_outbound_head = (_pending_outbound_head + 1) % PENDING_OUTBOUND_SIZE;
+	_pending_outbound_count++;
+	return true;
+}
+
+LXMessage* LXMRouter::pending_outbound_front() {
+	if (_pending_outbound_count == 0) return nullptr;
+	return &_pending_outbound_pool[_pending_outbound_tail];
+}
+
+bool LXMRouter::pending_outbound_pop(LXMessage& msg) {
+	if (_pending_outbound_count == 0) return false;
+	msg = _pending_outbound_pool[_pending_outbound_tail];
+	_pending_outbound_pool[_pending_outbound_tail] = LXMessage();  // Clear slot
+	_pending_outbound_tail = (_pending_outbound_tail + 1) % PENDING_OUTBOUND_SIZE;
+	_pending_outbound_count--;
+	return true;
+}
+
+bool LXMRouter::pending_inbound_push(const LXMessage& msg) {
+	if (_pending_inbound_count >= PENDING_INBOUND_SIZE) {
+		WARNING("Pending inbound queue full, dropping oldest message");
+		// Advance tail to drop oldest
+		_pending_inbound_pool[_pending_inbound_tail] = LXMessage();  // Clear slot
+		_pending_inbound_tail = (_pending_inbound_tail + 1) % PENDING_INBOUND_SIZE;
+		_pending_inbound_count--;
+	}
+	_pending_inbound_pool[_pending_inbound_head] = msg;
+	_pending_inbound_head = (_pending_inbound_head + 1) % PENDING_INBOUND_SIZE;
+	_pending_inbound_count++;
+	return true;
+}
+
+LXMessage* LXMRouter::pending_inbound_front() {
+	if (_pending_inbound_count == 0) return nullptr;
+	return &_pending_inbound_pool[_pending_inbound_tail];
+}
+
+bool LXMRouter::pending_inbound_pop(LXMessage& msg) {
+	if (_pending_inbound_count == 0) return false;
+	msg = _pending_inbound_pool[_pending_inbound_tail];
+	_pending_inbound_pool[_pending_inbound_tail] = LXMessage();  // Clear slot
+	_pending_inbound_tail = (_pending_inbound_tail + 1) % PENDING_INBOUND_SIZE;
+	_pending_inbound_count--;
+	return true;
+}
+
+bool LXMRouter::failed_outbound_push(const LXMessage& msg) {
+	if (_failed_outbound_count >= FAILED_OUTBOUND_SIZE) {
+		WARNING("Failed outbound queue full, dropping oldest message");
+		// Advance tail to drop oldest
+		_failed_outbound_pool[_failed_outbound_tail] = LXMessage();  // Clear slot
+		_failed_outbound_tail = (_failed_outbound_tail + 1) % FAILED_OUTBOUND_SIZE;
+		_failed_outbound_count--;
+	}
+	_failed_outbound_pool[_failed_outbound_head] = msg;
+	_failed_outbound_head = (_failed_outbound_head + 1) % FAILED_OUTBOUND_SIZE;
+	_failed_outbound_count++;
+	return true;
+}
+
+bool LXMRouter::failed_outbound_pop(LXMessage& msg) {
+	if (_failed_outbound_count == 0) return false;
+	msg = _failed_outbound_pool[_failed_outbound_tail];
+	_failed_outbound_pool[_failed_outbound_tail] = LXMessage();  // Clear slot
+	_failed_outbound_tail = (_failed_outbound_tail + 1) % FAILED_OUTBOUND_SIZE;
+	_failed_outbound_count--;
+	return true;
+}
+
+// ============== End Circular Buffer Helpers ==============
 
 // Register callbacks
 void LXMRouter::register_delivery_callback(DeliveryCallback callback) {
@@ -251,15 +526,15 @@ void LXMRouter::handle_outbound(LXMessage& message) {
 	message.state(Type::Message::OUTBOUND);
 
 	// Add to pending queue
-	_pending_outbound.push_back(message);
+	pending_outbound_push(message);
 
-	snprintf(buf, sizeof(buf), "Message queued for delivery (%zu pending)", _pending_outbound.size());
+	snprintf(buf, sizeof(buf), "Message queued for delivery (%zu pending)", _pending_outbound_count);
 	INFO(buf);
 }
 
 // Process outbound queue
 void LXMRouter::process_outbound() {
-	if (_pending_outbound.empty()) {
+	if (_pending_outbound_count == 0) {
 		return;
 	}
 
@@ -270,7 +545,9 @@ void LXMRouter::process_outbound() {
 	}
 
 	// Process one message per call to avoid blocking
-	LXMessage& message = _pending_outbound.front();
+	LXMessage* message_ptr = pending_outbound_front();
+	if (!message_ptr) return;
+	LXMessage& message = *message_ptr;
 	char buf[128];
 
 	snprintf(buf, sizeof(buf), "Processing outbound message to %s", message.destination_hash().toHex().c_str());
@@ -286,7 +563,8 @@ void LXMRouter::process_outbound() {
 				if (_sent_callback) {
 					_sent_callback(message);
 				}
-				_pending_outbound.pop_front();
+				LXMessage dummy;
+				pending_outbound_pop(dummy);
 			} else {
 				// Propagation not ready yet - wait and retry
 				DEBUG("  Propagation delivery not ready, will retry...");
@@ -330,7 +608,8 @@ void LXMRouter::process_outbound() {
 				}
 
 				// Remove from pending queue
-				_pending_outbound.pop_front();
+				LXMessage dummy;
+				pending_outbound_pop(dummy);
 			} else {
 				ERROR("Failed to send OPPORTUNISTIC message");
 				message.state(Type::Message::FAILED);
@@ -339,8 +618,9 @@ void LXMRouter::process_outbound() {
 					_failed_callback(message);
 				}
 
-				_failed_outbound.push_back(message);
-				_pending_outbound.pop_front();
+				failed_outbound_push(message);
+				LXMessage dummy;
+				pending_outbound_pop(dummy);
 			}
 		} else {
 			// DIRECT delivery - need a link for large messages
@@ -385,7 +665,8 @@ void LXMRouter::process_outbound() {
 				}
 
 				// Remove from pending queue
-				_pending_outbound.pop_front();
+				LXMessage dummy;
+				pending_outbound_pop(dummy);
 			} else {
 				ERROR("Failed to send message via link");
 				message.state(Type::Message::FAILED);
@@ -396,8 +677,9 @@ void LXMRouter::process_outbound() {
 				}
 
 				// Move to failed queue
-				_failed_outbound.push_back(message);
-				_pending_outbound.pop_front();
+				failed_outbound_push(message);
+				LXMessage dummy;
+				pending_outbound_pop(dummy);
 			}
 		}
 
@@ -412,19 +694,22 @@ void LXMRouter::process_outbound() {
 		}
 
 		// Move to failed queue
-		_failed_outbound.push_back(message);
-		_pending_outbound.pop_front();
+		failed_outbound_push(message);
+		LXMessage dummy;
+		pending_outbound_pop(dummy);
 	}
 }
 
 // Process inbound queue
 void LXMRouter::process_inbound() {
-	if (_pending_inbound.empty()) {
+	if (_pending_inbound_count == 0) {
 		return;
 	}
 
 	// Process one message per call
-	LXMessage& message = _pending_inbound.front();
+	LXMessage* message_ptr = pending_inbound_front();
+	if (!message_ptr) return;
+	LXMessage& message = *message_ptr;
 	char buf[128];
 
 	snprintf(buf, sizeof(buf), "Processing inbound message from %s", message.source_hash().toHex().c_str());
@@ -438,16 +723,18 @@ void LXMRouter::process_inbound() {
 		}
 
 		// Remove from pending queue
-		_pending_inbound.pop_front();
+		LXMessage dummy;
+		pending_inbound_pop(dummy);
 
-		snprintf(buf, sizeof(buf), "Inbound message processed (%zu remaining)", _pending_inbound.size());
+		snprintf(buf, sizeof(buf), "Inbound message processed (%zu remaining)", _pending_inbound_count);
 		INFO(buf);
 
 	} catch (const std::exception& e) {
 		snprintf(buf, sizeof(buf), "Exception processing inbound message: %s", e.what());
 		ERROR(buf);
 		// Discard message on error
-		_pending_inbound.pop_front();
+		LXMessage dummy;
+		pending_inbound_pop(dummy);
 	}
 }
 
@@ -528,8 +815,14 @@ void LXMRouter::set_display_name(const std::string& name) {
 
 // Clear failed outbound
 void LXMRouter::clear_failed_outbound() {
-	size_t count = _failed_outbound.size();
-	_failed_outbound.clear();
+	size_t count = _failed_outbound_count;
+	// Reset circular buffer indices
+	for (size_t i = 0; i < FAILED_OUTBOUND_SIZE; i++) {
+		_failed_outbound_pool[i] = LXMessage();
+	}
+	_failed_outbound_head = 0;
+	_failed_outbound_tail = 0;
+	_failed_outbound_count = 0;
 	char buf[64];
 	snprintf(buf, sizeof(buf), "Cleared %zu failed outbound messages", count);
 	INFO(buf);
@@ -537,21 +830,20 @@ void LXMRouter::clear_failed_outbound() {
 
 // Retry failed outbound
 void LXMRouter::retry_failed_outbound() {
-	if (_failed_outbound.empty()) {
+	if (_failed_outbound_count == 0) {
 		return;
 	}
 
 	char buf[64];
-	snprintf(buf, sizeof(buf), "Retrying %zu failed messages", _failed_outbound.size());
+	snprintf(buf, sizeof(buf), "Retrying %zu failed messages", _failed_outbound_count);
 	INFO(buf);
 
 	// Move all failed messages back to pending
-	for (auto& message : _failed_outbound) {
+	LXMessage message;
+	while (failed_outbound_pop(message)) {
 		message.state(Type::Message::OUTBOUND);
-		_pending_outbound.push_back(message);
+		pending_outbound_push(message);
 	}
-
-	_failed_outbound.clear();
 }
 
 // Packet callback - receive LXMF messages
@@ -632,9 +924,9 @@ void LXMRouter::on_packet(const Bytes& data, const Packet& packet) {
 		proof_packet.prove();
 
 		// Add to inbound queue
-		_pending_inbound.push_back(message);
+		pending_inbound_push(message);
 
-		snprintf(buf, sizeof(buf), "Message queued for processing (%zu pending)", _pending_inbound.size());
+		snprintf(buf, sizeof(buf), "Message queued for processing (%zu pending)", _pending_inbound_count);
 		INFO(buf);
 
 	} catch (const std::exception& e) {
@@ -650,9 +942,9 @@ Link LXMRouter::get_link_for_destination(const Bytes& destination_hash) {
 	DEBUG(buf);
 
 	// Check if we already have an active link
-	auto it = _direct_links.find(destination_hash);
-	if (it != _direct_links.end()) {
-		Link& existing_link = it->second;
+	DirectLinkSlot* slot = find_direct_link_slot(destination_hash);
+	if (slot) {
+		Link& existing_link = slot->link;
 
 		// Check if link is still valid
 		if (existing_link && existing_link.status() == RNS::Type::Link::ACTIVE) {
@@ -660,28 +952,20 @@ Link LXMRouter::get_link_for_destination(const Bytes& destination_hash) {
 			return existing_link;
 		} else if (existing_link && existing_link.status() == RNS::Type::Link::PENDING) {
 			// Check if pending link has timed out
-			auto time_it = _link_creation_times.find(destination_hash);
-			if (time_it != _link_creation_times.end()) {
-				double age = Utilities::OS::time() - time_it->second;
-				if (age > LINK_ESTABLISHMENT_TIMEOUT) {
-					snprintf(buf, sizeof(buf), "  Pending link timed out after %ds, removing", (int)age);
-					WARNING(buf);
-					_direct_links.erase(it);
-					_link_creation_times.erase(time_it);
-					// Fall through to create new link
-				} else {
-					snprintf(buf, sizeof(buf), "  Using existing pending link (age: %ds)", (int)age);
-					DEBUG(buf);
-					return existing_link;
-				}
+			double age = Utilities::OS::time() - slot->creation_time;
+			if (age > LINK_ESTABLISHMENT_TIMEOUT) {
+				snprintf(buf, sizeof(buf), "  Pending link timed out after %ds, removing", (int)age);
+				WARNING(buf);
+				slot->clear();
+				// Fall through to create new link
 			} else {
-				DEBUG("  Using existing pending link");
+				snprintf(buf, sizeof(buf), "  Using existing pending link (age: %ds)", (int)age);
+				DEBUG(buf);
 				return existing_link;
 			}
 		} else {
 			DEBUG("  Existing link is not active, removing");
-			_direct_links.erase(it);
-			_link_creation_times.erase(destination_hash);
+			slot->clear();
 		}
 	}
 
@@ -714,15 +998,30 @@ Link LXMRouter::get_link_for_destination(const Bytes& destination_hash) {
 		Link link(link_destination);
 
 		// Register in global registry for link callbacks
-		_router_registry[link_destination.hash()] = this;
+		RouterRegistrySlot* reg_slot = find_router_registry_slot(link_destination.hash());
+		if (!reg_slot) {
+			reg_slot = find_empty_router_registry_slot();
+			if (reg_slot) {
+				reg_slot->in_use = true;
+				reg_slot->set_destination_hash(link_destination.hash());
+				reg_slot->router = this;
+			}
+		}
 
 		// Register link callbacks (using static functions)
 		link.set_link_established_callback(static_link_established_callback);
 		link.set_link_closed_callback(static_link_closed_callback);
 
-		// Store link and creation time
-		_direct_links.insert({destination_hash, link});
-		_link_creation_times[destination_hash] = Utilities::OS::time();
+		// Store link and creation time in fixed pool
+		DirectLinkSlot* new_slot = find_empty_direct_link_slot();
+		if (new_slot) {
+			new_slot->in_use = true;
+			new_slot->set_destination_hash(destination_hash);
+			new_slot->link = link;
+			new_slot->creation_time = Utilities::OS::time();
+		} else {
+			WARNING("  Direct links pool full - cannot store new link");
+		}
 
 		INFO("  Link establishment initiated");
 		return link;
@@ -779,10 +1078,17 @@ bool LXMRouter::send_via_link(LXMessage& message, Link& link) {
 
 			// Track this resource so we can match the callback to the message
 			if (resource.hash()) {
-				_pending_outbound_resources[resource.hash()] = message.hash();
-				snprintf(buf, sizeof(buf), "  Tracking resource %.16s for message %.16s",
-				         resource.hash().toHex().c_str(), message.hash().toHex().c_str());
-				DEBUG(buf);
+				OutboundResourceSlot* slot = find_empty_outbound_resource_slot();
+				if (slot) {
+					slot->in_use = true;
+					slot->set_resource_hash(resource.hash());
+					slot->set_message_hash(message.hash());
+					snprintf(buf, sizeof(buf), "  Tracking resource %.16s for message %.16s",
+					         resource.hash().toHex().c_str(), message.hash().toHex().c_str());
+					DEBUG(buf);
+				} else {
+					WARNING("  Outbound resources pool full - cannot track resource");
+				}
 			}
 
 			message.state(Type::Message::SENT);
@@ -842,9 +1148,16 @@ bool LXMRouter::send_opportunistic(LXMessage& message, const Identity& dest_iden
 		// Register proof callback to track delivery confirmation
 		if (receipt) {
 			receipt.set_delivery_callback(static_proof_callback);
-			_pending_proofs[receipt.hash()] = message.hash();
-			snprintf(buf, sizeof(buf), "  Registered proof callback for packet %.16s...", receipt.hash().toHex().c_str());
-			DEBUG(buf);
+			PendingProofSlot* slot = find_empty_pending_proof_slot();
+			if (slot) {
+				slot->in_use = true;
+				slot->set_packet_hash(receipt.hash());
+				slot->set_message_hash(message.hash());
+				snprintf(buf, sizeof(buf), "  Registered proof callback for packet %.16s...", receipt.hash().toHex().c_str());
+				DEBUG(buf);
+			} else {
+				WARNING("  Pending proofs pool full - cannot track delivery proof");
+			}
 		}
 
 		message.state(Type::Message::SENT);
@@ -865,20 +1178,30 @@ void LXMRouter::handle_direct_proof(const Bytes& message_hash) {
 	snprintf(buf, sizeof(buf), "Processing DIRECT delivery proof for message %.16s...", message_hash.toHex().c_str());
 	INFO(buf);
 
-	// Use set to avoid calling callback multiple times for same router
-	// (router may be registered under multiple keys in registry)
-	std::set<LXMRouter*> notified_routers;
+	// Track notified routers to avoid duplicates (max ROUTER_REGISTRY_SIZE)
+	LXMRouter* notified_routers[ROUTER_REGISTRY_SIZE];
+	size_t notified_count = 0;
 
 	// Call delivered callback for all unique routers
-	for (auto& router_entry : _router_registry) {
-		LXMRouter* router = router_entry.second;
-		if (router && router->_delivered_callback && notified_routers.find(router) == notified_routers.end()) {
-			notified_routers.insert(router);
-			Bytes empty_hash;
-			LXMessage msg(empty_hash, empty_hash);
-			msg.hash(message_hash);
-			msg.state(Type::Message::DELIVERED);
-			router->_delivered_callback(msg);
+	for (size_t i = 0; i < ROUTER_REGISTRY_SIZE; i++) {
+		if (_router_registry_pool[i].in_use) {
+			LXMRouter* router = _router_registry_pool[i].router;
+			// Check if already notified
+			bool already_notified = false;
+			for (size_t j = 0; j < notified_count; j++) {
+				if (notified_routers[j] == router) {
+					already_notified = true;
+					break;
+				}
+			}
+			if (!already_notified && router && router->_delivered_callback) {
+				notified_routers[notified_count++] = router;
+				Bytes empty_hash;
+				LXMessage msg(empty_hash, empty_hash);
+				msg.hash(message_hash);
+				msg.state(Type::Message::DELIVERED);
+				router->_delivered_callback(msg);
+			}
 		}
 	}
 }
@@ -899,9 +1222,9 @@ void LXMRouter::on_link_closed(const Link& link) {
 	INFO(buf);
 
 	// Remove from active links
-	auto it = _direct_links.find(link.destination().hash());
-	if (it != _direct_links.end()) {
-		_direct_links.erase(it);
+	DirectLinkSlot* slot = find_direct_link_slot(link.destination().hash());
+	if (slot) {
+		slot->clear();
 		DEBUG("  Removed link from cache");
 	}
 }
@@ -984,7 +1307,7 @@ void LXMRouter::on_resource_concluded(const RNS::Resource& resource) {
 		// (via RESOURCE_PRF from RNS layer), which triggers their callback.
 
 		// Add to inbound queue for processing
-		_pending_inbound.push_back(message);
+		pending_inbound_push(message);
 		INFO("  Message queued for delivery");
 
 	} catch (const std::exception& e) {
@@ -1037,13 +1360,13 @@ void LXMRouter::static_propagation_resource_concluded(const Resource& resource) 
 	snprintf(buf, sizeof(buf), "  Status: %d", (int)resource.status());
 	DEBUG(buf);
 
-	auto it = _pending_propagation_resources.find(resource_hash);
-	if (it == _pending_propagation_resources.end()) {
+	PropResourceSlot* slot = find_prop_resource_slot(resource_hash);
+	if (!slot) {
 		DEBUG("  Resource not in pending propagation map");
 		return;
 	}
 
-	Bytes message_hash = it->second;
+	Bytes message_hash = slot->message_hash_bytes();
 
 	if (resource.status() == RNS::Type::Resource::COMPLETE) {
 		snprintf(buf, sizeof(buf), "PROPAGATED delivery to node confirmed for message %.16s...", message_hash.toHex().c_str());
@@ -1051,16 +1374,27 @@ void LXMRouter::static_propagation_resource_concluded(const Resource& resource) 
 
 		// For PROPAGATED, "delivered" means delivered to propagation node, not final recipient
 		// We mark it as SENT (not DELIVERED) to indicate it's on the propagation network
-		std::set<LXMRouter*> notified_routers;
-		for (auto& router_entry : _router_registry) {
-			LXMRouter* router = router_entry.second;
-			if (router && router->_sent_callback && notified_routers.find(router) == notified_routers.end()) {
-				notified_routers.insert(router);
-				Bytes empty_hash;
-				LXMessage msg(empty_hash, empty_hash);
-				msg.hash(message_hash);
-				msg.state(Type::Message::SENT);
-				router->_sent_callback(msg);
+		LXMRouter* notified_routers[ROUTER_REGISTRY_SIZE];
+		size_t notified_count = 0;
+
+		for (size_t i = 0; i < ROUTER_REGISTRY_SIZE; i++) {
+			if (_router_registry_pool[i].in_use) {
+				LXMRouter* router = _router_registry_pool[i].router;
+				bool already_notified = false;
+				for (size_t j = 0; j < notified_count; j++) {
+					if (notified_routers[j] == router) {
+						already_notified = true;
+						break;
+					}
+				}
+				if (!already_notified && router && router->_sent_callback) {
+					notified_routers[notified_count++] = router;
+					Bytes empty_hash;
+					LXMessage msg(empty_hash, empty_hash);
+					msg.hash(message_hash);
+					msg.state(Type::Message::SENT);
+					router->_sent_callback(msg);
+				}
 			}
 		}
 	} else {
@@ -1068,7 +1402,7 @@ void LXMRouter::static_propagation_resource_concluded(const Resource& resource) 
 		WARNING(buf);
 	}
 
-	_pending_propagation_resources.erase(it);
+	slot->clear();
 }
 
 bool LXMRouter::send_propagated(LXMessage& message) {
@@ -1160,9 +1494,16 @@ bool LXMRouter::send_propagated(LXMessage& message) {
 
 	// Track this resource
 	if (resource.hash()) {
-		_pending_propagation_resources[resource.hash()] = message.hash();
-		snprintf(buf, sizeof(buf), "  Tracking propagation resource %.16s", resource.hash().toHex().c_str());
-		DEBUG(buf);
+		PropResourceSlot* slot = find_empty_prop_resource_slot();
+		if (slot) {
+			slot->in_use = true;
+			slot->set_resource_hash(resource.hash());
+			slot->set_message_hash(message.hash());
+			snprintf(buf, sizeof(buf), "  Tracking propagation resource %.16s", resource.hash().toHex().c_str());
+			DEBUG(buf);
+		} else {
+			WARNING("  Propagation resources pool full - cannot track resource");
+		}
 	}
 
 	message.state(Type::Message::SENDING);
@@ -1283,10 +1624,10 @@ void LXMRouter::process_propagated_lxmf(const Bytes& lxmf_data) {
 		if (message.hash().size() > 0) {
 			// Track transient ID to avoid re-downloading
 			Bytes transient_id = Identity::full_hash(lxmf_data);
-			_locally_delivered_transient_ids.insert(transient_id);
+			transient_ids_add(transient_id);
 
 			// Queue for delivery
-			_pending_inbound.push_back(message);
+			pending_inbound_push(message);
 			INFO("Propagated message queued for delivery");
 		}
 	} catch (const std::exception& e) {

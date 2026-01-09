@@ -1,6 +1,8 @@
 /**
  * @file BLEReassembler.cpp
  * @brief BLE-Reticulum Protocol v2.2 fragment reassembler implementation
+ *
+ * Uses fixed-size pools instead of STL containers to eliminate heap fragmentation.
  */
 
 #include "BLEReassembler.h"
@@ -11,6 +13,56 @@ namespace RNS { namespace BLE {
 BLEReassembler::BLEReassembler() {
     // Default timeout from protocol spec
     _timeout_seconds = Timing::REASSEMBLY_TIMEOUT;
+    // Initialize pool
+    for (size_t i = 0; i < MAX_PENDING_REASSEMBLIES; i++) {
+        _pending_pool[i].clear();
+    }
+}
+
+BLEReassembler::PendingReassemblySlot* BLEReassembler::findSlot(const Bytes& peer_identity) {
+    for (size_t i = 0; i < MAX_PENDING_REASSEMBLIES; i++) {
+        if (_pending_pool[i].in_use && _pending_pool[i].transfer_id == peer_identity) {
+            return &_pending_pool[i];
+        }
+    }
+    return nullptr;
+}
+
+const BLEReassembler::PendingReassemblySlot* BLEReassembler::findSlot(const Bytes& peer_identity) const {
+    for (size_t i = 0; i < MAX_PENDING_REASSEMBLIES; i++) {
+        if (_pending_pool[i].in_use && _pending_pool[i].transfer_id == peer_identity) {
+            return &_pending_pool[i];
+        }
+    }
+    return nullptr;
+}
+
+BLEReassembler::PendingReassemblySlot* BLEReassembler::allocateSlot(const Bytes& peer_identity) {
+    // First check if slot already exists for this peer
+    PendingReassemblySlot* existing = findSlot(peer_identity);
+    if (existing) {
+        return existing;
+    }
+
+    // Find a free slot
+    for (size_t i = 0; i < MAX_PENDING_REASSEMBLIES; i++) {
+        if (!_pending_pool[i].in_use) {
+            _pending_pool[i].in_use = true;
+            _pending_pool[i].transfer_id = peer_identity;
+            return &_pending_pool[i];
+        }
+    }
+    return nullptr;  // Pool is full
+}
+
+size_t BLEReassembler::pendingCount() const {
+    size_t count = 0;
+    for (size_t i = 0; i < MAX_PENDING_REASSEMBLIES; i++) {
+        if (_pending_pool[i].in_use) {
+            count++;
+        }
+    }
+    return count;
 }
 
 void BLEReassembler::setReassemblyCallback(ReassemblyCallback callback) {
@@ -46,39 +98,44 @@ bool BLEReassembler::processFragment(const Bytes& peer_identity, const Bytes& fr
     // Handle START fragment - begins a new reassembly
     if (type == Fragment::START) {
         // Clear any existing incomplete reassembly for this peer
-        auto it = _pending.find(peer_identity);
-        if (it != _pending.end()) {
+        PendingReassemblySlot* existing = findSlot(peer_identity);
+        if (existing) {
             TRACE("BLEReassembler: Discarding incomplete reassembly for new START");
+            existing->clear();
         }
 
         // Start new reassembly
-        startReassembly(peer_identity, total_fragments);
+        if (!startReassembly(peer_identity, total_fragments)) {
+            return false;
+        }
     }
 
     // Look up pending reassembly
-    auto it = _pending.find(peer_identity);
-    if (it == _pending.end()) {
+    PendingReassemblySlot* slot = findSlot(peer_identity);
+    if (!slot) {
         // No pending reassembly and this isn't a START
         if (type != Fragment::START) {
             // For single-fragment packets (type=END, total=1, seq=0), start immediately
             if (type == Fragment::END && total_fragments == 1 && sequence == 0) {
-                startReassembly(peer_identity, total_fragments);
-                it = _pending.find(peer_identity);
+                if (!startReassembly(peer_identity, total_fragments)) {
+                    return false;
+                }
+                slot = findSlot(peer_identity);
             } else {
                 TRACE("BLEReassembler: Received fragment without START, discarding");
                 return false;
             }
         } else {
-            it = _pending.find(peer_identity);
+            slot = findSlot(peer_identity);
         }
     }
 
-    if (it == _pending.end()) {
+    if (!slot) {
         ERROR("BLEReassembler: Failed to find/create reassembly session");
         return false;
     }
 
-    PendingReassembly& reassembly = it->second;
+    PendingReassembly& reassembly = slot->reassembly;
 
     // Validate total_fragments matches
     if (total_fragments != reassembly.total_fragments) {
@@ -107,8 +164,17 @@ bool BLEReassembler::processFragment(const Bytes& peer_identity, const Bytes& fr
         return true;  // Not an error, just duplicate
     }
 
-    // Store fragment payload
-    reassembly.fragments[sequence].data = BLEFragmenter::extractPayload(fragment);
+    // Store fragment payload into fixed-size buffer
+    Bytes payload = BLEFragmenter::extractPayload(fragment);
+    if (payload.size() > MAX_FRAGMENT_PAYLOAD_SIZE) {
+        char buf[80];
+        snprintf(buf, sizeof(buf), "BLEReassembler: Fragment payload too large: %zu > %zu",
+                 payload.size(), MAX_FRAGMENT_PAYLOAD_SIZE);
+        WARNING(buf);
+        return false;
+    }
+    memcpy(reassembly.fragments[sequence].data, payload.data(), payload.size());
+    reassembly.fragments[sequence].data_size = payload.size();
     reassembly.fragments[sequence].received = true;
     reassembly.received_count++;
     reassembly.last_activity = now;
@@ -132,7 +198,7 @@ bool BLEReassembler::processFragment(const Bytes& peer_identity, const Bytes& fr
 
         // Remove from pending before callback (callback might trigger new data)
         Bytes identity_copy = reassembly.peer_identity;
-        _pending.erase(it);
+        slot->clear();
 
         // Invoke callback
         if (_reassembly_callback) {
@@ -145,24 +211,17 @@ bool BLEReassembler::processFragment(const Bytes& peer_identity, const Bytes& fr
 
 void BLEReassembler::checkTimeouts() {
     double now = Utilities::OS::time();
-    std::vector<Bytes> expired_peers;
 
-    // Find expired reassemblies
-    for (auto& kv : _pending) {
-        PendingReassembly& reassembly = kv.second;
+    // Find and clean up expired reassemblies
+    for (size_t i = 0; i < MAX_PENDING_REASSEMBLIES; i++) {
+        if (!_pending_pool[i].in_use) {
+            continue;
+        }
+
+        PendingReassembly& reassembly = _pending_pool[i].reassembly;
         double age = now - reassembly.started_at;
 
         if (age > _timeout_seconds) {
-            expired_peers.push_back(kv.first);
-        }
-    }
-
-    // Clean up expired reassemblies
-    for (const Bytes& peer_identity : expired_peers) {
-        auto it = _pending.find(peer_identity);
-        if (it != _pending.end()) {
-            PendingReassembly& reassembly = it->second;
-
             {
                 char buf[80];
                 snprintf(buf, sizeof(buf), "BLEReassembler: Timeout waiting for fragments, received %u/%u",
@@ -170,58 +229,80 @@ void BLEReassembler::checkTimeouts() {
                 WARNING(buf);
             }
 
-            // Invoke timeout callback
+            // Copy identity before clearing
+            Bytes peer_identity = _pending_pool[i].transfer_id;
+
+            // Clear the slot
+            _pending_pool[i].clear();
+
+            // Invoke timeout callback after clearing (callback might start new reassembly)
             if (_timeout_callback) {
                 _timeout_callback(peer_identity, "Reassembly timeout");
             }
-
-            _pending.erase(it);
         }
     }
 }
 
 void BLEReassembler::clearForPeer(const Bytes& peer_identity) {
-    auto it = _pending.find(peer_identity);
-    if (it != _pending.end()) {
+    PendingReassemblySlot* slot = findSlot(peer_identity);
+    if (slot) {
         TRACE("BLEReassembler: Clearing pending reassembly for peer");
-        _pending.erase(it);
+        slot->clear();
     }
 }
 
 void BLEReassembler::clearAll() {
     char buf[64];
-    snprintf(buf, sizeof(buf), "BLEReassembler: Clearing all pending reassemblies (%zu sessions)", _pending.size());
+    snprintf(buf, sizeof(buf), "BLEReassembler: Clearing all pending reassemblies (%zu sessions)", pendingCount());
     TRACE(buf);
-    _pending.clear();
+    for (size_t i = 0; i < MAX_PENDING_REASSEMBLIES; i++) {
+        _pending_pool[i].clear();
+    }
 }
 
 bool BLEReassembler::hasPending(const Bytes& peer_identity) const {
-    return _pending.find(peer_identity) != _pending.end();
+    return findSlot(peer_identity) != nullptr;
 }
 
-void BLEReassembler::startReassembly(const Bytes& peer_identity, uint16_t total_fragments) {
+bool BLEReassembler::startReassembly(const Bytes& peer_identity, uint16_t total_fragments) {
+    // Validate fragment count fits in fixed-size array
+    if (total_fragments > MAX_FRAGMENTS_PER_REASSEMBLY) {
+        char buf[80];
+        snprintf(buf, sizeof(buf), "BLEReassembler: Too many fragments: %u > %zu",
+                 total_fragments, MAX_FRAGMENTS_PER_REASSEMBLY);
+        WARNING(buf);
+        return false;
+    }
+
+    // Allocate a slot (reuses existing or finds free)
+    PendingReassemblySlot* slot = allocateSlot(peer_identity);
+    if (!slot) {
+        WARNING("BLEReassembler: Pool full, cannot start new reassembly");
+        return false;
+    }
+
     double now = Utilities::OS::time();
 
-    PendingReassembly reassembly;
+    // Initialize the reassembly state
+    PendingReassembly& reassembly = slot->reassembly;
+    reassembly.clear();  // Clear any old data
     reassembly.peer_identity = peer_identity;
     reassembly.total_fragments = total_fragments;
     reassembly.received_count = 0;
-    reassembly.fragments.resize(total_fragments);
     reassembly.started_at = now;
     reassembly.last_activity = now;
-
-    _pending[peer_identity] = std::move(reassembly);
 
     char buf[64];
     snprintf(buf, sizeof(buf), "BLEReassembler: Starting reassembly for %u fragments", total_fragments);
     TRACE(buf);
+    return true;
 }
 
 Bytes BLEReassembler::assembleFragments(const PendingReassembly& reassembly) {
     // Calculate total size
     size_t total_size = 0;
-    for (const FragmentInfo& frag : reassembly.fragments) {
-        total_size += frag.data.size();
+    for (size_t i = 0; i < reassembly.total_fragments; i++) {
+        total_size += reassembly.fragments[i].data_size;
     }
 
     // Allocate result buffer
@@ -231,10 +312,11 @@ Bytes BLEReassembler::assembleFragments(const PendingReassembly& reassembly) {
 
     // Concatenate fragments in order
     size_t offset = 0;
-    for (const FragmentInfo& frag : reassembly.fragments) {
-        if (frag.data.size() > 0) {
-            memcpy(ptr + offset, frag.data.data(), frag.data.size());
-            offset += frag.data.size();
+    for (size_t i = 0; i < reassembly.total_fragments; i++) {
+        const FragmentInfo& frag = reassembly.fragments[i];
+        if (frag.data_size > 0) {
+            memcpy(ptr + offset, frag.data, frag.data_size);
+            offset += frag.data_size;
         }
     }
 

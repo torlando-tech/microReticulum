@@ -1,6 +1,8 @@
 /**
  * @file BLEIdentityManager.cpp
  * @brief BLE-Reticulum Protocol v2.2 identity handshake manager implementation
+ *
+ * Uses fixed-size pools instead of STL containers to eliminate heap fragmentation.
  */
 
 #include "BLEIdentityManager.h"
@@ -9,6 +11,13 @@
 namespace RNS { namespace BLE {
 
 BLEIdentityManager::BLEIdentityManager() {
+    // Initialize all pools to empty state
+    for (size_t i = 0; i < ADDRESS_IDENTITY_POOL_SIZE; i++) {
+        _address_identity_pool[i].clear();
+    }
+    for (size_t i = 0; i < HANDSHAKE_POOL_SIZE; i++) {
+        _handshakes_pool[i].clear();
+    }
 }
 
 void BLEIdentityManager::setLocalIdentity(const Bytes& identity_hash) {
@@ -50,10 +59,14 @@ Bytes BLEIdentityManager::initiateHandshake(const Bytes& mac_address) {
     Bytes mac(mac_address.data(), Limits::MAC_SIZE);
 
     // Create or update handshake session
-    HandshakeSession& session = getOrCreateSession(mac);
-    session.is_central = true;
-    session.state = HandshakeState::INITIATED;
-    session.started_at = Utilities::OS::time();
+    HandshakeSession* session = getOrCreateSession(mac);
+    if (!session) {
+        WARNING("BLEIdentityManager: Handshake pool is full, cannot initiate");
+        return Bytes();
+    }
+    session->is_central = true;
+    session->state = HandshakeState::INITIATED;
+    session->started_at = Utilities::OS::time();
 
     DEBUG("BLEIdentityManager: Initiating handshake as central with " +
           BLEAddress(mac.data()).toString());
@@ -108,8 +121,8 @@ bool BLEIdentityManager::isHandshakeData(const Bytes& data, const Bytes& mac_add
     Bytes mac(mac_address.data(), Limits::MAC_SIZE);
 
     // Check if we already have identity for this MAC
-    auto it = _address_to_identity.find(mac);
-    if (it != _address_to_identity.end()) {
+    const AddressIdentitySlot* slot = findAddressToIdentitySlot(mac);
+    if (slot) {
         // Already have identity - this is regular data, not handshake
         return false;
     }
@@ -133,10 +146,10 @@ void BLEIdentityManager::completeHandshake(const Bytes& mac_address, const Bytes
     // Check for MAC rotation: same identity from different MAC address
     Bytes old_mac;
     bool is_rotation = false;
-    auto existing_mac_it = _identity_to_address.find(identity);
-    if (existing_mac_it != _identity_to_address.end() && existing_mac_it->second != mac) {
+    AddressIdentitySlot* existing_slot = findIdentityToAddressSlot(identity);
+    if (existing_slot && existing_slot->mac_address != mac) {
         // MAC rotation detected!
-        old_mac = existing_mac_it->second;
+        old_mac = existing_slot->mac_address;
         is_rotation = true;
 
         INFO("BLEIdentityManager: MAC rotation detected for identity " +
@@ -144,17 +157,19 @@ void BLEIdentityManager::completeHandshake(const Bytes& mac_address, const Bytes
              BLEAddress(old_mac.data()).toString() + " -> " +
              BLEAddress(mac.data()).toString());
 
-        // Clean up old MAC entry to prevent stale mappings
-        _address_to_identity.erase(old_mac);
+        // Update the slot with new MAC (same identity)
+        existing_slot->mac_address = mac;
+    } else if (!existing_slot) {
+        // New mapping - add to pool
+        if (!setAddressIdentityMapping(mac, identity)) {
+            WARNING("BLEIdentityManager: Address-identity pool is full");
+            return;
+        }
     }
-
-    // Store bidirectional mapping
-    _address_to_identity[mac] = identity;
-    _identity_to_address[identity] = mac;
     DEBUG("BLEIdentityManager::completeHandshake: Stored mappings");
 
     // Remove handshake session
-    _handshakes.erase(mac);
+    removeHandshakeSession(mac);
     DEBUG("BLEIdentityManager::completeHandshake: Removed handshake session");
 
     DEBUG("BLEIdentityManager: Handshake complete with " +
@@ -181,28 +196,26 @@ void BLEIdentityManager::completeHandshake(const Bytes& mac_address, const Bytes
 
 void BLEIdentityManager::checkTimeouts() {
     double now = Utilities::OS::time();
-    std::vector<Bytes> timed_out;
 
-    for (const auto& kv : _handshakes) {
-        const HandshakeSession& session = kv.second;
+    for (size_t i = 0; i < HANDSHAKE_POOL_SIZE; i++) {
+        HandshakeSession& session = _handshakes_pool[i];
+        if (!session.in_use) continue;
 
         if (session.state != HandshakeState::COMPLETE) {
             double age = now - session.started_at;
             if (age > Timing::HANDSHAKE_TIMEOUT) {
-                timed_out.push_back(kv.first);
+                Bytes mac = session.mac_address;
+
+                WARNING("BLEIdentityManager: Handshake timeout for " +
+                        BLEAddress(mac.data()).toString());
+
+                if (_handshake_failed_callback) {
+                    _handshake_failed_callback(mac, "Handshake timeout");
+                }
+
+                session.clear();
             }
         }
-    }
-
-    for (const Bytes& mac : timed_out) {
-        WARNING("BLEIdentityManager: Handshake timeout for " +
-                BLEAddress(mac.data()).toString());
-
-        if (_handshake_failed_callback) {
-            _handshake_failed_callback(mac, "Handshake timeout");
-        }
-
-        _handshakes.erase(mac);
     }
 }
 
@@ -217,9 +230,9 @@ Bytes BLEIdentityManager::getIdentityForMac(const Bytes& mac_address) const {
 
     Bytes mac(mac_address.data(), Limits::MAC_SIZE);
 
-    auto it = _address_to_identity.find(mac);
-    if (it != _address_to_identity.end()) {
-        return it->second;
+    const AddressIdentitySlot* slot = findAddressToIdentitySlot(mac);
+    if (slot) {
+        return slot->identity;
     }
 
     return Bytes();
@@ -230,9 +243,9 @@ Bytes BLEIdentityManager::getMacForIdentity(const Bytes& identity) const {
         return Bytes();
     }
 
-    auto it = _identity_to_address.find(identity);
-    if (it != _identity_to_address.end()) {
-        return it->second;
+    const AddressIdentitySlot* slot = findIdentityToAddressSlot(identity);
+    if (slot) {
+        return slot->mac_address;
     }
 
     return Bytes();
@@ -244,7 +257,7 @@ bool BLEIdentityManager::hasIdentity(const Bytes& mac_address) const {
     }
 
     Bytes mac(mac_address.data(), Limits::MAC_SIZE);
-    return _address_to_identity.find(mac) != _address_to_identity.end();
+    return findAddressToIdentitySlot(mac) != nullptr;
 }
 
 void BLEIdentityManager::updateMacForIdentity(const Bytes& identity, const Bytes& new_mac) {
@@ -254,18 +267,13 @@ void BLEIdentityManager::updateMacForIdentity(const Bytes& identity, const Bytes
 
     Bytes mac(new_mac.data(), Limits::MAC_SIZE);
 
-    auto identity_it = _identity_to_address.find(identity);
-    if (identity_it == _identity_to_address.end()) {
+    AddressIdentitySlot* slot = findIdentityToAddressSlot(identity);
+    if (!slot) {
         return;  // Unknown identity
     }
 
-    // Remove old MAC mapping
-    Bytes old_mac = identity_it->second;
-    _address_to_identity.erase(old_mac);
-
-    // Add new mappings
-    _address_to_identity[mac] = identity;
-    _identity_to_address[identity] = mac;
+    // Update MAC address in the slot
+    slot->mac_address = mac;
 
     DEBUG("BLEIdentityManager: Updated MAC for identity " +
           identity.toHex().substr(0, 8) + "... to " +
@@ -279,26 +287,32 @@ void BLEIdentityManager::removeMapping(const Bytes& mac_address) {
 
     Bytes mac(mac_address.data(), Limits::MAC_SIZE);
 
-    auto it = _address_to_identity.find(mac);
-    if (it != _address_to_identity.end()) {
-        Bytes identity = it->second;
-        _identity_to_address.erase(identity);
-        _address_to_identity.erase(it);
+    removeAddressIdentityMapping(mac);
 
-        DEBUG("BLEIdentityManager: Removed mapping for " +
-              BLEAddress(mac.data()).toString());
-    }
+    DEBUG("BLEIdentityManager: Removed mapping for " +
+          BLEAddress(mac.data()).toString());
 
     // Also clean up any pending handshake
-    _handshakes.erase(mac);
+    removeHandshakeSession(mac);
 }
 
 void BLEIdentityManager::clearAllMappings() {
-    _address_to_identity.clear();
-    _identity_to_address.clear();
-    _handshakes.clear();
+    for (size_t i = 0; i < ADDRESS_IDENTITY_POOL_SIZE; i++) {
+        _address_identity_pool[i].clear();
+    }
+    for (size_t i = 0; i < HANDSHAKE_POOL_SIZE; i++) {
+        _handshakes_pool[i].clear();
+    }
 
     DEBUG("BLEIdentityManager: Cleared all identity mappings");
+}
+
+size_t BLEIdentityManager::knownPeerCount() const {
+    size_t count = 0;
+    for (size_t i = 0; i < ADDRESS_IDENTITY_POOL_SIZE; i++) {
+        if (_address_identity_pool[i].in_use) count++;
+    }
+    return count;
 }
 
 bool BLEIdentityManager::isHandshakeInProgress(const Bytes& mac_address) const {
@@ -308,35 +322,153 @@ bool BLEIdentityManager::isHandshakeInProgress(const Bytes& mac_address) const {
 
     Bytes mac(mac_address.data(), Limits::MAC_SIZE);
 
-    auto it = _handshakes.find(mac);
-    if (it != _handshakes.end()) {
-        return it->second.state != HandshakeState::NONE &&
-               it->second.state != HandshakeState::COMPLETE;
+    const HandshakeSession* session = findHandshakeSession(mac);
+    if (session) {
+        return session->state != HandshakeState::NONE &&
+               session->state != HandshakeState::COMPLETE;
     }
 
     return false;
 }
 
 //=============================================================================
-// Private Methods
+// Pool Helper Methods - Address to Identity Mapping
 //=============================================================================
 
-BLEIdentityManager::HandshakeSession& BLEIdentityManager::getOrCreateSession(const Bytes& mac_address) {
+BLEIdentityManager::AddressIdentitySlot* BLEIdentityManager::findAddressToIdentitySlot(const Bytes& mac) {
+    if (mac.size() < Limits::MAC_SIZE) return nullptr;
+
+    for (size_t i = 0; i < ADDRESS_IDENTITY_POOL_SIZE; i++) {
+        if (_address_identity_pool[i].in_use &&
+            _address_identity_pool[i].mac_address == mac) {
+            return &_address_identity_pool[i];
+        }
+    }
+    return nullptr;
+}
+
+const BLEIdentityManager::AddressIdentitySlot* BLEIdentityManager::findAddressToIdentitySlot(const Bytes& mac) const {
+    return const_cast<BLEIdentityManager*>(this)->findAddressToIdentitySlot(mac);
+}
+
+BLEIdentityManager::AddressIdentitySlot* BLEIdentityManager::findIdentityToAddressSlot(const Bytes& identity) {
+    if (identity.size() != Limits::IDENTITY_SIZE) return nullptr;
+
+    for (size_t i = 0; i < ADDRESS_IDENTITY_POOL_SIZE; i++) {
+        if (_address_identity_pool[i].in_use &&
+            _address_identity_pool[i].identity == identity) {
+            return &_address_identity_pool[i];
+        }
+    }
+    return nullptr;
+}
+
+const BLEIdentityManager::AddressIdentitySlot* BLEIdentityManager::findIdentityToAddressSlot(const Bytes& identity) const {
+    return const_cast<BLEIdentityManager*>(this)->findIdentityToAddressSlot(identity);
+}
+
+BLEIdentityManager::AddressIdentitySlot* BLEIdentityManager::findEmptyAddressIdentitySlot() {
+    for (size_t i = 0; i < ADDRESS_IDENTITY_POOL_SIZE; i++) {
+        if (!_address_identity_pool[i].in_use) {
+            return &_address_identity_pool[i];
+        }
+    }
+    return nullptr;
+}
+
+bool BLEIdentityManager::setAddressIdentityMapping(const Bytes& mac, const Bytes& identity) {
+    // Check if already exists for this MAC
+    AddressIdentitySlot* existing = findAddressToIdentitySlot(mac);
+    if (existing) {
+        existing->identity = identity;
+        return true;
+    }
+
+    // Check if already exists for this identity (MAC rotation case)
+    existing = findIdentityToAddressSlot(identity);
+    if (existing) {
+        existing->mac_address = mac;
+        return true;
+    }
+
+    // Find empty slot
+    AddressIdentitySlot* slot = findEmptyAddressIdentitySlot();
+    if (!slot) {
+        WARNING("BLEIdentityManager: Address-identity pool is full");
+        return false;
+    }
+
+    slot->in_use = true;
+    slot->mac_address = mac;
+    slot->identity = identity;
+    return true;
+}
+
+void BLEIdentityManager::removeAddressIdentityMapping(const Bytes& mac) {
+    AddressIdentitySlot* slot = findAddressToIdentitySlot(mac);
+    if (slot) {
+        slot->clear();
+    }
+}
+
+//=============================================================================
+// Pool Helper Methods - Handshake Sessions
+//=============================================================================
+
+BLEIdentityManager::HandshakeSession* BLEIdentityManager::findHandshakeSession(const Bytes& mac) {
+    if (mac.size() < Limits::MAC_SIZE) return nullptr;
+
+    for (size_t i = 0; i < HANDSHAKE_POOL_SIZE; i++) {
+        if (_handshakes_pool[i].in_use &&
+            _handshakes_pool[i].mac_address == mac) {
+            return &_handshakes_pool[i];
+        }
+    }
+    return nullptr;
+}
+
+const BLEIdentityManager::HandshakeSession* BLEIdentityManager::findHandshakeSession(const Bytes& mac) const {
+    return const_cast<BLEIdentityManager*>(this)->findHandshakeSession(mac);
+}
+
+BLEIdentityManager::HandshakeSession* BLEIdentityManager::findEmptyHandshakeSlot() {
+    for (size_t i = 0; i < HANDSHAKE_POOL_SIZE; i++) {
+        if (!_handshakes_pool[i].in_use) {
+            return &_handshakes_pool[i];
+        }
+    }
+    return nullptr;
+}
+
+BLEIdentityManager::HandshakeSession* BLEIdentityManager::getOrCreateSession(const Bytes& mac_address) {
     Bytes mac(mac_address.data(), Limits::MAC_SIZE);
 
-    auto it = _handshakes.find(mac);
-    if (it != _handshakes.end()) {
-        return it->second;
+    // Check if session already exists
+    HandshakeSession* existing = findHandshakeSession(mac);
+    if (existing) {
+        return existing;
+    }
+
+    // Find empty slot
+    HandshakeSession* slot = findEmptyHandshakeSlot();
+    if (!slot) {
+        return nullptr;  // Pool is full
     }
 
     // Create new session
-    HandshakeSession session;
-    session.mac_address = mac;
-    session.state = HandshakeState::NONE;
-    session.started_at = Utilities::OS::time();
+    slot->in_use = true;
+    slot->mac_address = mac;
+    slot->state = HandshakeState::NONE;
+    slot->started_at = Utilities::OS::time();
 
-    _handshakes[mac] = session;
-    return _handshakes[mac];
+    return slot;
+}
+
+void BLEIdentityManager::removeHandshakeSession(const Bytes& mac) {
+    HandshakeSession* session = findHandshakeSession(mac);
+    if (session) {
+        session->clear();
+    }
 }
 
 }} // namespace RNS::BLE

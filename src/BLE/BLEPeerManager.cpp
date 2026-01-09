@@ -1,18 +1,32 @@
 /**
  * @file BLEPeerManager.cpp
  * @brief BLE-Reticulum Protocol v2.2 peer management implementation
+ *
+ * Uses fixed-size pools instead of STL containers to eliminate heap fragmentation.
  */
 
 #include "BLEPeerManager.h"
 #include "../Log.h"
 
-#include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace RNS { namespace BLE {
 
 BLEPeerManager::BLEPeerManager() {
     _local_mac = Bytes(6);  // Initialize to zeros
+
+    // Initialize all pools to empty state
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        _peers_by_identity_pool[i].clear();
+        _peers_by_mac_only_pool[i].clear();
+    }
+    for (size_t i = 0; i < MAC_IDENTITY_POOL_SIZE; i++) {
+        _mac_to_identity_pool[i].clear();
+    }
+    for (size_t i = 0; i < MAX_CONN_HANDLES; i++) {
+        _handle_to_peer[i] = nullptr;
+    }
 }
 
 void BLEPeerManager::setLocalMac(const Bytes& mac) {
@@ -34,12 +48,12 @@ bool BLEPeerManager::addDiscoveredPeer(const Bytes& mac_address, int8_t rssi, ui
     double now = Utilities::OS::time();
 
     // Check if this MAC maps to a known identity
-    auto mac_it = _mac_to_identity.find(mac);
-    if (mac_it != _mac_to_identity.end()) {
+    Bytes identity = getIdentityForMac(mac);
+    if (identity.size() == Limits::IDENTITY_SIZE) {
         // Update existing peer with identity
-        auto peer_it = _peers_by_identity.find(mac_it->second);
-        if (peer_it != _peers_by_identity.end()) {
-            PeerInfo& peer = peer_it->second;
+        PeerByIdentitySlot* slot = findPeerByIdentitySlot(identity);
+        if (slot) {
+            PeerInfo& peer = slot->peer;
 
             // Check if blacklisted
             if (peer.state == PeerState::BLACKLISTED && now < peer.blacklisted_until) {
@@ -57,9 +71,9 @@ bool BLEPeerManager::addDiscoveredPeer(const Bytes& mac_address, int8_t rssi, ui
     }
 
     // Check if peer exists in MAC-only storage
-    auto mac_only_it = _peers_by_mac_only.find(mac);
-    if (mac_only_it != _peers_by_mac_only.end()) {
-        PeerInfo& peer = mac_only_it->second;
+    PeerByMacSlot* mac_slot = findPeerByMacSlot(mac);
+    if (mac_slot) {
+        PeerInfo& peer = mac_slot->peer;
 
         // Check if blacklisted
         if (peer.state == PeerState::BLACKLISTED && now < peer.blacklisted_until) {
@@ -75,16 +89,23 @@ bool BLEPeerManager::addDiscoveredPeer(const Bytes& mac_address, int8_t rssi, ui
     }
 
     // New peer - add to MAC-only storage
-    PeerInfo peer;
+    PeerByMacSlot* empty_slot = findEmptyPeerByMacSlot();
+    if (!empty_slot) {
+        WARNING("BLEPeerManager: MAC-only peer pool is full, cannot add new peer");
+        return false;
+    }
+
+    empty_slot->in_use = true;
+    empty_slot->mac_address = mac;
+    PeerInfo& peer = empty_slot->peer;
+    peer = PeerInfo();  // Reset to defaults
     peer.mac_address = mac;
-    peer.address_type = address_type;  // Store address type
+    peer.address_type = address_type;
     peer.state = PeerState::DISCOVERED;
     peer.discovered_at = now;
     peer.last_seen = now;
     peer.rssi = rssi;
     peer.rssi_avg = rssi;
-
-    _peers_by_mac_only[mac] = peer;
 
     char buf[80];
     snprintf(buf, sizeof(buf), "BLEPeerManager: Discovered new peer %s RSSI %d",
@@ -102,23 +123,23 @@ bool BLEPeerManager::setPeerIdentity(const Bytes& mac_address, const Bytes& iden
     Bytes mac(mac_address.data(), Limits::MAC_SIZE);
 
     // Check if peer exists in MAC-only storage
-    auto mac_only_it = _peers_by_mac_only.find(mac);
-    if (mac_only_it != _peers_by_mac_only.end()) {
+    PeerByMacSlot* mac_slot = findPeerByMacSlot(mac);
+    if (mac_slot) {
         promoteToIdentityKeyed(mac, identity);
         return true;
     }
 
     // Check if peer already has identity (MAC might have changed)
-    auto identity_it = _peers_by_identity.find(identity);
-    if (identity_it != _peers_by_identity.end()) {
+    PeerByIdentitySlot* identity_slot = findPeerByIdentitySlot(identity);
+    if (identity_slot) {
         // Update MAC address mapping
-        PeerInfo& peer = identity_it->second;
+        PeerInfo& peer = identity_slot->peer;
 
         // Remove old MAC mapping if different
         if (peer.mac_address != mac) {
-            _mac_to_identity.erase(peer.mac_address);
+            removeMacToIdentity(peer.mac_address);
             peer.mac_address = mac;
-            _mac_to_identity[mac] = identity;
+            setMacToIdentity(mac, identity);
         }
 
         return true;
@@ -136,19 +157,19 @@ bool BLEPeerManager::updatePeerMac(const Bytes& identity, const Bytes& new_mac) 
 
     Bytes mac(new_mac.data(), Limits::MAC_SIZE);
 
-    auto identity_it = _peers_by_identity.find(identity);
-    if (identity_it == _peers_by_identity.end()) {
+    PeerByIdentitySlot* slot = findPeerByIdentitySlot(identity);
+    if (!slot) {
         return false;
     }
 
-    PeerInfo& peer = identity_it->second;
+    PeerInfo& peer = slot->peer;
 
     // Remove old MAC mapping
-    _mac_to_identity.erase(peer.mac_address);
+    removeMacToIdentity(peer.mac_address);
 
     // Update to new MAC
     peer.mac_address = mac;
-    _mac_to_identity[mac] = identity;
+    setMacToIdentity(mac, identity);
 
     char buf[80];
     snprintf(buf, sizeof(buf), "BLEPeerManager: Updated MAC for peer to %s",
@@ -168,18 +189,18 @@ PeerInfo* BLEPeerManager::getPeerByMac(const Bytes& mac_address) {
     Bytes mac(mac_address.data(), Limits::MAC_SIZE);
 
     // Check MAC-to-identity mapping first
-    auto mac_it = _mac_to_identity.find(mac);
-    if (mac_it != _mac_to_identity.end()) {
-        auto identity_it = _peers_by_identity.find(mac_it->second);
-        if (identity_it != _peers_by_identity.end()) {
-            return &identity_it->second;
+    Bytes identity = getIdentityForMac(mac);
+    if (identity.size() == Limits::IDENTITY_SIZE) {
+        PeerByIdentitySlot* slot = findPeerByIdentitySlot(identity);
+        if (slot) {
+            return &slot->peer;
         }
     }
 
     // Check MAC-only storage
-    auto mac_only_it = _peers_by_mac_only.find(mac);
-    if (mac_only_it != _peers_by_mac_only.end()) {
-        return &mac_only_it->second;
+    PeerByMacSlot* mac_slot = findPeerByMacSlot(mac);
+    if (mac_slot) {
+        return &mac_slot->peer;
     }
 
     return nullptr;
@@ -192,9 +213,9 @@ const PeerInfo* BLEPeerManager::getPeerByMac(const Bytes& mac_address) const {
 PeerInfo* BLEPeerManager::getPeerByIdentity(const Bytes& identity) {
     if (identity.size() != Limits::IDENTITY_SIZE) return nullptr;
 
-    auto it = _peers_by_identity.find(identity);
-    if (it != _peers_by_identity.end()) {
-        return &it->second;
+    PeerByIdentitySlot* slot = findPeerByIdentitySlot(identity);
+    if (slot) {
+        return &slot->peer;
     }
 
     return nullptr;
@@ -205,30 +226,27 @@ const PeerInfo* BLEPeerManager::getPeerByIdentity(const Bytes& identity) const {
 }
 
 PeerInfo* BLEPeerManager::getPeerByHandle(uint16_t conn_handle) {
-    // O(1) lookup using handle map
-    auto it = _handle_to_peer.find(conn_handle);
-    if (it != _handle_to_peer.end()) {
-        return it->second;
-    }
-    return nullptr;
+    // O(1) lookup using handle array
+    return getHandleToPeer(conn_handle);
 }
 
 const PeerInfo* BLEPeerManager::getPeerByHandle(uint16_t conn_handle) const {
-    return const_cast<BLEPeerManager*>(this)->getPeerByHandle(conn_handle);
+    return getHandleToPeer(conn_handle);
 }
 
 std::vector<PeerInfo*> BLEPeerManager::getConnectedPeers() {
     std::vector<PeerInfo*> result;
+    result.reserve(PEERS_POOL_SIZE);
 
-    for (auto& kv : _peers_by_identity) {
-        if (kv.second.isConnected()) {
-            result.push_back(&kv.second);
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (_peers_by_identity_pool[i].in_use && _peers_by_identity_pool[i].peer.isConnected()) {
+            result.push_back(&_peers_by_identity_pool[i].peer);
         }
     }
 
-    for (auto& kv : _peers_by_mac_only) {
-        if (kv.second.isConnected()) {
-            result.push_back(&kv.second);
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (_peers_by_mac_only_pool[i].in_use && _peers_by_mac_only_pool[i].peer.isConnected()) {
+            result.push_back(&_peers_by_mac_only_pool[i].peer);
         }
     }
 
@@ -237,13 +255,18 @@ std::vector<PeerInfo*> BLEPeerManager::getConnectedPeers() {
 
 std::vector<PeerInfo*> BLEPeerManager::getAllPeers() {
     std::vector<PeerInfo*> result;
+    result.reserve(PEERS_POOL_SIZE * 2);
 
-    for (auto& kv : _peers_by_identity) {
-        result.push_back(&kv.second);
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (_peers_by_identity_pool[i].in_use) {
+            result.push_back(&_peers_by_identity_pool[i].peer);
+        }
     }
 
-    for (auto& kv : _peers_by_mac_only) {
-        result.push_back(&kv.second);
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (_peers_by_mac_only_pool[i].in_use) {
+            result.push_back(&_peers_by_mac_only_pool[i].peer);
+        }
     }
 
     return result;
@@ -281,13 +304,17 @@ PeerInfo* BLEPeerManager::getBestConnectionCandidate() {
     };
 
     // Check identity-keyed peers (unlikely to be DISCOVERED state, but possible after disconnect)
-    for (auto& kv : _peers_by_identity) {
-        checkPeer(kv.second);
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (_peers_by_identity_pool[i].in_use) {
+            checkPeer(_peers_by_identity_pool[i].peer);
+        }
     }
 
     // Check MAC-only peers (more common for connection candidates)
-    for (auto& kv : _peers_by_mac_only) {
-        checkPeer(kv.second);
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (_peers_by_mac_only_pool[i].in_use) {
+            checkPeer(_peers_by_mac_only_pool[i].peer);
+        }
     }
 
     return best;
@@ -341,7 +368,7 @@ void BLEPeerManager::connectionFailed(const Bytes& identifier) {
 
     // Clear handle mapping on disconnect
     if (peer->conn_handle != 0xFFFF) {
-        _handle_to_peer.erase(peer->conn_handle);
+        clearHandleToPeer(peer->conn_handle);
         peer->conn_handle = 0xFFFF;
     }
 
@@ -374,12 +401,12 @@ void BLEPeerManager::setPeerHandle(const Bytes& identifier, uint16_t conn_handle
     if (peer) {
         // Remove old handle mapping if exists
         if (peer->conn_handle != 0xFFFF) {
-            _handle_to_peer.erase(peer->conn_handle);
+            clearHandleToPeer(peer->conn_handle);
         }
         peer->conn_handle = conn_handle;
         // Add new handle mapping
         if (conn_handle != 0xFFFF) {
-            _handle_to_peer[conn_handle] = peer;
+            setHandleToPeer(conn_handle, peer);
         }
     }
 }
@@ -394,15 +421,15 @@ void BLEPeerManager::setPeerMTU(const Bytes& identifier, uint16_t mtu) {
 void BLEPeerManager::removePeer(const Bytes& identifier) {
     // Try identity first
     if (identifier.size() == Limits::IDENTITY_SIZE) {
-        auto identity_it = _peers_by_identity.find(identifier);
-        if (identity_it != _peers_by_identity.end()) {
+        PeerByIdentitySlot* slot = findPeerByIdentitySlot(identifier);
+        if (slot) {
             // Remove handle mapping
-            if (identity_it->second.conn_handle != 0xFFFF) {
-                _handle_to_peer.erase(identity_it->second.conn_handle);
+            if (slot->peer.conn_handle != 0xFFFF) {
+                clearHandleToPeer(slot->peer.conn_handle);
             }
             // Remove MAC mapping
-            _mac_to_identity.erase(identity_it->second.mac_address);
-            _peers_by_identity.erase(identity_it);
+            removeMacToIdentity(slot->peer.mac_address);
+            slot->clear();
             return;
         }
     }
@@ -412,28 +439,28 @@ void BLEPeerManager::removePeer(const Bytes& identifier) {
         Bytes mac(identifier.data(), Limits::MAC_SIZE);
 
         // Check if maps to identity
-        auto mac_it = _mac_to_identity.find(mac);
-        if (mac_it != _mac_to_identity.end()) {
-            auto identity_it = _peers_by_identity.find(mac_it->second);
-            if (identity_it != _peers_by_identity.end()) {
+        Bytes identity = getIdentityForMac(mac);
+        if (identity.size() == Limits::IDENTITY_SIZE) {
+            PeerByIdentitySlot* slot = findPeerByIdentitySlot(identity);
+            if (slot) {
                 // Remove handle mapping
-                if (identity_it->second.conn_handle != 0xFFFF) {
-                    _handle_to_peer.erase(identity_it->second.conn_handle);
+                if (slot->peer.conn_handle != 0xFFFF) {
+                    clearHandleToPeer(slot->peer.conn_handle);
                 }
+                slot->clear();
             }
-            _peers_by_identity.erase(mac_it->second);
-            _mac_to_identity.erase(mac_it);
+            removeMacToIdentity(mac);
             return;
         }
 
         // Check MAC-only
-        auto mac_only_it = _peers_by_mac_only.find(mac);
-        if (mac_only_it != _peers_by_mac_only.end()) {
+        PeerByMacSlot* mac_slot = findPeerByMacSlot(mac);
+        if (mac_slot) {
             // Remove handle mapping
-            if (mac_only_it->second.conn_handle != 0xFFFF) {
-                _handle_to_peer.erase(mac_only_it->second.conn_handle);
+            if (mac_slot->peer.conn_handle != 0xFFFF) {
+                clearHandleToPeer(mac_slot->peer.conn_handle);
             }
-            _peers_by_mac_only.erase(mac_only_it);
+            mac_slot->clear();
         }
     }
 }
@@ -478,12 +505,16 @@ void BLEPeerManager::updateLastActivity(const Bytes& identifier) {
 //=============================================================================
 
 void BLEPeerManager::recalculateScores() {
-    for (auto& kv : _peers_by_identity) {
-        kv.second.score = calculateScore(kv.second);
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (_peers_by_identity_pool[i].in_use) {
+            _peers_by_identity_pool[i].peer.score = calculateScore(_peers_by_identity_pool[i].peer);
+        }
     }
 
-    for (auto& kv : _peers_by_mac_only) {
-        kv.second.score = calculateScore(kv.second);
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (_peers_by_mac_only_pool[i].in_use) {
+            _peers_by_mac_only_pool[i].peer.score = calculateScore(_peers_by_mac_only_pool[i].peer);
+        }
     }
 }
 
@@ -498,12 +529,16 @@ void BLEPeerManager::checkBlacklistExpirations() {
         }
     };
 
-    for (auto& kv : _peers_by_identity) {
-        checkAndClear(kv.second);
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (_peers_by_identity_pool[i].in_use) {
+            checkAndClear(_peers_by_identity_pool[i].peer);
+        }
     }
 
-    for (auto& kv : _peers_by_mac_only) {
-        checkAndClear(kv.second);
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (_peers_by_mac_only_pool[i].in_use) {
+            checkAndClear(_peers_by_mac_only_pool[i].peer);
+        }
     }
 }
 
@@ -514,12 +549,16 @@ void BLEPeerManager::checkBlacklistExpirations() {
 size_t BLEPeerManager::connectedCount() const {
     size_t count = 0;
 
-    for (const auto& kv : _peers_by_identity) {
-        if (kv.second.isConnected()) count++;
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (_peers_by_identity_pool[i].in_use && _peers_by_identity_pool[i].peer.isConnected()) {
+            count++;
+        }
     }
 
-    for (const auto& kv : _peers_by_mac_only) {
-        if (kv.second.isConnected()) count++;
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (_peers_by_mac_only_pool[i].in_use && _peers_by_mac_only_pool[i].peer.isConnected()) {
+            count++;
+        }
     }
 
     return count;
@@ -527,27 +566,25 @@ size_t BLEPeerManager::connectedCount() const {
 
 void BLEPeerManager::cleanupStalePeers(double max_age) {
     double now = Utilities::OS::time();
-    std::vector<Bytes> to_remove;
 
     // Check MAC-only peers (identity-keyed peers are more persistent)
-    for (const auto& kv : _peers_by_mac_only) {
-        const PeerInfo& peer = kv.second;
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (!_peers_by_mac_only_pool[i].in_use) continue;
+
+        const PeerInfo& peer = _peers_by_mac_only_pool[i].peer;
 
         // Only clean up DISCOVERED peers (not connected or connecting)
         if (peer.state == PeerState::DISCOVERED) {
             double age = now - peer.last_seen;
             if (age > max_age) {
-                to_remove.push_back(kv.first);
+                Bytes mac = _peers_by_mac_only_pool[i].mac_address;
+                _peers_by_mac_only_pool[i].clear();
+                char buf[80];
+                snprintf(buf, sizeof(buf), "BLEPeerManager: Removed stale peer %s",
+                         BLEAddress(mac.data()).toString().c_str());
+                TRACE(buf);
             }
         }
-    }
-
-    for (const Bytes& mac : to_remove) {
-        _peers_by_mac_only.erase(mac);
-        char buf[80];
-        snprintf(buf, sizeof(buf), "BLEPeerManager: Removed stale peer %s",
-                 BLEAddress(mac.data()).toString().c_str());
-        TRACE(buf);
     }
 }
 
@@ -614,9 +651,9 @@ double BLEPeerManager::calculateBlacklistDuration(uint8_t failures) const {
 PeerInfo* BLEPeerManager::findPeer(const Bytes& identifier) {
     // Try as identity
     if (identifier.size() == Limits::IDENTITY_SIZE) {
-        auto it = _peers_by_identity.find(identifier);
-        if (it != _peers_by_identity.end()) {
-            return &it->second;
+        PeerByIdentitySlot* slot = findPeerByIdentitySlot(identifier);
+        if (slot) {
+            return &slot->peer;
         }
     }
 
@@ -629,30 +666,205 @@ PeerInfo* BLEPeerManager::findPeer(const Bytes& identifier) {
 }
 
 void BLEPeerManager::promoteToIdentityKeyed(const Bytes& mac_address, const Bytes& identity) {
-    auto mac_only_it = _peers_by_mac_only.find(mac_address);
-    if (mac_only_it == _peers_by_mac_only.end()) {
+    PeerByMacSlot* mac_slot = findPeerByMacSlot(mac_address);
+    if (!mac_slot) {
         return;
     }
 
-    // Copy peer info
-    PeerInfo peer = mac_only_it->second;
-    peer.identity = identity;
+    // Find an empty slot in identity pool
+    PeerByIdentitySlot* identity_slot = findEmptyPeerByIdentitySlot();
+    if (!identity_slot) {
+        WARNING("BLEPeerManager: Identity pool is full, cannot promote peer");
+        return;
+    }
 
-    // Remove from MAC-only storage
-    _peers_by_mac_only.erase(mac_only_it);
-
-    // Add to identity-keyed storage
-    _peers_by_identity[identity] = peer;
+    // Copy peer info to identity pool
+    identity_slot->in_use = true;
+    identity_slot->identity_hash = identity;
+    identity_slot->peer = mac_slot->peer;
+    identity_slot->peer.identity = identity;
 
     // Update handle mapping to point to new location
-    if (peer.conn_handle != 0xFFFF) {
-        _handle_to_peer[peer.conn_handle] = &_peers_by_identity[identity];
+    if (identity_slot->peer.conn_handle != 0xFFFF) {
+        setHandleToPeer(identity_slot->peer.conn_handle, &identity_slot->peer);
     }
 
     // Add MAC-to-identity mapping
-    _mac_to_identity[mac_address] = identity;
+    setMacToIdentity(mac_address, identity);
+
+    // Clear MAC-only slot
+    mac_slot->clear();
 
     DEBUG("BLEPeerManager: Promoted peer to identity-keyed storage");
+}
+
+//=============================================================================
+// Pool Helper Methods - Peers by Identity
+//=============================================================================
+
+BLEPeerManager::PeerByIdentitySlot* BLEPeerManager::findPeerByIdentitySlot(const Bytes& identity) {
+    if (identity.size() != Limits::IDENTITY_SIZE) return nullptr;
+
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (_peers_by_identity_pool[i].in_use &&
+            _peers_by_identity_pool[i].identity_hash == identity) {
+            return &_peers_by_identity_pool[i];
+        }
+    }
+    return nullptr;
+}
+
+const BLEPeerManager::PeerByIdentitySlot* BLEPeerManager::findPeerByIdentitySlot(const Bytes& identity) const {
+    return const_cast<BLEPeerManager*>(this)->findPeerByIdentitySlot(identity);
+}
+
+BLEPeerManager::PeerByIdentitySlot* BLEPeerManager::findEmptyPeerByIdentitySlot() {
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (!_peers_by_identity_pool[i].in_use) {
+            return &_peers_by_identity_pool[i];
+        }
+    }
+    return nullptr;
+}
+
+size_t BLEPeerManager::peersByIdentityCount() const {
+    size_t count = 0;
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (_peers_by_identity_pool[i].in_use) count++;
+    }
+    return count;
+}
+
+//=============================================================================
+// Pool Helper Methods - Peers by MAC Only
+//=============================================================================
+
+BLEPeerManager::PeerByMacSlot* BLEPeerManager::findPeerByMacSlot(const Bytes& mac) {
+    if (mac.size() < Limits::MAC_SIZE) return nullptr;
+
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (_peers_by_mac_only_pool[i].in_use &&
+            _peers_by_mac_only_pool[i].mac_address == mac) {
+            return &_peers_by_mac_only_pool[i];
+        }
+    }
+    return nullptr;
+}
+
+const BLEPeerManager::PeerByMacSlot* BLEPeerManager::findPeerByMacSlot(const Bytes& mac) const {
+    return const_cast<BLEPeerManager*>(this)->findPeerByMacSlot(mac);
+}
+
+BLEPeerManager::PeerByMacSlot* BLEPeerManager::findEmptyPeerByMacSlot() {
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (!_peers_by_mac_only_pool[i].in_use) {
+            return &_peers_by_mac_only_pool[i];
+        }
+    }
+    return nullptr;
+}
+
+size_t BLEPeerManager::peersByMacOnlyCount() const {
+    size_t count = 0;
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (_peers_by_mac_only_pool[i].in_use) count++;
+    }
+    return count;
+}
+
+//=============================================================================
+// Pool Helper Methods - MAC to Identity Mapping
+//=============================================================================
+
+BLEPeerManager::MacToIdentitySlot* BLEPeerManager::findMacToIdentitySlot(const Bytes& mac) {
+    if (mac.size() < Limits::MAC_SIZE) return nullptr;
+
+    for (size_t i = 0; i < MAC_IDENTITY_POOL_SIZE; i++) {
+        if (_mac_to_identity_pool[i].in_use &&
+            _mac_to_identity_pool[i].mac_address == mac) {
+            return &_mac_to_identity_pool[i];
+        }
+    }
+    return nullptr;
+}
+
+const BLEPeerManager::MacToIdentitySlot* BLEPeerManager::findMacToIdentitySlot(const Bytes& mac) const {
+    return const_cast<BLEPeerManager*>(this)->findMacToIdentitySlot(mac);
+}
+
+BLEPeerManager::MacToIdentitySlot* BLEPeerManager::findEmptyMacToIdentitySlot() {
+    for (size_t i = 0; i < MAC_IDENTITY_POOL_SIZE; i++) {
+        if (!_mac_to_identity_pool[i].in_use) {
+            return &_mac_to_identity_pool[i];
+        }
+    }
+    return nullptr;
+}
+
+bool BLEPeerManager::setMacToIdentity(const Bytes& mac, const Bytes& identity) {
+    // Check if already exists
+    MacToIdentitySlot* existing = findMacToIdentitySlot(mac);
+    if (existing) {
+        existing->identity = identity;
+        return true;
+    }
+
+    // Find empty slot
+    MacToIdentitySlot* slot = findEmptyMacToIdentitySlot();
+    if (!slot) {
+        WARNING("BLEPeerManager: MAC-to-identity pool is full");
+        return false;
+    }
+
+    slot->in_use = true;
+    slot->mac_address = mac;
+    slot->identity = identity;
+    return true;
+}
+
+void BLEPeerManager::removeMacToIdentity(const Bytes& mac) {
+    MacToIdentitySlot* slot = findMacToIdentitySlot(mac);
+    if (slot) {
+        slot->clear();
+    }
+}
+
+Bytes BLEPeerManager::getIdentityForMac(const Bytes& mac) const {
+    const MacToIdentitySlot* slot = findMacToIdentitySlot(mac);
+    if (slot) {
+        return slot->identity;
+    }
+    return Bytes();
+}
+
+//=============================================================================
+// Pool Helper Methods - Handle to Peer Mapping
+//=============================================================================
+
+void BLEPeerManager::setHandleToPeer(uint16_t handle, PeerInfo* peer) {
+    if (handle < MAX_CONN_HANDLES) {
+        _handle_to_peer[handle] = peer;
+    }
+}
+
+void BLEPeerManager::clearHandleToPeer(uint16_t handle) {
+    if (handle < MAX_CONN_HANDLES) {
+        _handle_to_peer[handle] = nullptr;
+    }
+}
+
+PeerInfo* BLEPeerManager::getHandleToPeer(uint16_t handle) {
+    if (handle < MAX_CONN_HANDLES) {
+        return _handle_to_peer[handle];
+    }
+    return nullptr;
+}
+
+const PeerInfo* BLEPeerManager::getHandleToPeer(uint16_t handle) const {
+    if (handle < MAX_CONN_HANDLES) {
+        return _handle_to_peer[handle];
+    }
+    return nullptr;
 }
 
 }} // namespace RNS::BLE

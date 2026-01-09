@@ -7,6 +7,8 @@
  * - Blacklisting with exponential backoff
  * - MAC address rotation handling via identity-based keying
  * - Connection direction determination via MAC sorting
+ *
+ * Uses fixed-size pools instead of STL containers to eliminate heap fragmentation.
  */
 #pragma once
 
@@ -14,8 +16,6 @@
 #include "../Bytes.h"
 #include "../Utilities/OS.h"
 
-#include <map>
-#include <vector>
 #include <cstdint>
 
 namespace RNS { namespace BLE {
@@ -75,9 +75,66 @@ struct PeerInfo {
 
 /**
  * @brief Manages BLE peers for the BLEInterface
+ *
+ * Uses fixed-size pools to eliminate heap fragmentation:
+ * - _peers_pool: Stores all peer info (max 8 slots)
+ * - _mac_to_identity_pool: Maps MAC addresses to identities (max 8 slots)
+ * - _handle_to_peer: Fixed array indexed by connection handle (max 8)
  */
 class BLEPeerManager {
 public:
+    //=========================================================================
+    // Pool Configuration
+    //=========================================================================
+    static constexpr size_t PEERS_POOL_SIZE = 8;
+    static constexpr size_t MAC_IDENTITY_POOL_SIZE = 8;
+    static constexpr size_t MAX_CONN_HANDLES = 8;
+
+    /**
+     * @brief Slot for storing peer info (keyed by identity)
+     */
+    struct PeerByIdentitySlot {
+        bool in_use = false;
+        Bytes identity_hash;  // 16-byte identity key
+        PeerInfo peer;        // value
+
+        void clear() {
+            in_use = false;
+            identity_hash.clear();
+            peer = PeerInfo();
+        }
+    };
+
+    /**
+     * @brief Slot for storing peer info (keyed by MAC only, no identity yet)
+     */
+    struct PeerByMacSlot {
+        bool in_use = false;
+        Bytes mac_address;    // 6-byte MAC key
+        PeerInfo peer;        // value
+
+        void clear() {
+            in_use = false;
+            mac_address.clear();
+            peer = PeerInfo();
+        }
+    };
+
+    /**
+     * @brief Slot for MAC to identity mapping
+     */
+    struct MacToIdentitySlot {
+        bool in_use = false;
+        Bytes mac_address;    // 6-byte MAC key
+        Bytes identity;       // 16-byte identity value
+
+        void clear() {
+            in_use = false;
+            mac_address.clear();
+            identity.clear();
+        }
+    };
+
     BLEPeerManager();
 
     /**
@@ -263,7 +320,7 @@ public:
     /**
      * @brief Get total peer count
      */
-    size_t totalPeerCount() const { return _peers_by_identity.size() + _peers_by_mac_only.size(); }
+    size_t totalPeerCount() const { return peersByIdentityCount() + peersByMacOnlyCount(); }
 
     /**
      * @brief Check if we can accept more connections
@@ -302,18 +359,122 @@ private:
      */
     void promoteToIdentityKeyed(const Bytes& mac_address, const Bytes& identity);
 
+    //=========================================================================
+    // Pool Helper Methods - Peers by Identity
+    //=========================================================================
+
+    /**
+     * @brief Find slot by identity key
+     * @return Pointer to slot or nullptr if not found
+     */
+    PeerByIdentitySlot* findPeerByIdentitySlot(const Bytes& identity);
+    const PeerByIdentitySlot* findPeerByIdentitySlot(const Bytes& identity) const;
+
+    /**
+     * @brief Find an empty slot in the identity pool
+     * @return Pointer to empty slot or nullptr if pool is full
+     */
+    PeerByIdentitySlot* findEmptyPeerByIdentitySlot();
+
+    /**
+     * @brief Get count of peers by identity
+     */
+    size_t peersByIdentityCount() const;
+
+    //=========================================================================
+    // Pool Helper Methods - Peers by MAC Only
+    //=========================================================================
+
+    /**
+     * @brief Find slot by MAC key
+     * @return Pointer to slot or nullptr if not found
+     */
+    PeerByMacSlot* findPeerByMacSlot(const Bytes& mac);
+    const PeerByMacSlot* findPeerByMacSlot(const Bytes& mac) const;
+
+    /**
+     * @brief Find an empty slot in the MAC-only pool
+     * @return Pointer to empty slot or nullptr if pool is full
+     */
+    PeerByMacSlot* findEmptyPeerByMacSlot();
+
+    /**
+     * @brief Get count of peers by MAC only
+     */
+    size_t peersByMacOnlyCount() const;
+
+    //=========================================================================
+    // Pool Helper Methods - MAC to Identity Mapping
+    //=========================================================================
+
+    /**
+     * @brief Find MAC-to-identity mapping slot by MAC
+     * @return Pointer to slot or nullptr if not found
+     */
+    MacToIdentitySlot* findMacToIdentitySlot(const Bytes& mac);
+    const MacToIdentitySlot* findMacToIdentitySlot(const Bytes& mac) const;
+
+    /**
+     * @brief Find an empty slot in the MAC-to-identity pool
+     * @return Pointer to empty slot or nullptr if pool is full
+     */
+    MacToIdentitySlot* findEmptyMacToIdentitySlot();
+
+    /**
+     * @brief Add or update MAC-to-identity mapping
+     * @return true if successful, false if pool is full
+     */
+    bool setMacToIdentity(const Bytes& mac, const Bytes& identity);
+
+    /**
+     * @brief Remove MAC-to-identity mapping
+     */
+    void removeMacToIdentity(const Bytes& mac);
+
+    /**
+     * @brief Get identity for a MAC from the mapping pool
+     * @return Identity or empty Bytes if not found
+     */
+    Bytes getIdentityForMac(const Bytes& mac) const;
+
+    //=========================================================================
+    // Pool Helper Methods - Handle to Peer Mapping
+    //=========================================================================
+
+    /**
+     * @brief Set handle-to-peer mapping
+     */
+    void setHandleToPeer(uint16_t handle, PeerInfo* peer);
+
+    /**
+     * @brief Clear handle-to-peer mapping
+     */
+    void clearHandleToPeer(uint16_t handle);
+
+    /**
+     * @brief Get peer for handle
+     * @return Pointer to peer or nullptr if not found
+     */
+    PeerInfo* getHandleToPeer(uint16_t handle);
+    const PeerInfo* getHandleToPeer(uint16_t handle) const;
+
+    //=========================================================================
+    // Fixed-size Pool Storage
+    //=========================================================================
+
     // Peers with known identity (keyed by identity)
-    std::map<Bytes, PeerInfo> _peers_by_identity;
+    PeerByIdentitySlot _peers_by_identity_pool[PEERS_POOL_SIZE];
 
     // Peers without identity yet (keyed by MAC)
-    std::map<Bytes, PeerInfo> _peers_by_mac_only;
+    PeerByMacSlot _peers_by_mac_only_pool[PEERS_POOL_SIZE];
 
     // MAC to identity lookup for peers with identity
-    std::map<Bytes, Bytes> _mac_to_identity;
+    MacToIdentitySlot _mac_to_identity_pool[MAC_IDENTITY_POOL_SIZE];
 
     // Connection handle to peer pointer for O(1) lookup
-    // Updated when setPeerHandle is called, cleared on disconnect/remove
-    std::map<uint16_t, PeerInfo*> _handle_to_peer;
+    // Index is the connection handle (must be < MAX_CONN_HANDLES)
+    // nullptr means no mapping for that handle
+    PeerInfo* _handle_to_peer[MAX_CONN_HANDLES];
 
     // Our own MAC address
     Bytes _local_mac;

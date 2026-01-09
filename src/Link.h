@@ -5,6 +5,7 @@
 #include "SegmentAccumulator.h"
 
 #include <memory>
+#include <set>
 #include <cassert>
 
 namespace RNS {
@@ -57,6 +58,7 @@ namespace RNS {
 		};
 
 	public:
+		RequestReceipt() {}
 		RequestReceipt(Type::NoneConstructor none) {}
 		RequestReceipt(const RequestReceipt& request_receipt) : _object(request_receipt._object) {}
 		//RequestReceipt(const Link& link, const PacketReceipt& packet_receipt = {Type::NONE}, const Resource& resource = {Type::NONE}, RequestReceipt::Callbacks::response response_callback = nullptr, RequestReceipt::Callbacks::failed failed_callback = nullptr, RequestReceipt::Callbacks::progress progress_callback = nullptr, double timeout = 0.0, int request_size = 0);
@@ -99,6 +101,7 @@ namespace RNS {
 	private:
 		std::shared_ptr<RequestReceiptData> _object;
 
+	friend class Link;
 	};
 
 /*
@@ -256,7 +259,21 @@ namespace RNS {
 		uint8_t traffic_timeout_factor() const;
 		double request_time() const;
 		double last_inbound() const;
-		std::set<RequestReceipt>& pending_requests() const;
+		// Fixed-size pool helper methods for pending requests
+		bool pending_requests_contains(const RequestReceipt& r) const;
+		bool pending_requests_add(const RequestReceipt& r);
+		bool pending_requests_remove(const RequestReceipt& r);
+		size_t pending_requests_count() const;
+		// Fixed-size pool helper methods for incoming resources
+		bool incoming_resources_contains(const Resource& r) const;
+		bool incoming_resources_add(const Resource& r);
+		bool incoming_resources_remove(const Resource& r);
+		size_t incoming_resources_count() const;
+		// Fixed-size pool helper methods for outgoing resources
+		bool outgoing_resources_contains(const Resource& r) const;
+		bool outgoing_resources_add(const Resource& r);
+		bool outgoing_resources_remove(const Resource& r);
+		size_t outgoing_resources_count() const;
 		Type::Link::teardown_reason teardown_reason() const;
 		bool initiator() const;
 		// Statistics getters for display

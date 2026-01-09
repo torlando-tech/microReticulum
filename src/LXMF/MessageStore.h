@@ -6,9 +6,14 @@
 #include <ArduinoJson.h>
 #include <string>
 #include <vector>
-#include <map>
 
 namespace LXMF {
+
+	// Fixed pool sizes to eliminate heap fragmentation
+	static constexpr size_t MAX_CONVERSATIONS = 32;
+	static constexpr size_t MAX_MESSAGES_PER_CONVERSATION = 256;
+	static constexpr size_t MESSAGE_HASH_SIZE = 32;  // SHA256 hash
+	static constexpr size_t PEER_HASH_SIZE = 16;     // Truncated hash
 
 	/**
 	 * @brief Message persistence and conversation management for LXMF
@@ -34,14 +39,92 @@ namespace LXMF {
 
 	public:
 		/**
-		 * @brief Conversation metadata
+		 * @brief Conversation metadata with fixed-size message hash storage
 		 */
 		struct ConversationInfo {
-			RNS::Bytes peer_hash;              // Hash of the peer (source or destination)
-			std::vector<RNS::Bytes> message_hashes;  // Message hashes in chronological order
-			double last_activity;              // Timestamp of most recent message
-			size_t unread_count;               // Number of unread messages
-			RNS::Bytes last_message_hash;      // Hash of most recent message
+			// Fixed arrays eliminate ~6KB Bytes metadata overhead per conversation
+			// (256 messages × 24 bytes metadata = 6.1KB saved per conversation)
+			uint8_t peer_hash[PEER_HASH_SIZE];
+			uint8_t message_hashes[MAX_MESSAGES_PER_CONVERSATION][MESSAGE_HASH_SIZE];
+			size_t message_count = 0;          // Number of messages in this conversation
+			double last_activity = 0.0;        // Timestamp of most recent message
+			size_t unread_count = 0;           // Number of unread messages
+			uint8_t last_message_hash[MESSAGE_HASH_SIZE];
+
+			// Helper methods for accessing fixed arrays as Bytes
+			RNS::Bytes peer_hash_bytes() const { return RNS::Bytes(peer_hash, PEER_HASH_SIZE); }
+			RNS::Bytes message_hash_bytes(size_t idx) const {
+				if (idx >= message_count) return RNS::Bytes();
+				return RNS::Bytes(message_hashes[idx], MESSAGE_HASH_SIZE);
+			}
+			RNS::Bytes last_message_hash_bytes() const { return RNS::Bytes(last_message_hash, MESSAGE_HASH_SIZE); }
+
+			void set_peer_hash(const RNS::Bytes& b) {
+				size_t len = std::min(b.size(), PEER_HASH_SIZE);
+				memcpy(peer_hash, b.data(), len);
+				if (len < PEER_HASH_SIZE) memset(peer_hash + len, 0, PEER_HASH_SIZE - len);
+			}
+			void set_last_message_hash(const RNS::Bytes& b) {
+				size_t len = std::min(b.size(), MESSAGE_HASH_SIZE);
+				memcpy(last_message_hash, b.data(), len);
+				if (len < MESSAGE_HASH_SIZE) memset(last_message_hash + len, 0, MESSAGE_HASH_SIZE - len);
+			}
+			bool peer_hash_equals(const RNS::Bytes& b) const {
+				if (b.size() != PEER_HASH_SIZE) return false;
+				return memcmp(peer_hash, b.data(), PEER_HASH_SIZE) == 0;
+			}
+
+			/**
+			 * @brief Add a message hash to this conversation
+			 * @param hash Message hash to add
+			 * @return True if added, false if already exists or pool full
+			 */
+			bool add_message_hash(const RNS::Bytes& hash);
+
+			/**
+			 * @brief Check if conversation has a specific message
+			 * @param hash Message hash to check
+			 * @return True if message exists in this conversation
+			 */
+			bool has_message(const RNS::Bytes& hash) const;
+
+			/**
+			 * @brief Remove a message hash from this conversation
+			 * @param hash Message hash to remove
+			 * @return True if removed, false if not found
+			 */
+			bool remove_message_hash(const RNS::Bytes& hash);
+
+			/**
+			 * @brief Clear all data in this conversation info
+			 */
+			void clear();
+		};
+
+		/**
+		 * @brief Fixed-size slot for conversation storage
+		 */
+		struct ConversationSlot {
+			bool in_use = false;
+			uint8_t peer_hash[PEER_HASH_SIZE];
+			ConversationInfo info;
+
+			// Helper methods
+			RNS::Bytes peer_hash_bytes() const { return RNS::Bytes(peer_hash, PEER_HASH_SIZE); }
+			void set_peer_hash(const RNS::Bytes& b) {
+				size_t len = std::min(b.size(), PEER_HASH_SIZE);
+				memcpy(peer_hash, b.data(), len);
+				if (len < PEER_HASH_SIZE) memset(peer_hash + len, 0, PEER_HASH_SIZE - len);
+			}
+			bool peer_hash_equals(const RNS::Bytes& b) const {
+				if (b.size() != PEER_HASH_SIZE) return false;
+				return memcmp(peer_hash, b.data(), PEER_HASH_SIZE) == 0;
+			}
+
+			/**
+			 * @brief Clear this slot and mark as not in use
+			 */
+			void clear();
 		};
 
 		/**
@@ -208,14 +291,14 @@ namespace LXMF {
 		/**
 		 * @brief Load conversation index from disk
 		 *
-		 * Loads conversations.json into _conversations map.
+		 * Loads conversations.json into _conversations_pool.
 		 */
 		void load_index();
 
 		/**
 		 * @brief Save conversation index to disk
 		 *
-		 * Persists _conversations map to conversations.json.
+		 * Persists _conversations_pool to conversations.json.
 		 *
 		 * @return True if saved successfully
 		 */
@@ -249,9 +332,33 @@ namespace LXMF {
 		 */
 		RNS::Bytes get_peer_hash(const LXMessage& message, const RNS::Bytes& our_hash) const;
 
+		/**
+		 * @brief Find a conversation slot by peer hash
+		 *
+		 * @param peer_hash Hash of the peer
+		 * @return Pointer to ConversationSlot or nullptr if not found
+		 */
+		ConversationSlot* find_conversation(const RNS::Bytes& peer_hash);
+		const ConversationSlot* find_conversation(const RNS::Bytes& peer_hash) const;
+
+		/**
+		 * @brief Get or create a conversation slot for a peer
+		 *
+		 * @param peer_hash Hash of the peer
+		 * @return Pointer to ConversationSlot or nullptr if pool is full
+		 */
+		ConversationSlot* get_or_create_conversation(const RNS::Bytes& peer_hash);
+
+		/**
+		 * @brief Count number of active conversations in pool
+		 *
+		 * @return Number of in-use conversation slots
+		 */
+		size_t count_conversations() const;
+
 	private:
 		std::string _base_path;
-		std::map<RNS::Bytes, ConversationInfo> _conversations;
+		ConversationSlot _conversations_pool[MAX_CONVERSATIONS];
 		bool _initialized;
 
 		// Reusable JSON document to reduce heap fragmentation

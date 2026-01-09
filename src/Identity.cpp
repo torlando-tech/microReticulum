@@ -1,4 +1,5 @@
 #include "Identity.h"
+#include "FileStream.h"
 
 #include "Reticulum.h"
 #include "Transport.h"
@@ -11,7 +12,6 @@
 #include "Cryptography/Token.h"
 #include "Cryptography/Random.h"
 
-#include <ArduinoJson.h>
 #include <algorithm>
 #include <string.h>
 #ifdef ARDUINO
@@ -29,12 +29,12 @@ using namespace RNS::Utilities;
 // CBA
 // CBA ACCUMULATES
 /*static*/ //uint16_t Identity::_known_destinations_maxsize = 100;
-/*static*/ uint16_t Identity::_known_destinations_maxsize = 512;  // Now matches KNOWN_DESTINATIONS_SIZE
+/*static*/ uint16_t Identity::_known_destinations_maxsize = 192;  // Now matches KNOWN_DESTINATIONS_SIZE
 
 // Helper functions for known destinations pool
 /*static*/ Identity::KnownDestinationSlot* Identity::find_known_destination_slot(const Bytes& hash) {
 	for (size_t i = 0; i < KNOWN_DESTINATIONS_SIZE; ++i) {
-		if (_known_destinations_pool[i].in_use && _known_destinations_pool[i].destination_hash == hash) {
+		if (_known_destinations_pool[i].in_use && _known_destinations_pool[i].hash_equals(hash)) {
 			return &_known_destinations_pool[i];
 		}
 	}
@@ -60,9 +60,36 @@ using namespace RNS::Utilities;
 	return count;
 }
 
-// Ratchet cache static members
-/*static*/ std::map<Bytes, Bytes> Identity::_known_ratchets;
+// Ratchet cache static members - fixed pool for zero heap fragmentation
+/*static*/ Identity::KnownRatchetSlot Identity::_known_ratchets_pool[Identity::KNOWN_RATCHETS_SIZE];
 /*static*/ bool Identity::_saving_known_ratchets = false;
+
+// Helper functions for known ratchets pool
+/*static*/ Identity::KnownRatchetSlot* Identity::find_known_ratchet_slot(const Bytes& dest_hash) {
+	for (size_t i = 0; i < KNOWN_RATCHETS_SIZE; ++i) {
+		if (_known_ratchets_pool[i].in_use && _known_ratchets_pool[i].hash_equals(dest_hash)) {
+			return &_known_ratchets_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+/*static*/ Identity::KnownRatchetSlot* Identity::find_empty_known_ratchet_slot() {
+	for (size_t i = 0; i < KNOWN_RATCHETS_SIZE; ++i) {
+		if (!_known_ratchets_pool[i].in_use) {
+			return &_known_ratchets_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+/*static*/ size_t Identity::known_ratchets_count() {
+	size_t count = 0;
+	for (size_t i = 0; i < KNOWN_RATCHETS_SIZE; ++i) {
+		if (_known_ratchets_pool[i].in_use) count++;
+	}
+	return count;
+}
 
 Identity::Identity(bool create_keys /*= true*/) : _object(new Object()) {
 	if (create_keys) {
@@ -248,7 +275,7 @@ Can be used to load previously created and saved identities into Reticulum.
 				}
 			}
 			slot->in_use = true;
-			slot->destination_hash = destination_hash;
+			slot->set_hash(destination_hash);
 			slot->entry = IdentityEntry(OS::time(), packet_hash, public_key, app_data);
 			should_save = true;
 		} else if (app_data && app_data.size() > 0 && slot->entry._app_data != app_data) {
@@ -278,7 +305,7 @@ Recall identity for a destination hash.
 		TRACE("Identity::recall: Found identity entry for destination " + destination_hash.toHex());
 		const IdentityEntry& identity_data = slot->entry;
 		Identity identity(false);
-		identity.load_public_key(identity_data._public_key);
+		identity.load_public_key(identity_data.public_key_bytes());
 		identity.app_data(identity_data._app_data);
 		return identity;
 	}
@@ -318,8 +345,9 @@ Recall last heard app_data for a destination hash.
 }
 
 /*static*/ bool Identity::save_known_destinations() {
-	// Short path for SPIFFS compatibility
-	const char* storage_path = "/known_dst.json";
+	// Binary format - much more memory efficient than JSON
+	// No heap allocation needed - writes directly from fixed arrays
+	const char* storage_path = "/known_dst.bin";
 
 	bool success = false;
 	try {
@@ -338,48 +366,50 @@ Recall last heard app_data for a destination hash.
 
 		_saving_known_destinations = true;
 
-#ifdef ARDUINO
-		// Skip save if memory is too fragmented - needs ~12KB contiguous for JSON serialization
-		uint32_t max_block = ESP.getMaxAllocHeap();
-		if (max_block < 15000) {
-			WARNINGF("Identity: Skipping save - low memory (max_block=%u)", max_block);
-			_saving_known_destinations = false;
-			return false;
-		}
-#endif
-
 		double save_start = OS::time();
 
 		size_t dest_count = known_destinations_count();
-		DEBUG("Saving " + std::to_string(dest_count) + " known destinations to storage...");
+		DEBUG("Saving " + std::to_string(dest_count) + " known destinations to storage (binary)...");
 
-		// Create JSON document
-		JsonDocument doc;
-		JsonArray destinations = doc["destinations"].to<JsonArray>();
-
-		for (size_t i = 0; i < KNOWN_DESTINATIONS_SIZE; ++i) {
-			if (!_known_destinations_pool[i].in_use) continue;
-			const KnownDestinationSlot& slot = _known_destinations_pool[i];
-			JsonObject dest = destinations.add<JsonObject>();
-			dest["hash"] = slot.destination_hash.toHex();
-			dest["time"] = slot.entry._timestamp;
-			dest["packet_hash"] = slot.entry._packet_hash.toHex();
-			dest["public_key"] = slot.entry._public_key.toHex();
-			if (slot.entry._app_data && slot.entry._app_data.size() > 0) {
-				dest["app_data"] = slot.entry._app_data.toHex();
-			}
-		}
-
-		// Serialize to string and write to file
-		std::string json_str;
-		serializeJson(doc, json_str);
-		Bytes data((const uint8_t*)json_str.data(), json_str.size());
-
-		if (OS::write_file(storage_path, data) != data.size()) {
-			ERROR("Failed to write known destinations file");
+		// Open file for writing using OS filesystem abstraction
+		FileStream file = OS::open_file(storage_path, FileStream::MODE_WRITE);
+		if (!file) {
+			ERROR("Failed to open known destinations file for writing");
 			_saving_known_destinations = false;
 			return false;
 		}
+
+		// Write header: magic (4) + version (1) + count (2) = 7 bytes
+		const uint8_t magic[4] = {'K', 'D', 'S', 'T'};
+		const uint8_t version = 1;
+		uint16_t count = static_cast<uint16_t>(dest_count);
+
+		file.write(magic, 4);
+		file.write(&version, 1);
+		file.write((const uint8_t*)&count, sizeof(uint16_t));
+
+		// Write each entry directly from fixed arrays - no heap allocation!
+		for (size_t i = 0; i < KNOWN_DESTINATIONS_SIZE; ++i) {
+			if (!_known_destinations_pool[i].in_use) continue;
+			const KnownDestinationSlot& slot = _known_destinations_pool[i];
+
+			// destination_hash: 16 bytes
+			file.write(slot.destination_hash, DEST_HASH_SIZE);
+			// timestamp: 8 bytes
+			file.write((const uint8_t*)&slot.entry._timestamp, sizeof(double));
+			// packet_hash: 32 bytes
+			file.write(slot.entry._packet_hash, PACKET_HASH_SIZE);
+			// public_key: 64 bytes
+			file.write(slot.entry._public_key, PUBLIC_KEY_SIZE);
+			// app_data_len: 2 bytes + app_data: variable
+			uint16_t app_data_len = static_cast<uint16_t>(slot.entry._app_data.size());
+			file.write((const uint8_t*)&app_data_len, sizeof(uint16_t));
+			if (app_data_len > 0) {
+				file.write(slot.entry._app_data.data(), app_data_len);
+			}
+		}
+
+		file.close();
 
 		std::string time_str;
 		double save_time = OS::time() - save_start;
@@ -404,8 +434,8 @@ Recall last heard app_data for a destination hash.
 }
 
 /*static*/ void Identity::load_known_destinations() {
-	// Short path for SPIFFS compatibility
-	const char* storage_path = "/known_dst.json";
+	// Binary format - much more memory efficient than JSON
+	const char* storage_path = "/known_dst.bin";
 
 	if (!OS::file_exists(storage_path)) {
 		DEBUG("No known destinations file found, starting fresh");
@@ -413,54 +443,75 @@ Recall last heard app_data for a destination hash.
 	}
 
 	try {
-		// Read JSON file
-		Bytes data;
-		if (OS::read_file(storage_path, data) == 0) {
-			WARNING("Failed to read known destinations file or empty");
+		// Open file for reading using OS filesystem abstraction
+		FileStream file = OS::open_file(storage_path, FileStream::MODE_READ);
+		if (!file) {
+			WARNING("Failed to open known destinations file");
 			return;
 		}
 
-		// Parse JSON
-		JsonDocument doc;
-		DeserializationError error = deserializeJson(doc, data.data(), data.size());
+		// Read and verify header
+		uint8_t magic[4];
+		uint8_t version;
+		uint16_t count;
 
-		if (error) {
-			ERROR("Failed to parse known destinations file: " + std::string(error.c_str()));
+		if (file.readBytes((char*)magic, 4) != 4 ||
+		    magic[0] != 'K' || magic[1] != 'D' || magic[2] != 'S' || magic[3] != 'T') {
+			WARNING("Invalid known destinations file magic");
+			file.close();
 			return;
 		}
 
-		// Load destinations
-		JsonArray destinations = doc["destinations"].as<JsonArray>();
+		if (file.readBytes((char*)&version, 1) != 1 || version != 1) {
+			WARNING("Unknown known destinations file version");
+			file.close();
+			return;
+		}
+
+		if (file.readBytes((char*)&count, sizeof(uint16_t)) != sizeof(uint16_t)) {
+			WARNING("Failed to read known destinations count");
+			file.close();
+			return;
+		}
+
+		DEBUG("Loading " + std::to_string(count) + " known destinations from storage (binary)...");
+
 		size_t loaded_count = 0;
 
-		for (JsonObject dest : destinations) {
-			IdentityEntry entry;
+		// Temporary buffers on stack - no heap allocation
+		uint8_t dest_hash_buf[DEST_HASH_SIZE];
+		double timestamp;
+		uint8_t packet_hash_buf[PACKET_HASH_SIZE];
+		uint8_t public_key_buf[PUBLIC_KEY_SIZE];
+		uint16_t app_data_len;
 
-			// Parse destination hash
-			Bytes dest_hash;
-			const char* hash_hex = dest["hash"];
-			if (!hash_hex) continue;
-			dest_hash.assignHex(hash_hex);
+		for (uint16_t i = 0; i < count; ++i) {
+			// Read fixed fields directly into stack buffers
+			if (file.readBytes((char*)dest_hash_buf, DEST_HASH_SIZE) != DEST_HASH_SIZE) break;
+			if (file.readBytes((char*)&timestamp, sizeof(double)) != sizeof(double)) break;
+			if (file.readBytes((char*)packet_hash_buf, PACKET_HASH_SIZE) != PACKET_HASH_SIZE) break;
+			if (file.readBytes((char*)public_key_buf, PUBLIC_KEY_SIZE) != PUBLIC_KEY_SIZE) break;
+			if (file.readBytes((char*)&app_data_len, sizeof(uint16_t)) != sizeof(uint16_t)) break;
 
-			// Parse entry fields
-			entry._timestamp = dest["time"] | 0.0;
-
-			const char* packet_hash_hex = dest["packet_hash"];
-			if (packet_hash_hex) {
-				entry._packet_hash.assignHex(packet_hash_hex);
-			}
-
-			const char* public_key_hex = dest["public_key"];
-			if (public_key_hex) {
-				entry._public_key.assignHex(public_key_hex);
-			}
-
-			if (dest["app_data"].is<const char*>()) {
-				const char* app_data_hex = dest["app_data"];
-				if (app_data_hex) {
-					entry._app_data.assignHex(app_data_hex);
+			// Read app_data if present
+			Bytes app_data;
+			if (app_data_len > 0) {
+				if (app_data_len > 1024) {
+					WARNING("Skipping entry with excessive app_data length");
+					// Skip over app_data by reading and discarding
+					for (uint16_t j = 0; j < app_data_len; ++j) file.read();
+					continue;
 				}
+				// Use stack buffer for small app_data, then assign to Bytes
+				uint8_t app_data_buf[1024];
+				if (file.readBytes((char*)app_data_buf, app_data_len) != app_data_len) break;
+				app_data.assign(app_data_buf, app_data_len);
 			}
+
+			// Create Bytes wrappers for the fixed buffers
+			Bytes dest_hash(dest_hash_buf, DEST_HASH_SIZE);
+			Bytes packet_hash(packet_hash_buf, PACKET_HASH_SIZE);
+			Bytes public_key(public_key_buf, PUBLIC_KEY_SIZE);
 
 			// Add to known destinations (don't overwrite existing)
 			if (find_known_destination_slot(dest_hash) == nullptr) {
@@ -470,11 +521,13 @@ Recall last heard app_data for a destination hash.
 					break;
 				}
 				slot->in_use = true;
-				slot->destination_hash = dest_hash;
-				slot->entry = entry;
+				slot->set_hash(dest_hash);
+				slot->entry = IdentityEntry(timestamp, packet_hash, public_key, app_data);
 				loaded_count++;
 			}
 		}
+
+		file.close();
 
 		DEBUG("Loaded " + std::to_string(loaded_count) + " known destinations from storage");
 
@@ -503,7 +556,7 @@ Recall last heard app_data for a destination hash.
 		});
 		// Remove oldest entries until we're under the limit
 		for (KnownDestinationSlot* slot : sorted_slots) {
-			TRACE("Identity::cull_known_destinations: Removing destination " + slot->destination_hash.toHex() + " from known destinations");
+			TRACE("Identity::cull_known_destinations: Removing destination " + slot->hash_bytes().toHex() + " from known destinations");
 			slot->clear();
 			++count;
 			if (known_destinations_count() <= _known_destinations_maxsize) {
@@ -591,7 +644,7 @@ Recall last heard app_data for a destination hash.
 					KnownDestinationSlot* slot = find_known_destination_slot(packet.destination_hash());
 					if (slot != nullptr) {
 						IdentityEntry& identity_entry = slot->entry;
-						if (public_key != identity_entry._public_key) {
+						if (public_key != identity_entry.public_key_bytes()) {
 							// In reality, this should never occur, but in the odd case
 							// that someone manages a hash collision, we reject the announce.
 							CRITICAL("Received announce with valid signature and destination hash, but announced public key does not match already known public key.");
@@ -845,16 +898,31 @@ void Identity::prove(const Packet& packet) const {
 	DEBUG("Remembering ratchet for destination " + destination_hash.toHex());
 	DEBUG("  Ratchet public key: " + ratchet_public_key.toHex());
 
-	// Cull if map is getting too large
-	if (_known_ratchets.size() >= KNOWN_RATCHETS_MAXSIZE) {
-		cull_known_ratchets();
+	// Check if slot already exists
+	KnownRatchetSlot* slot = find_known_ratchet_slot(destination_hash);
+	if (slot != nullptr) {
+		// Update existing
+		slot->set_ratchet(ratchet_public_key);
+		slot->timestamp = OS::time();
+		return;
 	}
 
-	// Store or update ratchet in cache
-	_known_ratchets[destination_hash] = ratchet_public_key;
+	// Find empty slot
+	slot = find_empty_known_ratchet_slot();
+	if (slot == nullptr) {
+		// Pool full - cull oldest
+		cull_known_ratchets();
+		slot = find_empty_known_ratchet_slot();
+		if (slot == nullptr) {
+			WARNING("Known ratchets pool is full, cannot remember ratchet");
+			return;
+		}
+	}
 
-	// TODO: Persist to storage
-	// save_known_ratchets();
+	slot->in_use = true;
+	slot->set_hash(destination_hash);
+	slot->set_ratchet(ratchet_public_key);
+	slot->timestamp = OS::time();
 }
 
 /*
@@ -864,11 +932,11 @@ Recall ratchet public key for a destination hash.
 :returns: Ratchet public key as *bytes* (32 bytes), or empty Bytes if unknown.
 */
 /*static*/ Bytes Identity::recall_ratchet(const Bytes& destination_hash) {
-	auto iter = _known_ratchets.find(destination_hash);
-	if (iter != _known_ratchets.end()) {
+	KnownRatchetSlot* slot = find_known_ratchet_slot(destination_hash);
+	if (slot != nullptr) {
 		DEBUG("Recalled ratchet for destination " + destination_hash.toHex());
-		DEBUG("  Ratchet public key: " + (*iter).second.toHex());
-		return (*iter).second;
+		DEBUG("  Ratchet public key: " + slot->ratchet_bytes().toHex());
+		return slot->ratchet_bytes();
 	}
 	else {
 		DEBUG("No ratchet found for destination " + destination_hash.toHex());
@@ -892,20 +960,26 @@ Recall ratchet public key for a destination hash.
 }
 
 /*static*/ void Identity::cull_known_ratchets() {
-	// Simple culling: remove half of entries when limit is reached
-	// Since std::map doesn't track insertion order, we remove by iterator position
-	// which is arbitrary but deterministic (sorted by key)
-	size_t current_size = _known_ratchets.size();
-	if (current_size <= KNOWN_RATCHETS_MAXSIZE / 2) {
-		return;  // Already small enough
+	// Remove oldest entries (by timestamp) until we have space
+	size_t current_count = known_ratchets_count();
+	if (current_count < KNOWN_RATCHETS_SIZE) {
+		return;  // Not full
 	}
 
-	DEBUG("Culling known ratchets from " + std::to_string(current_size) +
-	      " to " + std::to_string(KNOWN_RATCHETS_MAXSIZE / 2));
+	DEBUG("Culling known ratchets, current count: " + std::to_string(current_count));
 
-	size_t to_remove = current_size - (KNOWN_RATCHETS_MAXSIZE / 2);
-	auto iter = _known_ratchets.begin();
-	for (size_t i = 0; i < to_remove && iter != _known_ratchets.end(); ++i) {
-		iter = _known_ratchets.erase(iter);
+	// Find and remove oldest entry
+	KnownRatchetSlot* oldest = nullptr;
+	for (size_t i = 0; i < KNOWN_RATCHETS_SIZE; ++i) {
+		if (_known_ratchets_pool[i].in_use) {
+			if (oldest == nullptr || _known_ratchets_pool[i].timestamp < oldest->timestamp) {
+				oldest = &_known_ratchets_pool[i];
+			}
+		}
+	}
+
+	if (oldest != nullptr) {
+		oldest->clear();
+		DEBUG("Removed oldest ratchet entry");
 	}
 }

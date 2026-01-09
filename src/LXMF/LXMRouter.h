@@ -8,10 +8,7 @@
 #include "../Link.h"
 #include "../Packet.h"
 
-#include <map>
 #include <vector>
-#include <deque>
-#include <set>
 #include <string>
 #include <functional>
 #include <memory>
@@ -229,21 +226,21 @@ namespace LXMF {
 		 *
 		 * @return Number of messages waiting to be sent
 		 */
-		inline size_t pending_outbound_count() const { return _pending_outbound.size(); }
+		inline size_t pending_outbound_count() const { return _pending_outbound_count; }
 
 		/**
 		 * @brief Get pending inbound message count
 		 *
 		 * @return Number of messages waiting to be processed
 		 */
-		inline size_t pending_inbound_count() const { return _pending_inbound.size(); }
+		inline size_t pending_inbound_count() const { return _pending_inbound_count; }
 
 		/**
 		 * @brief Get failed outbound message count
 		 *
 		 * @return Number of failed messages
 		 */
-		inline size_t failed_outbound_count() const { return _failed_outbound.size(); }
+		inline size_t failed_outbound_count() const { return _failed_outbound_count; }
 
 		/**
 		 * @brief Clear failed outbound messages
@@ -492,25 +489,106 @@ namespace LXMF {
 		 */
 		static void static_propagation_resource_concluded(const RNS::Resource& resource);
 
+		// Circular buffer helpers for message queues
+		bool pending_outbound_push(const LXMessage& msg);
+		bool pending_outbound_pop(LXMessage& msg);
+		LXMessage* pending_outbound_front();
+		bool pending_inbound_push(const LXMessage& msg);
+		bool pending_inbound_pop(LXMessage& msg);
+		LXMessage* pending_inbound_front();
+		bool failed_outbound_push(const LXMessage& msg);
+		bool failed_outbound_pop(LXMessage& msg);
+
 	private:
 		// Core components
 		RNS::Identity _identity;                   // Local identity
 		RNS::Destination _delivery_destination;    // For receiving messages
 		std::string _storage_path;                 // Storage path for persistence
 
-		// Message queues (deque for efficient front/back operations)
-		std::deque<LXMessage> _pending_outbound;  // Messages waiting to be sent
-		std::deque<LXMessage> _pending_inbound;   // Messages received, waiting for processing
-		std::deque<LXMessage> _failed_outbound;   // Messages that failed to send
+		// Message queues as fixed circular buffers (zero heap fragmentation)
+		static constexpr size_t PENDING_OUTBOUND_SIZE = 16;
+		LXMessage _pending_outbound_pool[PENDING_OUTBOUND_SIZE];
+		size_t _pending_outbound_head = 0;
+		size_t _pending_outbound_tail = 0;
+		size_t _pending_outbound_count = 0;
 
-		// Link management for DIRECT delivery
-		std::map<RNS::Bytes, RNS::Link> _direct_links;  // dest_hash -> Link
-		std::map<RNS::Bytes, double> _link_creation_times;  // dest_hash -> creation timestamp
+		static constexpr size_t PENDING_INBOUND_SIZE = 16;
+		LXMessage _pending_inbound_pool[PENDING_INBOUND_SIZE];
+		size_t _pending_inbound_head = 0;
+		size_t _pending_inbound_tail = 0;
+		size_t _pending_inbound_count = 0;
+
+		static constexpr size_t FAILED_OUTBOUND_SIZE = 8;
+		LXMessage _failed_outbound_pool[FAILED_OUTBOUND_SIZE];
+		size_t _failed_outbound_head = 0;
+		size_t _failed_outbound_tail = 0;
+		size_t _failed_outbound_count = 0;
+
+		// Link management for DIRECT delivery - fixed pool (zero heap fragmentation)
+		static constexpr size_t DIRECT_LINKS_SIZE = 8;
+		static constexpr size_t DEST_HASH_SIZE = 16;  // Truncated hash size
+		struct DirectLinkSlot {
+			bool in_use = false;
+			uint8_t destination_hash[DEST_HASH_SIZE];
+			RNS::Link link;
+			double creation_time = 0;
+			RNS::Bytes destination_hash_bytes() const { return RNS::Bytes(destination_hash, DEST_HASH_SIZE); }
+			void set_destination_hash(const RNS::Bytes& b) {
+				size_t len = std::min(b.size(), DEST_HASH_SIZE);
+				memcpy(destination_hash, b.data(), len);
+				if (len < DEST_HASH_SIZE) memset(destination_hash + len, 0, DEST_HASH_SIZE - len);
+			}
+			bool destination_hash_equals(const RNS::Bytes& b) const {
+				if (b.size() != DEST_HASH_SIZE) return false;
+				return memcmp(destination_hash, b.data(), DEST_HASH_SIZE) == 0;
+			}
+			void clear() {
+				in_use = false;
+				memset(destination_hash, 0, DEST_HASH_SIZE);
+				link = RNS::Link(RNS::Type::NONE);
+				creation_time = 0;
+			}
+		};
+		DirectLinkSlot _direct_links_pool[DIRECT_LINKS_SIZE];
+		DirectLinkSlot* find_direct_link_slot(const RNS::Bytes& hash);
+		DirectLinkSlot* find_empty_direct_link_slot();
+		size_t direct_links_count();
 		static constexpr double LINK_ESTABLISHMENT_TIMEOUT = 30.0;  // Seconds to wait for pending links
 
-		// Proof tracking for delivery confirmation
+		// Proof tracking for delivery confirmation - fixed pool (zero heap fragmentation)
 		// Maps packet hash -> message hash so we can update message state when proof arrives
-		static std::map<RNS::Bytes, RNS::Bytes> _pending_proofs;  // packet_hash -> message_hash
+		// Fixed arrays eliminate ~0.8KB Bytes metadata overhead (16 slots × 2 Bytes × 24 bytes)
+		static constexpr size_t PENDING_PROOFS_SIZE = 16;
+		static constexpr size_t HASH_SIZE = 32;  // SHA256 hash size
+		struct PendingProofSlot {
+			bool in_use = false;
+			uint8_t packet_hash[HASH_SIZE];
+			uint8_t message_hash[HASH_SIZE];
+			RNS::Bytes packet_hash_bytes() const { return RNS::Bytes(packet_hash, HASH_SIZE); }
+			RNS::Bytes message_hash_bytes() const { return RNS::Bytes(message_hash, HASH_SIZE); }
+			void set_packet_hash(const RNS::Bytes& b) {
+				size_t len = std::min(b.size(), HASH_SIZE);
+				memcpy(packet_hash, b.data(), len);
+				if (len < HASH_SIZE) memset(packet_hash + len, 0, HASH_SIZE - len);
+			}
+			void set_message_hash(const RNS::Bytes& b) {
+				size_t len = std::min(b.size(), HASH_SIZE);
+				memcpy(message_hash, b.data(), len);
+				if (len < HASH_SIZE) memset(message_hash + len, 0, HASH_SIZE - len);
+			}
+			bool packet_hash_equals(const RNS::Bytes& b) const {
+				if (b.size() != HASH_SIZE) return false;
+				return memcmp(packet_hash, b.data(), HASH_SIZE) == 0;
+			}
+			void clear() {
+				in_use = false;
+				memset(packet_hash, 0, HASH_SIZE);
+				memset(message_hash, 0, HASH_SIZE);
+			}
+		};
+		static PendingProofSlot _pending_proofs_pool[PENDING_PROOFS_SIZE];
+		static PendingProofSlot* find_pending_proof_slot(const RNS::Bytes& hash);
+		static PendingProofSlot* find_empty_pending_proof_slot();
 		static void static_proof_callback(const RNS::PacketReceipt& receipt);
 
 	public:
@@ -549,11 +627,49 @@ namespace LXMF {
 		// Propagation sync state
 		PropagationSyncState _sync_state = PR_IDLE;
 		float _sync_progress = 0.0f;
-		std::set<RNS::Bytes> _locally_delivered_transient_ids;
 		SyncCompleteCallback _sync_complete_callback;
 
-		// Track outbound propagation resources (resource_hash -> message_hash)
-		static std::map<RNS::Bytes, RNS::Bytes> _pending_propagation_resources;
+		// Locally delivered transient IDs circular buffer (zero heap fragmentation)
+		// Note: Keep as Bytes for now - converting to static array causes issues
+		static constexpr size_t TRANSIENT_IDS_SIZE = 64;
+		RNS::Bytes _transient_ids_buffer[TRANSIENT_IDS_SIZE];
+		size_t _transient_ids_head = 0;
+		size_t _transient_ids_count = 0;
+		bool transient_ids_contains(const RNS::Bytes& id);
+		void transient_ids_add(const RNS::Bytes& id);
+
+		// Track outbound propagation resources - fixed pool (zero heap fragmentation)
+		// Fixed arrays eliminate ~0.8KB Bytes metadata overhead (16 slots × 2 Bytes × 24 bytes)
+		static constexpr size_t PENDING_PROP_RESOURCES_SIZE = 16;
+		struct PropResourceSlot {
+			bool in_use = false;
+			uint8_t resource_hash[HASH_SIZE];
+			uint8_t message_hash[HASH_SIZE];
+			RNS::Bytes resource_hash_bytes() const { return RNS::Bytes(resource_hash, HASH_SIZE); }
+			RNS::Bytes message_hash_bytes() const { return RNS::Bytes(message_hash, HASH_SIZE); }
+			void set_resource_hash(const RNS::Bytes& b) {
+				size_t len = std::min(b.size(), HASH_SIZE);
+				memcpy(resource_hash, b.data(), len);
+				if (len < HASH_SIZE) memset(resource_hash + len, 0, HASH_SIZE - len);
+			}
+			void set_message_hash(const RNS::Bytes& b) {
+				size_t len = std::min(b.size(), HASH_SIZE);
+				memcpy(message_hash, b.data(), len);
+				if (len < HASH_SIZE) memset(message_hash + len, 0, HASH_SIZE - len);
+			}
+			bool resource_hash_equals(const RNS::Bytes& b) const {
+				if (b.size() != HASH_SIZE) return false;
+				return memcmp(resource_hash, b.data(), HASH_SIZE) == 0;
+			}
+			void clear() {
+				in_use = false;
+				memset(resource_hash, 0, HASH_SIZE);
+				memset(message_hash, 0, HASH_SIZE);
+			}
+		};
+		static PropResourceSlot _pending_prop_resources_pool[PENDING_PROP_RESOURCES_SIZE];
+		static PropResourceSlot* find_prop_resource_slot(const RNS::Bytes& hash);
+		static PropResourceSlot* find_empty_prop_resource_slot();
 
 		// Stamp enforcement
 		uint8_t _stamp_cost = 0;       // Required stamp cost (0 = no stamp required)

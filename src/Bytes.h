@@ -13,6 +13,16 @@
 #include <string>
 #include <memory>
 
+#include "PSRAMAllocator.h"
+
+// Forward declarations for MsgPack support
+namespace arduino {
+namespace msgpack {
+	class Packer;
+}
+}
+namespace MsgPack = arduino::msgpack;
+
 // Finds the start of the first occurrence of the substring needle of length needlelen in the  memory  area  haystack  of length haystacklen.
 inline void* memmem(const void* haystack, size_t haystack_len, const void* needle, size_t needle_len) {
 	const unsigned char* h = (const unsigned char*)haystack;
@@ -41,7 +51,8 @@ namespace RNS {
 
 	private:
 		//typedef std::vector<uint8_t> Data;
-		using Data = std::vector<uint8_t>;
+		// Use PSRAMAllocator to route Bytes data to PSRAM on ESP32, preventing internal heap fragmentation
+		using Data = std::vector<uint8_t, PSRAMAllocator<uint8_t>>;
 		//typedef std::shared_ptr<Data> SharedData;
 		using SharedData = std::shared_ptr<Data>;
 
@@ -62,18 +73,27 @@ namespace RNS {
 			assign(bytes);
 			MEMF("Bytes object copy created from bytes \"%s\", this: %lu, data: %lu", toString().c_str(), this, _data.get());
 		}
-		// Construct from std::vector<uint8_t>
+		// Construct from std::vector<uint8_t> with PSRAMAllocator
 		Bytes(const Data& data) {
 MEM("Creating from data-copy...");
 			assign(data);
 			MEMF("Bytes object created from data-copy \"%s\", this: %lu, data: %lu", toString().c_str(), this, _data.get());
 		}
-		// Construct from rvalue std::vector<uint8_t> (move)
+		// Construct from rvalue std::vector<uint8_t> with PSRAMAllocator (move)
 		Bytes(Data&& rdata) {
 MEM("Creating from data-move...");
 			assign(std::move(rdata));
 			MEMF("Bytes object created from data-move \"%s\", this: %lu, data: %lu", toString().c_str(), this, _data.get());
 		}
+		// Construct from std::vector<uint8_t> with standard allocator (for MsgPack interop)
+		// Only needed on Arduino where Data uses PSRAMAllocator (different from std::allocator)
+#ifdef ARDUINO
+		Bytes(const std::vector<uint8_t>& stdvec) {
+MEM("Creating from std::vector<uint8_t>...");
+			assign(stdvec.data(), stdvec.size());
+			MEMF("Bytes object created from std::vector \"%s\", this: %lu, data: %lu", toString().c_str(), this, _data.get());
+		}
+#endif
 		Bytes(const uint8_t* chunk, size_t size) {
 			assign(chunk, size);
 			MEMF("Bytes object created from chunk \"%s\", this: %lu, data: %lu", toString().c_str(), this, _data.get());
@@ -367,6 +387,10 @@ MEM("Creating from data-move...");
 		//   last element
 		// [-2]
 		//   second to last element
+
+		// MsgPack serialization support - allows Bytes to be serialized as binary
+		// Implementation is inline in Bytes.cpp to avoid circular header dependency
+		void to_msgpack(MsgPack::Packer& packer) const;
 
 	private:
 		SharedData _data;

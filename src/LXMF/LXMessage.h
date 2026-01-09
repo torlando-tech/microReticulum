@@ -6,11 +6,23 @@
 #include "../Destination.h"
 #include "../Link.h"
 
-#include <map>
 #include <string>
 #include <memory>
 
 namespace LXMF {
+
+	/**
+	 * @brief Fixed-size field entry to avoid heap fragmentation from std::map
+	 */
+	struct FieldEntry {
+		bool in_use = false;
+		RNS::Bytes key;
+		RNS::Bytes value;
+		void clear() { in_use = false; key.clear(); value.clear(); }
+	};
+
+	/// Maximum number of fields in an LXMF message
+	static constexpr size_t MAX_FIELDS = 16;
 
 	/**
 	 * @brief LXMF Message class
@@ -32,15 +44,17 @@ namespace LXMF {
 
 	public:
 		/**
+		 * @brief Default constructor for use in fixed pools
+		 */
+		LXMessage() = default;
+
+		/**
 		 * @brief Construct a new LXMF message
 		 *
 		 * @param destination Destination object (or {Type::NONE} if creating from hash)
 		 * @param source Source destination object (our identity)
 		 * @param content Message content as bytes or string
 		 * @param title Message title (optional)
-		 * @param fields Additional fields as map (optional)
-		 * @param destination_hash Destination hash if destination object not available
-		 * @param source_hash Source hash if source object not available
 		 * @param desired_method Delivery method (default: DIRECT)
 		 */
 		LXMessage(
@@ -48,7 +62,6 @@ namespace LXMF {
 			const RNS::Destination& source,
 			const RNS::Bytes& content = {},
 			const RNS::Bytes& title = {},
-			const std::map<RNS::Bytes, RNS::Bytes>& fields = {},
 			Type::Message::Method desired_method = Type::Message::DIRECT
 		);
 
@@ -60,7 +73,6 @@ namespace LXMF {
 			const RNS::Bytes& source_hash,
 			const RNS::Bytes& content = {},
 			const RNS::Bytes& title = {},
-			const std::map<RNS::Bytes, RNS::Bytes>& fields = {},
 			Type::Message::Method desired_method = Type::Message::DIRECT
 		);
 
@@ -238,14 +250,40 @@ namespace LXMF {
 		inline void title(const RNS::Bytes& title) { _title = title; _packed_valid = false; }
 
 		/**
-		 * @brief Get message fields
+		 * @brief Get field count
 		 */
-		inline const std::map<RNS::Bytes, RNS::Bytes>& fields() const { return _fields; }
+		inline size_t fields_count() const { return _fields_count; }
 
 		/**
-		 * @brief Set message fields
+		 * @brief Get field at index (for iteration)
+		 * @return Pointer to field entry, or nullptr if index out of range
 		 */
-		inline void fields(const std::map<RNS::Bytes, RNS::Bytes>& fields) { _fields = fields; _packed_valid = false; }
+		inline const FieldEntry* field_at(size_t index) const {
+			if (index >= MAX_FIELDS) return nullptr;
+			return _fields_pool[index].in_use ? &_fields_pool[index] : nullptr;
+		}
+
+		/**
+		 * @brief Set a field value
+		 * @return true if successful, false if pool is full
+		 */
+		bool fields_set(const RNS::Bytes& key, const RNS::Bytes& value);
+
+		/**
+		 * @brief Get a field value by key
+		 * @return Pointer to value, or nullptr if not found
+		 */
+		const RNS::Bytes* fields_get(const RNS::Bytes& key) const;
+
+		/**
+		 * @brief Check if a field exists
+		 */
+		bool fields_has(const RNS::Bytes& key) const;
+
+		/**
+		 * @brief Clear all fields
+		 */
+		void fields_clear();
 
 		/**
 		 * @brief Get timestamp
@@ -323,7 +361,10 @@ namespace LXMF {
 		RNS::Bytes _source_hash;
 		RNS::Bytes _content;
 		RNS::Bytes _title;
-		std::map<RNS::Bytes, RNS::Bytes> _fields;
+
+		// Fixed-size field pool to avoid heap fragmentation
+		FieldEntry _fields_pool[MAX_FIELDS];
+		size_t _fields_count = 0;
 
 		// Destination/Source objects (may be {Type::NONE} if creating from hashes)
 		RNS::Destination _destination;

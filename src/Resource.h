@@ -32,6 +32,9 @@ namespace RNS {
 		};
 
 	public:
+		Resource() {
+			MEM("Resource default object created");
+		}
 		Resource(Type::NoneConstructor none) {
 			MEM("Resource NONE object created");
 		}
