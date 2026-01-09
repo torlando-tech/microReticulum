@@ -38,8 +38,22 @@ namespace RNS {
 			Bytes _app_data;
 		};
 
+		// Fixed pool for known destinations (replaces std::map<Bytes, IdentityEntry>)
+		static constexpr size_t KNOWN_DESTINATIONS_SIZE = 512;
+		struct KnownDestinationSlot {
+			bool in_use = false;
+			Bytes destination_hash;
+			IdentityEntry entry;
+			void clear() { in_use = false; destination_hash.clear(); entry = IdentityEntry(); }
+		};
+		static KnownDestinationSlot _known_destinations_pool[KNOWN_DESTINATIONS_SIZE];
+
+		static KnownDestinationSlot* find_known_destination_slot(const Bytes& hash);
+		static KnownDestinationSlot* find_empty_known_destination_slot();
+
 	public:
-		static std::map<Bytes, IdentityEntry> _known_destinations;
+		static size_t known_destinations_count();
+		//static std::map<Bytes, IdentityEntry> _known_destinations;
 		static bool _saving_known_destinations;
 		// CBA
 		static uint16_t _known_destinations_maxsize;

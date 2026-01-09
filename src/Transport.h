@@ -15,10 +15,12 @@
 
 //#define INTERFACES_SET
 //#define INTERFACES_LIST
-#define INTERFACES_MAP
+//#define INTERFACES_MAP
+#define INTERFACES_POOL  // Use fixed pool instead of STL container
 
 //#define DESTINATIONS_SET
-#define DESTINATIONS_MAP
+//#define DESTINATIONS_MAP
+#define DESTINATIONS_POOL  // Use fixed pool instead of STL container
 
 namespace RNS {
 
@@ -157,6 +159,7 @@ namespace RNS {
 		// CBA TODO Analyze safety of using Packet references here
 		class AnnounceEntry {
 		public:
+			AnnounceEntry() {}
 			AnnounceEntry(double timestamp, double retransmit_timeout, uint8_t retries, const Bytes& received_from, uint8_t hops, const Packet& packet, uint8_t local_rebroadcasts, bool block_rebroadcasts, const Interface& attached_interface) :
 				_timestamp(timestamp),
 				_retransmit_timeout(retransmit_timeout),
@@ -173,20 +176,21 @@ namespace RNS {
 			double _timestamp = 0;
 			double _retransmit_timeout = 0;
 			uint8_t _retries = 0;
-			const Bytes _received_from;
+			Bytes _received_from;
 			uint8_t _hops = 0;
 			// CBA Storing packet reference causes memory issues, presumably because orignal packet is being destroyed
 			//  MUST use instance instad of reference!!!
 			//const Packet& _packet;
-			const Packet _packet = {Type::NONE};
+			Packet _packet = {Type::NONE};
 			uint8_t _local_rebroadcasts = 0;
 			bool _block_rebroadcasts = false;
-			const Interface _attached_interface = {Type::NONE};
+			Interface _attached_interface = {Type::NONE};
 		};
 
 		// CBA TODO Analyze safety of using Inrerface references here
 		class LinkEntry {
 		public:
+			LinkEntry() {}
 			LinkEntry(double timestamp, const Bytes& next_hop, const Interface& outbound_interface, uint8_t remaining_hops, const Interface& receiving_interface, uint8_t hops, const Bytes& destination_hash, bool validated, double proof_timeout) :
 				_timestamp(timestamp),
 				_next_hop(next_hop),
@@ -201,12 +205,12 @@ namespace RNS {
 			}
 		public:
 			double _timestamp = 0;
-			const Bytes _next_hop;
-			const Interface _outbound_interface = {Type::NONE};
+			Bytes _next_hop;
+			Interface _outbound_interface = {Type::NONE};
 			uint8_t _remaining_hops = 0;
 			Interface _receiving_interface = {Type::NONE};
 			uint8_t _hops = 0;
-			const Bytes _destination_hash;
+			Bytes _destination_hash;
 			bool _validated = false;
 			double _proof_timeout = 0;
 		};
@@ -214,6 +218,7 @@ namespace RNS {
 		// CBA TODO Analyze safety of using Inrerface references here
 		class ReverseEntry {
 		public:
+			ReverseEntry() {}
 			ReverseEntry(const Interface& receiving_interface, const Interface& outbound_interface, double timestamp) :
 				_receiving_interface(receiving_interface),
 				_outbound_interface(outbound_interface),
@@ -222,13 +227,14 @@ namespace RNS {
 			}
 		public:
 			Interface _receiving_interface = {Type::NONE};
-			const Interface _outbound_interface = {Type::NONE};
+			Interface _outbound_interface = {Type::NONE};
 			double _timestamp = 0;
 		};
 
 		// CBA TODO Analyze safety of using Inrerface references here
 		class PathRequestEntry {
 		public:
+			PathRequestEntry() {}
 			PathRequestEntry(const Bytes& destination_hash, double timeout, const Interface& requesting_interface) :
 				_destination_hash(destination_hash),
 				_timeout(timeout),
@@ -236,7 +242,7 @@ namespace RNS {
 			{
 			}
 		public:
-			const Bytes _destination_hash;
+			Bytes _destination_hash;
 			double _timeout = 0;
 			const Interface _requesting_interface = {Type::NONE};
 		};
@@ -256,9 +262,9 @@ namespace RNS {
 			{
 			}
 		public:
-			const Bytes _destination_hash;
+			Bytes _destination_hash;
 			double _timestamp = 0;
-			const Bytes _received_from;
+			Bytes _received_from;
 			uint8_t _hops = 0;
 			double _expires = 0;
 			std::set<Bytes> _random_blobs;
@@ -270,21 +276,29 @@ namespace RNS {
 		// CBA TODO Analyze safety of using Inrerface references here
 		class TunnelEntry {
 		public:
+			TunnelEntry() {}
 			TunnelEntry(const Bytes& tunnel_id, const Bytes& interface_hash, double expires) :
 				_tunnel_id(tunnel_id),
 				_interface_hash(interface_hash),
 				_expires(expires)
 			{
 			}
+			void clear() {
+				_tunnel_id.clear();
+				_interface_hash.clear();
+				_serialised_paths.clear();
+				_expires = 0;
+			}
 		public:
-			const Bytes _tunnel_id;
-			const Bytes _interface_hash;
+			Bytes _tunnel_id;
+			Bytes _interface_hash;
 			std::map<Bytes, DestinationEntry> _serialised_paths;
 			double _expires = 0;
 		};
 
 		class RateEntry {
 		public:
+			RateEntry() {}
 			RateEntry(double now) :
 				_last(now)
 			{
@@ -296,6 +310,230 @@ namespace RNS {
 			double _blocked_until = 0.0;
 			std::vector<double> _timestamps;
 		};
+
+		// Fixed-size pool structures for zero heap fragmentation
+		static constexpr size_t ANNOUNCE_TABLE_SIZE = 8;  // Reduced for testing
+		struct AnnounceTableSlot {
+			bool in_use = false;
+			Bytes destination_hash;
+			AnnounceEntry entry;
+			void clear() { in_use = false; destination_hash.clear(); entry = AnnounceEntry(); }
+		};
+		static AnnounceTableSlot _announce_table_pool[ANNOUNCE_TABLE_SIZE];
+		static AnnounceTableSlot* find_announce_table_slot(const Bytes& hash);
+		static AnnounceTableSlot* find_empty_announce_table_slot();
+		static size_t announce_table_count();
+
+		static constexpr size_t DESTINATION_TABLE_SIZE = 16;  // Reduced for testing
+		struct DestinationTableSlot {
+			bool in_use = false;
+			Bytes destination_hash;
+			DestinationEntry entry;
+			void clear() { in_use = false; destination_hash.clear(); entry = DestinationEntry(); }
+		};
+		static DestinationTableSlot _destination_table_pool[DESTINATION_TABLE_SIZE];
+		static DestinationTableSlot* find_destination_table_slot(const Bytes& hash);
+		static DestinationTableSlot* find_empty_destination_table_slot();
+		static size_t destination_table_count();
+
+		static constexpr size_t REVERSE_TABLE_SIZE = 8;  // Reduced for testing
+		struct ReverseTableSlot {
+			bool in_use = false;
+			Bytes packet_hash;
+			ReverseEntry entry;
+			void clear() { in_use = false; packet_hash.clear(); entry = ReverseEntry(); }
+		};
+		static ReverseTableSlot _reverse_table_pool[REVERSE_TABLE_SIZE];
+		static ReverseTableSlot* find_reverse_table_slot(const Bytes& hash);
+		static ReverseTableSlot* find_empty_reverse_table_slot();
+		static size_t reverse_table_count();
+
+		static constexpr size_t LINK_TABLE_SIZE = 8;  // Reduced for testing
+		struct LinkTableSlot {
+			bool in_use = false;
+			Bytes link_id;
+			LinkEntry entry;
+			void clear() { in_use = false; link_id.clear(); entry = LinkEntry(); }
+		};
+		static LinkTableSlot _link_table_pool[LINK_TABLE_SIZE];
+		static LinkTableSlot* find_link_table_slot(const Bytes& id);
+		static LinkTableSlot* find_empty_link_table_slot();
+		static size_t link_table_count();
+
+		static constexpr size_t HELD_ANNOUNCES_SIZE = 8;  // Reduced for testing
+		struct HeldAnnounceSlot {
+			bool in_use = false;
+			Bytes destination_hash;
+			AnnounceEntry entry;
+			void clear() { in_use = false; destination_hash.clear(); entry = AnnounceEntry(); }
+		};
+		static HeldAnnounceSlot _held_announces_pool[HELD_ANNOUNCES_SIZE];
+		static HeldAnnounceSlot* find_held_announce_slot(const Bytes& hash);
+		static HeldAnnounceSlot* find_empty_held_announce_slot();
+		static size_t held_announces_count();
+
+		static constexpr size_t TUNNELS_SIZE = 16;
+		struct TunnelSlot {
+			bool in_use = false;
+			Bytes tunnel_id;
+			TunnelEntry entry;
+			void clear() { in_use = false; tunnel_id.clear(); entry.clear(); }
+		};
+		static TunnelSlot _tunnels_pool[TUNNELS_SIZE];
+		static TunnelSlot* find_tunnel_slot(const Bytes& id);
+		static TunnelSlot* find_empty_tunnel_slot();
+		static size_t tunnels_count();
+
+		static constexpr size_t ANNOUNCE_RATE_TABLE_SIZE = 8;  // Reduced for testing
+		struct RateTableSlot {
+			bool in_use = false;
+			Bytes destination_hash;
+			RateEntry entry;
+			void clear() { in_use = false; destination_hash.clear(); entry = RateEntry(); }
+		};
+		static RateTableSlot _announce_rate_table_pool[ANNOUNCE_RATE_TABLE_SIZE];
+		static RateTableSlot* find_rate_table_slot(const Bytes& hash);
+		static RateTableSlot* find_empty_rate_table_slot();
+		static size_t announce_rate_table_count();
+
+		static constexpr size_t PATH_REQUESTS_SIZE = 8;  // Reduced for testing
+		struct PathRequestSlot {
+			bool in_use = false;
+			Bytes destination_hash;
+			double timestamp = 0;
+			void clear() { in_use = false; destination_hash.clear(); timestamp = 0; }
+		};
+		static PathRequestSlot _path_requests_pool[PATH_REQUESTS_SIZE];
+		static PathRequestSlot* find_path_request_slot(const Bytes& hash);
+		static PathRequestSlot* find_empty_path_request_slot();
+		static size_t path_requests_count();
+
+		// Receipts fixed array
+		static constexpr size_t RECEIPTS_SIZE = 8;  // Reduced for testing
+		static PacketReceipt _receipts_pool[RECEIPTS_SIZE];
+		static size_t _receipts_count;
+		static bool receipts_add(const PacketReceipt& receipt);
+		static bool receipts_remove(const PacketReceipt& receipt);
+
+		// Packet hashlist circular buffer (replaces std::set<Bytes>)
+		static constexpr size_t PACKET_HASHLIST_SIZE = 64;  // Reduced for testing
+		static Bytes _packet_hashlist_buffer[PACKET_HASHLIST_SIZE];
+		static size_t _packet_hashlist_head;
+		static size_t _packet_hashlist_count;
+		static bool packet_hashlist_contains(const Bytes& hash);
+		static void packet_hashlist_add(const Bytes& hash);
+		static void packet_hashlist_clear();
+
+		// Discovery PR tags circular buffer (replaces std::set<Bytes>)
+		static constexpr size_t DISCOVERY_PR_TAGS_SIZE = 32;
+		static Bytes _discovery_pr_tags_buffer[DISCOVERY_PR_TAGS_SIZE];
+		static size_t _discovery_pr_tags_head;
+		static size_t _discovery_pr_tags_count;
+		static bool discovery_pr_tags_contains(const Bytes& tag);
+		static void discovery_pr_tags_add(const Bytes& tag);
+
+		// Pending links fixed array (replaces std::set<Link>)
+		static constexpr size_t PENDING_LINKS_SIZE = 4;  // Reduced for testing
+		static Link _pending_links_pool[PENDING_LINKS_SIZE];
+		static size_t _pending_links_count;
+		static bool pending_links_contains(const Link& link);
+		static bool pending_links_add(const Link& link);
+		static bool pending_links_remove(const Link& link);
+
+		// Active links fixed array (replaces std::set<Link>)
+		static constexpr size_t ACTIVE_LINKS_SIZE = 4;  // Reduced for testing
+		static Link _active_links_pool[ACTIVE_LINKS_SIZE];
+		static size_t _active_links_count;
+		static bool active_links_contains(const Link& link);
+		static bool active_links_add(const Link& link);
+		static bool active_links_remove(const Link& link);
+
+		// Control hashes fixed array (replaces std::set<Bytes>)
+		static constexpr size_t CONTROL_HASHES_SIZE = 8;
+		static Bytes _control_hashes_pool[CONTROL_HASHES_SIZE];
+		static size_t _control_hashes_count;
+		static bool control_hashes_contains(const Bytes& hash);
+		static bool control_hashes_add(const Bytes& hash);
+		static size_t control_hashes_size();
+
+		// Control destinations fixed array (replaces std::set<Destination>)
+		static constexpr size_t CONTROL_DESTINATIONS_SIZE = 8;
+		static Destination _control_destinations_pool[CONTROL_DESTINATIONS_SIZE];
+		static size_t _control_destinations_count;
+		static bool control_destinations_add(const Destination& dest);
+		static size_t control_destinations_size();
+
+		// Announce handlers fixed array (replaces std::set<HAnnounceHandler>)
+		static constexpr size_t ANNOUNCE_HANDLERS_SIZE = 8;
+		static HAnnounceHandler _announce_handlers_pool[ANNOUNCE_HANDLERS_SIZE];
+		static size_t _announce_handlers_count;
+		static bool announce_handlers_add(HAnnounceHandler handler);
+		static bool announce_handlers_remove(HAnnounceHandler handler);
+		static size_t announce_handlers_size();
+
+		// Local client interfaces fixed array (replaces std::set<reference_wrapper<Interface>>)
+		static constexpr size_t LOCAL_CLIENT_INTERFACES_SIZE = 8;
+		static const Interface* _local_client_interfaces_pool[LOCAL_CLIENT_INTERFACES_SIZE];
+		static size_t _local_client_interfaces_count;
+		static bool local_client_interfaces_contains(const Interface& iface);
+		static bool local_client_interfaces_add(const Interface& iface);
+		static bool local_client_interfaces_remove(const Interface& iface);
+		static size_t local_client_interfaces_size();
+
+		// Interfaces fixed array (replaces std::map<Bytes, Interface&>)
+		struct InterfaceSlot {
+			bool in_use = false;
+			Bytes hash;
+			Interface* interface_ptr = nullptr;
+			void clear() { in_use = false; hash.clear(); interface_ptr = nullptr; }
+		};
+		static constexpr size_t INTERFACES_POOL_SIZE = 8;
+		static InterfaceSlot _interfaces_pool[INTERFACES_POOL_SIZE];
+		static InterfaceSlot* find_interface_slot(const Bytes& hash);
+		static InterfaceSlot* find_empty_interface_slot();
+		static size_t interfaces_count();
+		static bool interfaces_contains(const Bytes& hash);
+
+		// Destinations fixed array (replaces std::map<Bytes, Destination>)
+		struct DestinationSlot {
+			bool in_use = false;
+			Bytes hash;
+			Destination destination;
+			void clear() { in_use = false; hash.clear(); destination = Destination(); }
+		};
+		static constexpr size_t DESTINATIONS_POOL_SIZE = 32;
+		static DestinationSlot _destinations_pool[DESTINATIONS_POOL_SIZE];
+		static DestinationSlot* find_destination_slot(const Bytes& hash);
+		static DestinationSlot* find_empty_destination_slot();
+		static size_t destinations_count();
+		static bool destinations_contains(const Bytes& hash);
+
+		// Discovery path requests fixed array (replaces std::map<Bytes, PathRequestEntry>)
+		struct DiscoveryPathRequestSlot {
+			bool in_use = false;
+			Bytes destination_hash;  // key
+			double timeout = 0;
+			Interface requesting_interface{Type::NONE};
+			void clear() { in_use = false; destination_hash.clear(); timeout = 0; requesting_interface = Interface(Type::NONE); }
+		};
+		static constexpr size_t DISCOVERY_PATH_REQUESTS_SIZE = 32;
+		static DiscoveryPathRequestSlot _discovery_path_requests_pool[DISCOVERY_PATH_REQUESTS_SIZE];
+		static DiscoveryPathRequestSlot* find_discovery_path_request_slot(const Bytes& hash);
+		static DiscoveryPathRequestSlot* find_empty_discovery_path_request_slot();
+		static size_t discovery_path_requests_count();
+
+		// Pending local path requests fixed array (replaces std::map<Bytes, const Interface&>)
+		struct PendingLocalPathRequestSlot {
+			bool in_use = false;
+			Bytes destination_hash;  // key
+			Interface attached_interface{Type::NONE};
+			void clear() { in_use = false; destination_hash.clear(); attached_interface = Interface(Type::NONE); }
+		};
+		static constexpr size_t PENDING_LOCAL_PATH_REQUESTS_SIZE = 32;
+		static PendingLocalPathRequestSlot _pending_local_path_requests_pool[PENDING_LOCAL_PATH_REQUESTS_SIZE];
+		static PendingLocalPathRequestSlot* find_pending_local_path_request_slot(const Bytes& hash);
+		static PendingLocalPathRequestSlot* find_empty_pending_local_path_request_slot();
+		static size_t pending_local_path_requests_count();
 
 	public:
 		static void start(const Reticulum& reticulum_instance);
@@ -312,7 +550,11 @@ namespace RNS {
 		static void handle_tunnel(const Bytes& tunnel_id, const Interface& interface);
 		static void register_interface(Interface& interface);
 		static void deregister_interface(const Interface& interface);
+#if defined(INTERFACES_POOL)
+		static std::map<Bytes, Interface*> get_interfaces();
+#else
 		inline static const std::map<Bytes, Interface&> get_interfaces() { return _interfaces; }
+#endif
 		static void register_destination(Destination& destination);
 		static void deregister_destination(const Destination& destination);
 		static void register_link(Link& link);
@@ -386,9 +628,10 @@ namespace RNS {
 		// CBA TEST
 		static inline void identity(Identity& identity) { _identity = identity; }
 
-		inline static const std::map<Bytes, DestinationEntry>& get_destination_table() { return _destination_table; }
-		inline static const std::map<Bytes, RateEntry>& get_announce_rate_table() { return _announce_rate_table; }
-		inline static const std::map<Bytes, LinkEntry>& get_link_table() { return _link_table; }
+		// Build maps from pools on demand (returns by value since pools replaced the maps)
+		static std::map<Bytes, DestinationEntry> get_destination_table();
+		static std::map<Bytes, RateEntry> get_announce_rate_table();
+		static std::map<Bytes, LinkEntry> get_link_table();
 
 	private:
 		// CBA MUST use references to interfaces here in order for virtul overrides for send/receive to work
@@ -402,11 +645,15 @@ namespace RNS {
 #elif defined(INTERFACES_MAP)
 		// map is sorted, can use find
 		static std::map<Bytes, Interface&> _interfaces;           // All active interfaces
+#elif defined(INTERFACES_POOL)
+		// Fixed pool - declared in private section above as _interfaces_pool
 #endif
 #if defined(DESTINATIONS_SET)
 		static std::set<Destination> _destinations;           // All active destinations
 #elif defined(DESTINATIONS_MAP)
 		static std::map<Bytes, Destination> _destinations;           // All active destinations
+#elif defined(DESTINATIONS_POOL)
+		// Fixed pool - declarations below
 #endif
 		// CBA TODO: Reconsider using std::set for enforcing uniqueness. Maybe consider std::map keyed on hash instead
 		static std::set<Link> _pending_links;           // Links that are being established
@@ -423,7 +670,7 @@ namespace RNS {
 		static std::map<Bytes, ReverseEntry> _reverse_table;           // A lookup table for storing packet hashes used to return proofs and replies
 		static std::map<Bytes, LinkEntry> _link_table;           // A lookup table containing hops for links
 		static std::map<Bytes, AnnounceEntry> _held_announces;           // A table containing temporarily held announce-table entries
-		static std::set<HAnnounceHandler> _announce_handlers;           // A table storing externally registered announce handlers
+		//static std::set<HAnnounceHandler> _announce_handlers;  // Replaced by fixed array
 		static std::map<Bytes, TunnelEntry> _tunnels;           // A table storing tunnels to other transport instances
 		static std::map<Bytes, RateEntry> _announce_rate_table;           // A table for keeping track of announce rates
 		static std::map<Bytes, double> _path_requests;           // A table for storing path request timestamps
@@ -433,14 +680,14 @@ namespace RNS {
 
 		// Transport control destinations are used
 		// for control purposes like path requests
-		static std::set<Destination> _control_destinations;
-		static std::set<Bytes> _control_hashes;
+		//static std::set<Destination> _control_destinations;  // Replaced by fixed array
+		//static std::set<Bytes> _control_hashes;  // Replaced by fixed array
 
 		// Interfaces for communicating with
 		// local clients connected to a shared
 		// Reticulum instance
 		//static std::set<Interface> _local_client_interfaces;
-		static std::set<std::reference_wrapper<const Interface>, std::less<const Interface>> _local_client_interfaces;
+		//static std::set<std::reference_wrapper<const Interface>, std::less<const Interface>> _local_client_interfaces;  // Replaced by fixed array
 
 		static std::map<Bytes, const Interface&> _pending_local_path_requests;
 

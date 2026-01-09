@@ -82,7 +82,7 @@ namespace RNS {
 		//void rpc_loop();
 		//void get_interface_stats() const;
 		const std::map<Bytes, Transport::DestinationEntry>& get_path_table() const;
-		const std::map<Bytes, Transport::RateEntry>& get_rate_table() const;
+		std::map<Bytes, Transport::RateEntry> get_rate_table() const;
 		bool drop_path(const Bytes& destination);
 		uint16_t drop_all_via(const Bytes& transport_hash);
 		void drop_announce_queues();

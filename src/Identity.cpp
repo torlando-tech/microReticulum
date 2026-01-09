@@ -20,12 +20,42 @@ using namespace RNS::Type::Identity;
 using namespace RNS::Cryptography;
 using namespace RNS::Utilities;
 
-/*static*/ std::map<Bytes, Identity::IdentityEntry> Identity::_known_destinations;
+// Fixed pool for known destinations (zero fragmentation)
+/*static*/ Identity::KnownDestinationSlot Identity::_known_destinations_pool[Identity::KNOWN_DESTINATIONS_SIZE];
 /*static*/ bool Identity::_saving_known_destinations = false;
 // CBA
 // CBA ACCUMULATES
 /*static*/ //uint16_t Identity::_known_destinations_maxsize = 100;
-/*static*/ uint16_t Identity::_known_destinations_maxsize = 2000;  // Increased for T-Deck PSRAM
+/*static*/ uint16_t Identity::_known_destinations_maxsize = 512;  // Now matches KNOWN_DESTINATIONS_SIZE
+
+// Helper functions for known destinations pool
+/*static*/ Identity::KnownDestinationSlot* Identity::find_known_destination_slot(const Bytes& hash) {
+	for (size_t i = 0; i < KNOWN_DESTINATIONS_SIZE; ++i) {
+		if (_known_destinations_pool[i].in_use && _known_destinations_pool[i].destination_hash == hash) {
+			return &_known_destinations_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+/*static*/ Identity::KnownDestinationSlot* Identity::find_empty_known_destination_slot() {
+	for (size_t i = 0; i < KNOWN_DESTINATIONS_SIZE; ++i) {
+		if (!_known_destinations_pool[i].in_use) {
+			return &_known_destinations_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+/*static*/ size_t Identity::known_destinations_count() {
+	size_t count = 0;
+	for (size_t i = 0; i < KNOWN_DESTINATIONS_SIZE; ++i) {
+		if (_known_destinations_pool[i].in_use) {
+			++count;
+		}
+	}
+	return count;
+}
 
 // Ratchet cache static members
 /*static*/ std::map<Bytes, Bytes> Identity::_known_ratchets;
@@ -201,15 +231,27 @@ Can be used to load previously created and saved identities into Reticulum.
 	else {
 		// Check if this is a new destination or updated app_data
 		bool should_save = false;
-		auto iter = _known_destinations.find(destination_hash);
-		if (iter == _known_destinations.end()) {
-			// New destination
-			_known_destinations.insert({destination_hash, {OS::time(), packet_hash, public_key, app_data}});
+		KnownDestinationSlot* slot = find_known_destination_slot(destination_hash);
+		if (slot == nullptr) {
+			// New destination - find empty slot
+			slot = find_empty_known_destination_slot();
+			if (slot == nullptr) {
+				// Pool is full - cull old entries first
+				cull_known_destinations();
+				slot = find_empty_known_destination_slot();
+				if (slot == nullptr) {
+					WARNING("Known destinations pool is full, cannot remember " + destination_hash.toHex());
+					return;
+				}
+			}
+			slot->in_use = true;
+			slot->destination_hash = destination_hash;
+			slot->entry = IdentityEntry(OS::time(), packet_hash, public_key, app_data);
 			should_save = true;
-		} else if (app_data && app_data.size() > 0 && iter->second._app_data != app_data) {
+		} else if (app_data && app_data.size() > 0 && slot->entry._app_data != app_data) {
 			// Update existing with new app_data
-			iter->second._app_data = app_data;
-			iter->second._timestamp = OS::time();
+			slot->entry._app_data = app_data;
+			slot->entry._timestamp = OS::time();
 			should_save = true;
 		}
 
@@ -228,10 +270,10 @@ Recall identity for a destination hash.
 */
 /*static*/ Identity Identity::recall(const Bytes& destination_hash) {
 	TRACE("Identity::recall...");
-	auto iter = _known_destinations.find(destination_hash);
-	if (iter != _known_destinations.end()) {
+	KnownDestinationSlot* slot = find_known_destination_slot(destination_hash);
+	if (slot != nullptr) {
 		TRACE("Identity::recall: Found identity entry for destination " + destination_hash.toHex());
-		const IdentityEntry& identity_data = (*iter).second;
+		const IdentityEntry& identity_data = slot->entry;
 		Identity identity(false);
 		identity.load_public_key(identity_data._public_key);
 		identity.app_data(identity_data._app_data);
@@ -260,10 +302,10 @@ Recall last heard app_data for a destination hash.
 */
 /*static*/ Bytes Identity::recall_app_data(const Bytes& destination_hash) {
 	TRACE("Identity::recall_app_data...");
-	auto iter = _known_destinations.find(destination_hash);
-	if (iter != _known_destinations.end()) {
+	KnownDestinationSlot* slot = find_known_destination_slot(destination_hash);
+	if (slot != nullptr) {
 		TRACE("Identity::recall_app_data: Found identity entry for destination " + destination_hash.toHex());
-		const IdentityEntry& identity_data = (*iter).second;
+		const IdentityEntry& identity_data = slot->entry;
 		return identity_data._app_data;
 	}
 	else {
@@ -294,20 +336,23 @@ Recall last heard app_data for a destination hash.
 		_saving_known_destinations = true;
 		double save_start = OS::time();
 
-		DEBUG("Saving " + std::to_string(_known_destinations.size()) + " known destinations to storage...");
+		size_t dest_count = known_destinations_count();
+		DEBUG("Saving " + std::to_string(dest_count) + " known destinations to storage...");
 
 		// Create JSON document
 		JsonDocument doc;
 		JsonArray destinations = doc["destinations"].to<JsonArray>();
 
-		for (const auto& [dest_hash, entry] : _known_destinations) {
+		for (size_t i = 0; i < KNOWN_DESTINATIONS_SIZE; ++i) {
+			if (!_known_destinations_pool[i].in_use) continue;
+			const KnownDestinationSlot& slot = _known_destinations_pool[i];
 			JsonObject dest = destinations.add<JsonObject>();
-			dest["hash"] = dest_hash.toHex();
-			dest["time"] = entry._timestamp;
-			dest["packet_hash"] = entry._packet_hash.toHex();
-			dest["public_key"] = entry._public_key.toHex();
-			if (entry._app_data && entry._app_data.size() > 0) {
-				dest["app_data"] = entry._app_data.toHex();
+			dest["hash"] = slot.destination_hash.toHex();
+			dest["time"] = slot.entry._timestamp;
+			dest["packet_hash"] = slot.entry._packet_hash.toHex();
+			dest["public_key"] = slot.entry._public_key.toHex();
+			if (slot.entry._app_data && slot.entry._app_data.size() > 0) {
+				dest["app_data"] = slot.entry._app_data.toHex();
 			}
 		}
 
@@ -331,7 +376,7 @@ Recall last heard app_data for a destination hash.
 			time_str = std::to_string(OS::round(save_time, 1)) + " s";
 		}
 
-		DEBUG("Saved " + std::to_string(_known_destinations.size()) + " known destinations in " + time_str);
+		DEBUG("Saved " + std::to_string(dest_count) + " known destinations in " + time_str);
 
 		success = true;
 	}
@@ -404,8 +449,15 @@ Recall last heard app_data for a destination hash.
 			}
 
 			// Add to known destinations (don't overwrite existing)
-			if (_known_destinations.find(dest_hash) == _known_destinations.end()) {
-				_known_destinations.insert({dest_hash, entry});
+			if (find_known_destination_slot(dest_hash) == nullptr) {
+				KnownDestinationSlot* slot = find_empty_known_destination_slot();
+				if (slot == nullptr) {
+					WARNING("Known destinations pool is full while loading, skipping remaining entries");
+					break;
+				}
+				slot->in_use = true;
+				slot->destination_hash = dest_hash;
+				slot->entry = entry;
 				loaded_count++;
 			}
 		}
@@ -418,32 +470,33 @@ Recall last heard app_data for a destination hash.
 }
 
 /*static*/ void Identity::cull_known_destinations() {
-	TRACE("Transport::cull_path_table()");
-	if (_known_destinations.size() > _known_destinations_maxsize) {
+	TRACE("Identity::cull_known_destinations()");
+	size_t current_count = known_destinations_count();
+	if (current_count > _known_destinations_maxsize) {
 		// prune by age
 		uint16_t count = 0;
-		std::vector<std::pair<Bytes, IdentityEntry>> sorted_pairs;
-		// Copy key/value pairs from map into vector
-		std::for_each(_known_destinations.begin(), _known_destinations.end(), [&](const std::pair<const Bytes, IdentityEntry>& ref) {
-			sorted_pairs.push_back(ref);
-		});
-		// Sort vector using specified comparator
-		std::sort(sorted_pairs.begin(), sorted_pairs.end(), [](const std::pair<Bytes, IdentityEntry> &left, const std::pair<Bytes, IdentityEntry> &right) {
-			return left.second._timestamp < right.second._timestamp;
-		});
-		// Iterate vector of sorted values
-		for (auto& [destination_hash, identity_entry] : sorted_pairs) {
-			TRACE("Transport::cull_path_table: Removing destination " + destination_hash.toHex() + " from known destinations");
-			// Remove destination from known destinations
-			if (_known_destinations.erase(destination_hash) < 1) {
-				WARNING("Failed to remove destination " + destination_hash.toHex() + " from known destinations");
+		// Build vector of pointers to in-use slots for sorting
+		std::vector<KnownDestinationSlot*> sorted_slots;
+		sorted_slots.reserve(current_count);
+		for (size_t i = 0; i < KNOWN_DESTINATIONS_SIZE; ++i) {
+			if (_known_destinations_pool[i].in_use) {
+				sorted_slots.push_back(&_known_destinations_pool[i]);
 			}
+		}
+		// Sort by timestamp (oldest first)
+		std::sort(sorted_slots.begin(), sorted_slots.end(), [](const KnownDestinationSlot* left, const KnownDestinationSlot* right) {
+			return left->entry._timestamp < right->entry._timestamp;
+		});
+		// Remove oldest entries until we're under the limit
+		for (KnownDestinationSlot* slot : sorted_slots) {
+			TRACE("Identity::cull_known_destinations: Removing destination " + slot->destination_hash.toHex() + " from known destinations");
+			slot->clear();
 			++count;
-			if (_known_destinations.size() <= _known_destinations_maxsize) {
+			if (known_destinations_count() <= _known_destinations_maxsize) {
 				break;
 			}
 		}
-		DEBUG("Removed " + std::to_string(count) + " path(s) from known destinations");
+		DEBUG("Removed " + std::to_string(count) + " destination(s) from known destinations");
 	}
 }
 
@@ -521,9 +574,9 @@ Recall last heard app_data for a destination hash.
 				if (packet.destination_hash() == expected_hash) {
 					// Check if we already have a public key for this destination
 					// and make sure the public key is not different.
-					auto iter = _known_destinations.find(packet.destination_hash());
-					if (iter != _known_destinations.end()) {
-						IdentityEntry& identity_entry = (*iter).second;
+					KnownDestinationSlot* slot = find_known_destination_slot(packet.destination_hash());
+					if (slot != nullptr) {
+						IdentityEntry& identity_entry = slot->entry;
 						if (public_key != identity_entry._public_key) {
 							// In reality, this should never occur, but in the odd case
 							// that someone manages a hash collision, we reject the announce.

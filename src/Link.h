@@ -139,13 +139,15 @@ namespace RNS {
 		static RNS::Type::Link::link_mode MODE_DEFAULT;
 
 	public:
+		// Lightweight default constructor for static array allocation
+		Link() {}
 		Link(Type::NoneConstructor none) {
 			MEM("Link NONE object created");
 		}
 		Link(const Link& link) : _object(link._object) {
 			MEM("Link object copy created");
 		}
-		Link(const Destination& destination = {Type::NONE}, Callbacks::established established_callback = nullptr, Callbacks::closed closed_callback = nullptr, const Destination& owner = {Type::NONE}, const Bytes& peer_pub_bytes = {Bytes::NONE}, const Bytes& peer_sig_pub_bytes = {Bytes::NONE}, RNS::Type::Link::link_mode mode = MODE_DEFAULT);
+		Link(const Destination& destination, Callbacks::established established_callback = nullptr, Callbacks::closed closed_callback = nullptr, const Destination& owner = {Type::NONE}, const Bytes& peer_pub_bytes = {Bytes::NONE}, const Bytes& peer_sig_pub_bytes = {Bytes::NONE}, RNS::Type::Link::link_mode mode = MODE_DEFAULT);
 		//Link(const Destination& destination = {Type::NONE}, Callbacks::established established_callback = nullptr, Callbacks::closed closed_callback = nullptr, const Destination& owner = {Type::NONE}, const Bytes& peer_pub_bytes = {Bytes::NONE}, const Bytes& peer_sig_pub_bytes = {Bytes::NONE}, RNS::Type::Link::link_mode mode = MODE_DEFAULT);
 		virtual ~Link(){
 			MEM("Link object destroyed");

@@ -219,7 +219,7 @@ void Reticulum::loop() {
 
 		// Perform interface processing
 		for (auto& [hash, interface] : Transport::get_interfaces()) {
-			interface.loop();
+			interface->loop();
 		}
 
 		// Perform Filesystem processing
@@ -418,7 +418,7 @@ const std::map<Bytes, Transport::DestinationEntry>& Reticulum::get_path_table() 
 	return Transport::get_destination_table();
 }
 
-const std::map<Bytes, Transport::RateEntry>& Reticulum::get_rate_table() const {
+std::map<Bytes, Transport::RateEntry> Reticulum::get_rate_table() const {
 /*
 	rate_table = []
 	for dst_hash in Transport::announce_rate_table:

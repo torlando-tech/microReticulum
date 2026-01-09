@@ -73,6 +73,8 @@ namespace RNS {
 		using PathResponse = std::pair<double, Bytes>;
 
 	public:
+		// Lightweight default constructor for static array allocation
+		Destination() {}
 		Destination(Type::NoneConstructor none) {
 			MEM("Destination NONE object created, this: " + std::to_string((uintptr_t)this));
 		}
