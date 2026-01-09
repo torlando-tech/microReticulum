@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #ifdef ARDUINO
+#include <Esp.h>  // For ESP.getMaxAllocHeap()
 // ESP32 lwIP headers for raw socket support
 #include <lwip/sockets.h>
 #include <lwip/netdb.h>
@@ -202,8 +203,20 @@ void AutoInterface::loop() {
 
     // Send periodic discovery announce
     if (now - _last_announce >= ANNOUNCE_INTERVAL) {
+#ifdef ARDUINO
+        // Skip announce if memory is too low - prevents fragmentation
+        uint32_t max_block = ESP.getMaxAllocHeap();
+        if (max_block < 15000) {
+            Serial.printf("[AUTO] Skipping announce - low memory (max_block=%u)\n", max_block);
+            _last_announce = now;  // Still update timer to avoid tight loop
+        } else {
+            send_announce();
+            _last_announce = now;
+        }
+#else
         send_announce();
         _last_announce = now;
+#endif
     }
 
     // Process incoming discovery packets

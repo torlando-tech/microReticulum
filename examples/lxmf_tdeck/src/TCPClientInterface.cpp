@@ -270,8 +270,14 @@ void TCPClientInterface::handle_disconnect() {
 #endif
             if (now - _last_connect_attempt >= RECONNECT_WAIT_MS) {
                 _last_connect_attempt = now;
-                DEBUG("TCPClientInterface: Attempting reconnection...");
-                connect();
+                // Skip reconnection if memory is too low - prevents fragmentation
+                uint32_t max_block = ESP.getMaxAllocHeap();
+                if (max_block < 20000) {
+                    Serial.printf("[TCP] Skipping reconnect - low memory (max_block=%u)\n", max_block);
+                } else {
+                    DEBUG("TCPClientInterface: Attempting reconnection...");
+                    connect();
+                }
             }
         }
         return;

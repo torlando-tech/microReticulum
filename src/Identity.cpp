@@ -14,6 +14,9 @@
 #include <ArduinoJson.h>
 #include <algorithm>
 #include <string.h>
+#ifdef ARDUINO
+#include <Esp.h>  // For ESP.getMaxAllocHeap()
+#endif
 
 using namespace RNS;
 using namespace RNS::Type::Identity;
@@ -334,6 +337,17 @@ Recall last heard app_data for a destination hash.
 		}
 
 		_saving_known_destinations = true;
+
+#ifdef ARDUINO
+		// Skip save if memory is too fragmented - needs ~12KB contiguous for JSON serialization
+		uint32_t max_block = ESP.getMaxAllocHeap();
+		if (max_block < 15000) {
+			WARNINGF("Identity: Skipping save - low memory (max_block=%u)", max_block);
+			_saving_known_destinations = false;
+			return false;
+		}
+#endif
+
 		double save_start = OS::time();
 
 		size_t dest_count = known_destinations_count();
