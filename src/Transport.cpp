@@ -490,6 +490,14 @@ using namespace RNS::Utilities;
 	return oldest;
 }
 
+/*static*/ size_t Transport::path_requests_count() {
+	size_t count = 0;
+	for (size_t i = 0; i < PATH_REQUESTS_SIZE; i++) {
+		if (_path_requests_pool[i].in_use) count++;
+	}
+	return count;
+}
+
 // Announce rate table pool helper functions
 /*static*/ Transport::RateTableSlot* Transport::find_rate_table_slot(const Bytes& hash) {
 	for (size_t i = 0; i < ANNOUNCE_RATE_TABLE_SIZE; i++) {
@@ -521,6 +529,14 @@ using namespace RNS::Utilities;
 		return oldest;
 	}
 	return &_announce_rate_table_pool[0];
+}
+
+/*static*/ size_t Transport::announce_rate_table_count() {
+	size_t count = 0;
+	for (size_t i = 0; i < ANNOUNCE_RATE_TABLE_SIZE; i++) {
+		if (_announce_rate_table_pool[i].in_use) count++;
+	}
+	return count;
 }
 
 // Announce table pool helper functions

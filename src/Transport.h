@@ -414,6 +414,7 @@ namespace RNS {
 		static size_t _receipts_count;
 		static bool receipts_add(const PacketReceipt& receipt);
 		static bool receipts_remove(const PacketReceipt& receipt);
+		static inline size_t receipts_count() { return _receipts_count; }
 
 		// Packet hashlist circular buffer (replaces std::set<Bytes>)
 		static constexpr size_t PACKET_HASHLIST_SIZE = 64;  // Reduced for testing
@@ -423,6 +424,7 @@ namespace RNS {
 		static bool packet_hashlist_contains(const Bytes& hash);
 		static void packet_hashlist_add(const Bytes& hash);
 		static void packet_hashlist_clear();
+		static inline size_t packet_hashlist_count() { return _packet_hashlist_count; }
 
 		// Discovery PR tags circular buffer (replaces std::set<Bytes>)
 		static constexpr size_t DISCOVERY_PR_TAGS_SIZE = 32;
@@ -439,6 +441,7 @@ namespace RNS {
 		static bool pending_links_contains(const Link& link);
 		static bool pending_links_add(const Link& link);
 		static bool pending_links_remove(const Link& link);
+		static inline size_t pending_links_count() { return _pending_links_count; }
 
 		// Active links fixed array (replaces std::set<Link>)
 		static constexpr size_t ACTIVE_LINKS_SIZE = 4;  // Reduced for testing
@@ -447,6 +450,7 @@ namespace RNS {
 		static bool active_links_contains(const Link& link);
 		static bool active_links_add(const Link& link);
 		static bool active_links_remove(const Link& link);
+		static inline size_t active_links_count() { return _active_links_count; }
 
 		// Control hashes fixed array (replaces std::set<Bytes>)
 		static constexpr size_t CONTROL_HASHES_SIZE = 8;

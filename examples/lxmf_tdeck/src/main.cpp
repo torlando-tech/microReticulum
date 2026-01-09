@@ -602,6 +602,7 @@ void setup_reticulum() {
     }
 
     // Add BLE Mesh interface (if enabled)
+    // Note: Bluedroid BLE stack consumes ~60KB+ and causes memory pressure
     if (app_settings.ble_enabled) {
         INFO("Initializing BLE Mesh interface...");
 
@@ -1253,6 +1254,22 @@ void loop() {
         // Threshold warnings
         if (free_heap < 20000) {
             Serial.println("[HEAP] CRITICAL: Free heap below 20KB!");
+            // Print Transport table sizes for debugging
+            Serial.printf("[TABLES] ann=%zu dest=%zu rev=%zu link=%zu held=%zu rate=%zu path=%zu\n",
+                RNS::Transport::announce_table_count(),
+                RNS::Transport::destination_table_count(),
+                RNS::Transport::reverse_table_count(),
+                RNS::Transport::link_table_count(),
+                RNS::Transport::held_announces_count(),
+                RNS::Transport::announce_rate_table_count(),
+                RNS::Transport::path_requests_count());
+            Serial.printf("[TABLES] pend_link=%zu act_link=%zu rcpt=%zu pkt_hash=%zu iface=%zu dest_pool=%zu\n",
+                RNS::Transport::pending_links_count(),
+                RNS::Transport::active_links_count(),
+                RNS::Transport::receipts_count(),
+                RNS::Transport::packet_hashlist_count(),
+                RNS::Transport::interfaces_count(),
+                RNS::Transport::destinations_count());
         } else if (free_heap < 50000) {
             Serial.println("[HEAP] WARNING: Free heap below 50KB");
         }
