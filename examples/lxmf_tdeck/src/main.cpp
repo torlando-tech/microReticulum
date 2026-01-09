@@ -602,8 +602,9 @@ void setup_reticulum() {
     }
 
     // Add BLE Mesh interface (if enabled)
-    // Note: Bluedroid BLE stack consumes ~60KB+ and causes memory pressure
-    if (app_settings.ble_enabled) {
+    // DISABLED: Bluedroid BLE stack consumes ~60KB+ and causes memory exhaustion
+    // TODO: Switch to NimBLE or fix Bluedroid memory issues
+    if (false /* app_settings.ble_enabled */) {
         INFO("Initializing BLE Mesh interface...");
 
         ble_interface_impl = new BLEInterface("BLE");
