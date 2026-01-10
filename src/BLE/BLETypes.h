@@ -310,6 +310,7 @@ struct ScanResult {
     Bytes advertising_data;
     Bytes scan_response_data;
     bool has_reticulum_service = false;  // Pre-filtered for our service UUID
+    Bytes identity_prefix;               // First 3 bytes of identity from "RNS-xxxxxx" name (Protocol v2.2)
 };
 
 /**

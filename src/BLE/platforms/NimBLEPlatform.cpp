@@ -1332,6 +1332,24 @@ void NimBLEPlatform::setIdentityData(const Bytes& identity) {
         _identity_char->setValue(identity.data(), identity.size());
         DEBUG("NimBLEPlatform: Identity data set");
     }
+
+    // Update device name to include identity prefix (Protocol v2.2)
+    // Format: "RNS-" + first 3 bytes of identity as hex (6 chars)
+    // This allows peers to recognize us across MAC rotations
+    if (identity.size() >= 3 && _advertising_obj) {
+        char name[11];  // "RNS-" (4) + 6 hex chars + null
+        snprintf(name, sizeof(name), "RNS-%02x%02x%02x",
+                 identity.data()[0], identity.data()[1], identity.data()[2]);
+
+        _advertising_obj->setName(name);
+        DEBUG("NimBLEPlatform: Updated advertised name to " + std::string(name));
+
+        // Restart advertising if currently active to apply new name
+        if (isAdvertising()) {
+            stopAdvertising();
+            startAdvertising();
+        }
+    }
 }
 
 //=============================================================================
@@ -1749,6 +1767,30 @@ void NimBLEPlatform::onResult(const NimBLEAdvertisedDevice* advertisedDevice) {
         result.rssi = advertisedDevice->getRSSI();
         result.connectable = advertisedDevice->isConnectable();
         result.has_reticulum_service = true;
+
+        // Extract identity prefix from device name (Protocol v2.2)
+        // Format: "RNS-xxxxxx" where xxxxxx is 6 hex chars (3 bytes of identity)
+        std::string name = advertisedDevice->getName();
+        if (name.size() >= 10 && name.substr(0, 4) == "RNS-") {
+            std::string hexPart = name.substr(4, 6);
+            if (hexPart.size() == 6) {
+                // Parse hex to bytes
+                uint8_t prefix[3];
+                bool valid = true;
+                for (int i = 0; i < 3 && valid; i++) {
+                    unsigned int val;
+                    if (sscanf(hexPart.c_str() + i*2, "%02x", &val) == 1) {
+                        prefix[i] = static_cast<uint8_t>(val);
+                    } else {
+                        valid = false;
+                    }
+                }
+                if (valid) {
+                    result.identity_prefix = Bytes(prefix, 3);
+                    DEBUG("NimBLEPlatform: Extracted identity prefix from name: " + hexPart);
+                }
+            }
+        }
 
         _on_scan_result(result);
     }

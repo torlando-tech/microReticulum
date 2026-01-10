@@ -450,8 +450,26 @@ void BLEInterface::onScanResult(const ScanResult& result) {
         return;
     }
 
+    Bytes mac = result.address.toBytes();
+
+    // Check if identity prefix suggests this is a known peer at a new MAC (rotation)
+    if (result.identity_prefix.size() >= 3) {
+        Bytes known_identity = _identity_manager.findIdentityByPrefix(result.identity_prefix);
+        if (known_identity.size() == Limits::IDENTITY_SIZE) {
+            Bytes old_mac = _identity_manager.getMacForIdentity(known_identity);
+            if (old_mac.size() > 0 && old_mac != mac) {
+                // MAC rotation detected! Update mapping
+                INFO("BLEInterface: MAC rotation detected for identity " +
+                     known_identity.toHex().substr(0, 8) + "...: " +
+                     BLEAddress(old_mac.data()).toString() + " -> " +
+                     result.address.toString());
+                _identity_manager.updateMacForIdentity(known_identity, mac);
+            }
+        }
+    }
+
     // Add to peer manager with address type
-    _peer_manager.addDiscoveredPeer(result.address.toBytes(), result.rssi, result.address.type);
+    _peer_manager.addDiscoveredPeer(mac, result.rssi, result.address.type);
 
     INFO("BLEInterface: Discovered Reticulum peer " + result.address.toString() +
          " type=" + std::to_string(result.address.type) +

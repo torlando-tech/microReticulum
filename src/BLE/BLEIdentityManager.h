@@ -187,6 +187,17 @@ public:
     bool hasIdentity(const Bytes& mac_address) const;
 
     /**
+     * @brief Find identity that matches a prefix (for MAC rotation detection)
+     *
+     * Used when scanning detects a device name with identity prefix (Protocol v2.2).
+     * If found, returns the full identity so we can recognize the rotated peer.
+     *
+     * @param prefix First N bytes of identity (typically 3 bytes from device name)
+     * @return Full identity bytes if found, empty otherwise
+     */
+    Bytes findIdentityByPrefix(const Bytes& prefix) const;
+
+    /**
      * @brief Update MAC address for a known identity (MAC rotation)
      *
      * @param identity The stable identity

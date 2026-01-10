@@ -260,6 +260,25 @@ bool BLEIdentityManager::hasIdentity(const Bytes& mac_address) const {
     return findAddressToIdentitySlot(mac) != nullptr;
 }
 
+Bytes BLEIdentityManager::findIdentityByPrefix(const Bytes& prefix) const {
+    if (prefix.size() == 0 || prefix.size() > Limits::IDENTITY_SIZE) {
+        return Bytes();
+    }
+
+    // Search through all known identities for one that starts with this prefix
+    for (size_t i = 0; i < ADDRESS_IDENTITY_POOL_SIZE; i++) {
+        if (_address_identity_pool[i].in_use) {
+            const Bytes& identity = _address_identity_pool[i].identity;
+            if (identity.size() >= prefix.size() &&
+                memcmp(identity.data(), prefix.data(), prefix.size()) == 0) {
+                return identity;
+            }
+        }
+    }
+
+    return Bytes();
+}
+
 void BLEIdentityManager::updateMacForIdentity(const Bytes& identity, const Bytes& new_mac) {
     if (identity.size() != Limits::IDENTITY_SIZE || new_mac.size() < Limits::MAC_SIZE) {
         return;
