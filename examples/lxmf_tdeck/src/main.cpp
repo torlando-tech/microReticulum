@@ -602,9 +602,9 @@ void setup_reticulum() {
     }
 
     // Add BLE Mesh interface (if enabled)
-    // DISABLED: Bluedroid BLE stack consumes ~60KB+ and causes memory exhaustion
-    // TODO: Switch to NimBLE or fix Bluedroid memory issues
-    if (false /* app_settings.ble_enabled */) {
+    // Uses NimBLE stack by default (env:tdeck), Bluedroid available via env:tdeck-bluedroid
+    // NimBLE uses ~100KB less internal RAM than Bluedroid
+    if (app_settings.ble_enabled) {
         INFO("Initializing BLE Mesh interface...");
 
         ble_interface_impl = new BLEInterface("BLE");
@@ -1251,6 +1251,13 @@ void loop() {
 
         Serial.printf("[HEAP] free=%u min=%u max_block=%u delta=%+d stack_hwm=%u\n",
             free_heap, min_heap, max_block, delta, stack_hwm);
+        // PSRAM diagnostics
+        uint32_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        uint32_t psram_total = ESP.getPsramSize();
+        uint32_t internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        uint32_t internal_max_block = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+        Serial.printf("[PSRAM] free=%u/%u  [INTERNAL] free=%u max_block=%u\n",
+            psram_free, psram_total, internal_free, internal_max_block);
         Serial.flush();
 
         // Threshold warnings
