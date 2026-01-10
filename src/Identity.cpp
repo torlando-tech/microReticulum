@@ -16,6 +16,7 @@
 #include <string.h>
 #ifdef ARDUINO
 #include <Esp.h>  // For ESP.getMaxAllocHeap()
+#include <esp_heap_caps.h>  // For heap_caps_malloc
 #endif
 
 using namespace RNS;
@@ -23,16 +24,52 @@ using namespace RNS::Type::Identity;
 using namespace RNS::Cryptography;
 using namespace RNS::Utilities;
 
-// Fixed pool for known destinations (zero fragmentation)
-/*static*/ Identity::KnownDestinationSlot Identity::_known_destinations_pool[Identity::KNOWN_DESTINATIONS_SIZE];
+// Pool for known destinations - allocated in PSRAM to free ~29KB internal RAM
+/*static*/ Identity::KnownDestinationSlot* Identity::_known_destinations_pool = nullptr;
 /*static*/ bool Identity::_saving_known_destinations = false;
-// CBA
-// CBA ACCUMULATES
-/*static*/ //uint16_t Identity::_known_destinations_maxsize = 100;
-/*static*/ uint16_t Identity::_known_destinations_maxsize = 192;  // Now matches KNOWN_DESTINATIONS_SIZE
+/*static*/ uint16_t Identity::_known_destinations_maxsize = 192;  // Matches KNOWN_DESTINATIONS_SIZE
+
+// Initialize known destinations pool in PSRAM
+/*static*/ bool Identity::init_known_destinations_pool() {
+	if (_known_destinations_pool != nullptr) {
+		return true;  // Already initialized
+	}
+
+	size_t pool_size = KNOWN_DESTINATIONS_SIZE * sizeof(KnownDestinationSlot);
+
+#ifdef ARDUINO
+	// Allocate from PSRAM (SPIRAM) with 8-byte alignment for double members
+	// Use heap_caps_aligned_alloc for proper alignment
+	_known_destinations_pool = (KnownDestinationSlot*)heap_caps_aligned_alloc(8, pool_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+	if (_known_destinations_pool) {
+		INFO("Identity: Known destinations pool allocated in PSRAM (" + std::to_string(pool_size) + " bytes)");
+	} else {
+		// Fall back to internal RAM with alignment
+		_known_destinations_pool = (KnownDestinationSlot*)heap_caps_aligned_alloc(8, pool_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+		if (_known_destinations_pool) {
+			WARNING("Identity: Known destinations pool allocated in internal RAM (PSRAM unavailable)");
+		}
+	}
+#else
+	_known_destinations_pool = new KnownDestinationSlot[KNOWN_DESTINATIONS_SIZE];
+#endif
+
+	if (!_known_destinations_pool) {
+		ERROR("Identity: Failed to allocate known destinations pool!");
+		return false;
+	}
+
+	// Initialize all slots using placement new to properly construct objects
+	for (size_t i = 0; i < KNOWN_DESTINATIONS_SIZE; ++i) {
+		new (&_known_destinations_pool[i]) KnownDestinationSlot();
+	}
+
+	return true;
+}
 
 // Helper functions for known destinations pool
 /*static*/ Identity::KnownDestinationSlot* Identity::find_known_destination_slot(const Bytes& hash) {
+	if (!_known_destinations_pool) return nullptr;
 	for (size_t i = 0; i < KNOWN_DESTINATIONS_SIZE; ++i) {
 		if (_known_destinations_pool[i].in_use && _known_destinations_pool[i].hash_equals(hash)) {
 			return &_known_destinations_pool[i];
@@ -42,6 +79,7 @@ using namespace RNS::Utilities;
 }
 
 /*static*/ Identity::KnownDestinationSlot* Identity::find_empty_known_destination_slot() {
+	if (!_known_destinations_pool) return nullptr;
 	for (size_t i = 0; i < KNOWN_DESTINATIONS_SIZE; ++i) {
 		if (!_known_destinations_pool[i].in_use) {
 			return &_known_destinations_pool[i];
@@ -51,6 +89,7 @@ using namespace RNS::Utilities;
 }
 
 /*static*/ size_t Identity::known_destinations_count() {
+	if (!_known_destinations_pool) return 0;
 	size_t count = 0;
 	for (size_t i = 0; i < KNOWN_DESTINATIONS_SIZE; ++i) {
 		if (_known_destinations_pool[i].in_use) {
@@ -345,6 +384,8 @@ Recall last heard app_data for a destination hash.
 }
 
 /*static*/ bool Identity::save_known_destinations() {
+	if (!_known_destinations_pool) return false;
+
 	// Binary format - much more memory efficient than JSON
 	// No heap allocation needed - writes directly from fixed arrays
 	const char* storage_path = "/known_dst.bin";
@@ -434,6 +475,11 @@ Recall last heard app_data for a destination hash.
 }
 
 /*static*/ void Identity::load_known_destinations() {
+	if (!_known_destinations_pool) {
+		ERROR("Cannot load known destinations - pool not initialized");
+		return;
+	}
+
 	// Binary format - much more memory efficient than JSON
 	const char* storage_path = "/known_dst.bin";
 
@@ -537,6 +583,7 @@ Recall last heard app_data for a destination hash.
 }
 
 /*static*/ void Identity::cull_known_destinations() {
+	if (!_known_destinations_pool) return;
 	TRACE("Identity::cull_known_destinations()");
 	size_t current_count = known_destinations_count();
 	if (current_count > _known_destinations_maxsize) {

@@ -200,6 +200,9 @@ void Reticulum::start() {
 	INFO("Total memory: " + std::to_string(OS::heap_size()));
 	INFO("Total flash: " + std::to_string(OS::storage_size()));
 
+	// Initialize known destinations pool in PSRAM (frees ~29KB internal RAM)
+	Identity::init_known_destinations_pool();
+
 	// Load known destinations (for display names, etc.)
 	Identity::load_known_destinations();
 

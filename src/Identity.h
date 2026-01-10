@@ -87,12 +87,14 @@ namespace RNS {
 				entry = IdentityEntry();
 			}
 		};
-		static KnownDestinationSlot _known_destinations_pool[KNOWN_DESTINATIONS_SIZE];
+		// Pool allocated in PSRAM to free internal RAM (~29KB)
+		static KnownDestinationSlot* _known_destinations_pool;
 
 		static KnownDestinationSlot* find_known_destination_slot(const Bytes& hash);
 		static KnownDestinationSlot* find_empty_known_destination_slot();
 
 	public:
+		static bool init_known_destinations_pool();  // Call early in startup
 		static size_t known_destinations_count();
 		//static std::map<Bytes, IdentityEntry> _known_destinations;
 		static bool _saving_known_destinations;
