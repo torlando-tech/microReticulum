@@ -248,9 +248,11 @@ private:
     // BLE stack recovery
     uint8_t _scan_fail_count = 0;
     uint8_t _lightweight_reset_fails = 0;
+    uint8_t _conn_establish_fail_count = 0;  // rc=574 connection establishment failures
     unsigned long _last_full_recovery_time = 0;
     static constexpr uint8_t SCAN_FAIL_RECOVERY_THRESHOLD = 5;
     static constexpr uint8_t LIGHTWEIGHT_RESET_MAX_FAILS = 3;
+    static constexpr uint8_t CONN_ESTABLISH_FAIL_THRESHOLD = 3;  // Threshold for rc=574
     static constexpr unsigned long FULL_RECOVERY_COOLDOWN_MS = 60000;  // 60 seconds
     bool recoverBLEStack();
 

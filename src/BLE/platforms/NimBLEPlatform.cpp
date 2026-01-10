@@ -441,11 +441,18 @@ bool NimBLEPlatform::pauseSlaveForMaster() {
 }
 
 void NimBLEPlatform::resumeSlave() {
-    if (!_slave_paused_for_master) {
+    // Atomically check and clear the paused flag to prevent race conditions
+    bool should_resume = false;
+    portENTER_CRITICAL(&_state_mux);
+    if (_slave_paused_for_master) {
+        _slave_paused_for_master = false;
+        should_resume = true;
+    }
+    portEXIT_CRITICAL(&_state_mux);
+
+    if (!should_resume) {
         return;
     }
-
-    _slave_paused_for_master = false;
 
     // Only restart advertising if in peripheral/dual mode
     if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
@@ -483,8 +490,25 @@ void NimBLEPlatform::enterErrorRecovery() {
     _scan_stop_time = 0;
     _slave_paused_for_master = false;
 
-    // ESP32-S3 settling time
-    delay(300);
+    // Wait for host to sync after any reset operation
+    // This is critical - the host needs time to fully reset and resync with controller
+    if (!ble_hs_synced()) {
+        DEBUG("NimBLEPlatform: Waiting for host sync during recovery...");
+        uint32_t sync_start = millis();
+        while (!ble_hs_synced() && (millis() - sync_start) < 3000) {
+            delay(50);
+        }
+        if (ble_hs_synced()) {
+            DEBUG("NimBLEPlatform: Host sync restored after " +
+                  std::to_string(millis() - sync_start) + "ms");
+        } else {
+            ERROR("NimBLEPlatform: Host sync failed during recovery");
+            // Continue anyway - may recover on next attempt
+        }
+    }
+
+    // ESP32-S3 settling time after sync
+    delay(200);
 
     // Re-acquire scan object to reset NimBLE internal state
     // This is necessary because NimBLE scan object can get into stuck state
@@ -507,6 +531,12 @@ void NimBLEPlatform::enterErrorRecovery() {
         INFO("NimBLEPlatform: Error recovery complete, GAP ready");
     } else {
         ERROR("NimBLEPlatform: GAP still busy after recovery attempt");
+    }
+
+    // Restart advertising if in peripheral/dual mode
+    if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
+        DEBUG("NimBLEPlatform: Restarting advertising after recovery");
+        startAdvertising();
     }
 }
 
@@ -547,8 +577,15 @@ bool NimBLEPlatform::startScan(uint16_t duration_ms) {
     // Pause slave (advertising) for master operation
     if (!pauseSlaveForMaster()) {
         WARNING("NimBLEPlatform: Failed to pause slave for scan");
+        // Try to restart advertising in case it was stopped but flag wasn't set
+        if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
+            startAdvertising();
+        }
         return false;
     }
+
+    // Settling delay for NimBLE internal state (matches connect function)
+    delay(100);
 
     // Transition to SCAN_STARTING
     if (!transitionMasterState(MasterState::IDLE, MasterState::SCAN_STARTING)) {
@@ -708,6 +745,10 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
     // Pause slave (advertising) for master operation
     if (!pauseSlaveForMaster()) {
         WARNING("NimBLEPlatform: Failed to pause slave for connect");
+        // Try to restart advertising in case it was stopped but flag wasn't set
+        if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
+            startAdvertising();
+        }
         return false;
     }
 
@@ -825,6 +866,8 @@ int NimBLEPlatform::nativeGapEventHandler(struct ble_gap_event* event, void* arg
             if (event->connect.status == 0) {
                 platform->_native_connect_success = true;
                 platform->_native_connect_handle = event->connect.conn_handle;
+                // Reset failure counters on successful connection
+                platform->_conn_establish_fail_count = 0;
             } else {
                 platform->_native_connect_success = false;
             }
@@ -844,6 +887,20 @@ int NimBLEPlatform::nativeGapEventHandler(struct ble_gap_event* event, void* arg
                 platform->_native_connect_result = disc_reason;
                 platform->_native_connect_success = false;
                 platform->_native_connect_pending = false;
+
+                // Track connection establishment failures (574 = BLE_ERR_CONN_ESTABLISHMENT)
+                if (disc_reason == 574) {
+                    platform->_conn_establish_fail_count++;
+                    WARNING("NimBLEPlatform: Connection establishment failed (574), count=" +
+                            std::to_string(platform->_conn_establish_fail_count));
+
+                    // If too many consecutive failures, trigger recovery
+                    if (platform->_conn_establish_fail_count >= CONN_ESTABLISH_FAIL_THRESHOLD) {
+                        WARNING("NimBLEPlatform: Too many connection establishment failures, entering recovery");
+                        platform->_conn_establish_fail_count = 0;
+                        platform->enterErrorRecovery();
+                    }
+                }
             }
 
             // Clean up established connections (handles MAC rotation, out of range, etc.)
@@ -891,6 +948,32 @@ int NimBLEPlatform::nativeGapEventHandler(struct ble_gap_event* event, void* arg
 
 bool NimBLEPlatform::connectNative(const BLEAddress& address, uint16_t timeout_ms) {
     DEBUG("NimBLEPlatform::connectNative: Starting native connection to " + address.toString());
+
+    // Verify host-controller sync before connection attempt
+    if (!ble_hs_synced()) {
+        WARNING("NimBLEPlatform::connectNative: Host not synced, waiting for sync");
+        uint32_t sync_start = millis();
+        while (!ble_hs_synced() && (millis() - sync_start) < 1000) {
+            delay(10);
+        }
+        if (!ble_hs_synced()) {
+            ERROR("NimBLEPlatform::connectNative: Host sync timeout, entering error recovery");
+            enterErrorRecovery();
+            return false;
+        }
+        DEBUG("NimBLEPlatform::connectNative: Host sync restored");
+    }
+
+    // Validate address type
+    // BLE_ADDR_PUBLIC = 0, BLE_ADDR_RANDOM = 1, BLE_ADDR_PUBLIC_ID = 2, BLE_ADDR_RANDOM_ID = 3
+    if (address.type > 3) {
+        ERROR("NimBLEPlatform::connectNative: Invalid address type " + std::to_string(address.type));
+        return false;
+    }
+
+    DEBUG("NimBLEPlatform::connectNative: Connecting to " + address.toString() +
+          " type=" + std::to_string(address.type) +
+          (address.type == 0 ? " (public)" : address.type == 1 ? " (random)" : " (other)"));
 
     // Build the peer address structure
     ble_addr_t peer_addr;
@@ -945,6 +1028,16 @@ bool NimBLEPlatform::connectNative(const BLEAddress& address, uint16_t timeout_m
     if (rc != 0) {
         ERROR("NimBLEPlatform::connectNative: ble_gap_connect failed with rc=" + std::to_string(rc));
         _native_connect_pending = false;
+
+        // Special handling for host desync (rc=22 / BLE_HS_ENOTSYNCED)
+        if (rc == 22) {  // BLE_HS_ENOTSYNCED
+            ERROR("NimBLEPlatform::connectNative: Host desync detected (rc=22), scheduling host reset");
+            // Schedule a host reset to resynchronize with controller
+            ble_hs_sched_reset(0);
+            delay(300);  // Give time for reset to process
+            enterErrorRecovery();
+        }
+
         return false;
     }
 
