@@ -15,6 +15,8 @@
 #if defined(ESP32) && (defined(USE_NIMBLE) || defined(CONFIG_BT_NIMBLE_ENABLED))
 
 #include <NimBLEDevice.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 // Undefine NimBLE's backward compatibility macros to avoid conflict with our types
 #undef BLEAddress
@@ -23,6 +25,51 @@
 #include <vector>
 
 namespace RNS { namespace BLE {
+
+//=============================================================================
+// State Machine Enums for Dual-Role BLE Operation
+//=============================================================================
+
+/**
+ * @brief Master role states (Central - scanning/connecting)
+ */
+enum class MasterState : uint8_t {
+    IDLE,           ///< No master operations
+    SCAN_STARTING,  ///< Gap scan start requested
+    SCANNING,       ///< Actively scanning
+    SCAN_STOPPING,  ///< Gap scan stop requested
+    CONN_STARTING,  ///< Connection initiation requested
+    CONNECTING,     ///< Connection in progress
+    CONN_CANCELING  ///< Connection cancel requested
+};
+
+/**
+ * @brief Slave role states (Peripheral - advertising)
+ */
+enum class SlaveState : uint8_t {
+    IDLE,           ///< Not advertising
+    ADV_STARTING,   ///< Gap adv start requested
+    ADVERTISING,    ///< Actively advertising
+    ADV_STOPPING    ///< Gap adv stop requested
+};
+
+/**
+ * @brief GAP coordinator state (overall BLE subsystem)
+ */
+enum class GAPState : uint8_t {
+    UNINITIALIZED,   ///< BLE not started
+    INITIALIZING,    ///< NimBLE init in progress
+    READY,           ///< Idle, ready for operations
+    MASTER_PRIORITY, ///< Master operation in progress, slave paused
+    SLAVE_PRIORITY,  ///< Slave operation in progress, master paused
+    TRANSITIONING,   ///< State change in progress
+    ERROR_RECOVERY   ///< Recovering from error
+};
+
+// State name helpers for logging
+const char* masterStateName(MasterState state);
+const char* slaveStateName(SlaveState state);
+const char* gapStateName(GAPState state);
 
 /**
  * @brief NimBLE-Arduino implementation of IBLEPlatform
@@ -158,12 +205,43 @@ private:
     // Update connection info
     void updateConnectionMTU(uint16_t conn_handle, uint16_t mtu);
 
+    //=========================================================================
+    // State Machine Infrastructure
+    //=========================================================================
+
+    // State variables (protected by spinlock)
+    mutable portMUX_TYPE _state_mux = portMUX_INITIALIZER_UNLOCKED;
+    MasterState _master_state = MasterState::IDLE;
+    SlaveState _slave_state = SlaveState::IDLE;
+    GAPState _gap_state = GAPState::UNINITIALIZED;
+
+    // Mutex for connection map access (longer operations)
+    SemaphoreHandle_t _conn_mutex = nullptr;
+
+    // State transition helpers (atomic compare-and-swap)
+    bool transitionMasterState(MasterState expected, MasterState new_state);
+    bool transitionSlaveState(SlaveState expected, SlaveState new_state);
+    bool transitionGAPState(GAPState expected, GAPState new_state);
+
+    // State verification methods
+    bool canStartScan() const;
+    bool canStartAdvertising() const;
+    bool canConnect() const;
+
+    // Operation coordination
+    bool pauseSlaveForMaster();
+    void resumeSlave();
+    void enterErrorRecovery();
+
+    // Track if slave was paused for a master operation
+    bool _slave_paused_for_master = false;
+
+    //=========================================================================
     // Configuration
+    //=========================================================================
     PlatformConfig _config;
     bool _initialized = false;
     bool _running = false;
-    bool _scanning = false;
-    bool _advertising = false;
     Bytes _identity_data;
     unsigned long _scan_stop_time = 0;  // millis() when to stop continuous scan
 

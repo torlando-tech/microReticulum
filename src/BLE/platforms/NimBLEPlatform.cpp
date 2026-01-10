@@ -30,11 +30,61 @@ extern "C" {
 
 namespace RNS { namespace BLE {
 
+//=============================================================================
+// State Name Helpers (for logging)
+//=============================================================================
+
+const char* masterStateName(MasterState state) {
+    switch (state) {
+        case MasterState::IDLE: return "IDLE";
+        case MasterState::SCAN_STARTING: return "SCAN_STARTING";
+        case MasterState::SCANNING: return "SCANNING";
+        case MasterState::SCAN_STOPPING: return "SCAN_STOPPING";
+        case MasterState::CONN_STARTING: return "CONN_STARTING";
+        case MasterState::CONNECTING: return "CONNECTING";
+        case MasterState::CONN_CANCELING: return "CONN_CANCELING";
+        default: return "UNKNOWN";
+    }
+}
+
+const char* slaveStateName(SlaveState state) {
+    switch (state) {
+        case SlaveState::IDLE: return "IDLE";
+        case SlaveState::ADV_STARTING: return "ADV_STARTING";
+        case SlaveState::ADVERTISING: return "ADVERTISING";
+        case SlaveState::ADV_STOPPING: return "ADV_STOPPING";
+        default: return "UNKNOWN";
+    }
+}
+
+const char* gapStateName(GAPState state) {
+    switch (state) {
+        case GAPState::UNINITIALIZED: return "UNINITIALIZED";
+        case GAPState::INITIALIZING: return "INITIALIZING";
+        case GAPState::READY: return "READY";
+        case GAPState::MASTER_PRIORITY: return "MASTER_PRIORITY";
+        case GAPState::SLAVE_PRIORITY: return "SLAVE_PRIORITY";
+        case GAPState::TRANSITIONING: return "TRANSITIONING";
+        case GAPState::ERROR_RECOVERY: return "ERROR_RECOVERY";
+        default: return "UNKNOWN";
+    }
+}
+
+//=============================================================================
+// Constructor / Destructor
+//=============================================================================
+
 NimBLEPlatform::NimBLEPlatform() {
+    // Initialize connection mutex
+    _conn_mutex = xSemaphoreCreateMutex();
 }
 
 NimBLEPlatform::~NimBLEPlatform() {
     shutdown();
+    if (_conn_mutex) {
+        vSemaphoreDelete(_conn_mutex);
+        _conn_mutex = nullptr;
+    }
 }
 
 //=============================================================================
@@ -83,6 +133,12 @@ bool NimBLEPlatform::initialize(const PlatformConfig& config) {
     }
 
     _initialized = true;
+
+    // Set GAP state to READY
+    portENTER_CRITICAL(&_state_mux);
+    _gap_state = GAPState::READY;
+    portEXIT_CRITICAL(&_state_mux);
+
     INFO("NimBLEPlatform: Initialized, role: " + std::string(roleToString(_config.role)));
 
     return true;
@@ -130,14 +186,13 @@ void NimBLEPlatform::loop() {
     }
 
     // Check if continuous scan should stop
-    if (_scanning && _scan_stop_time > 0 && millis() >= _scan_stop_time) {
+    portENTER_CRITICAL(&_state_mux);
+    MasterState ms = _master_state;
+    portEXIT_CRITICAL(&_state_mux);
+
+    if (ms == MasterState::SCANNING && _scan_stop_time > 0 && millis() >= _scan_stop_time) {
         DEBUG("NimBLEPlatform: Stopping scan after timeout");
         stopScan();
-
-        // Restart advertising if in peripheral/dual mode
-        if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
-            startAdvertising();
-        }
 
         if (_on_scan_complete) {
             _on_scan_complete();
@@ -202,23 +257,8 @@ bool NimBLEPlatform::recoverBLEStack() {
         return false;  // Won't reach here
     }
 
-    // Stop all operations
-    _scanning = false;
-    _scan_stop_time = 0;
-    _advertising = false;
-
-    // Stop scan via high-level API
-    if (_scan) {
-        _scan->stop();
-    }
-
-    // Stop advertising
-    if (_advertising_obj) {
-        _advertising_obj->stop();
-    }
-
-    // Wait for all operations to settle
-    delay(500);
+    // Use enterErrorRecovery for state machine reset
+    enterErrorRecovery();
 
     // Clear scan results and discovered devices
     if (_scan) {
@@ -236,7 +276,7 @@ bool NimBLEPlatform::recoverBLEStack() {
         _scan->setDuplicateFilter(true);
     }
 
-    // Reset scan failure counter (but NOT lightweight_reset_fails - that tracks recovery success)
+    // Reset scan failure counter
     _scan_fail_count = 0;
 
     // Restart advertising if in peripheral/dual mode
@@ -250,6 +290,214 @@ bool NimBLEPlatform::recoverBLEStack() {
 }
 
 //=============================================================================
+// State Machine Implementation
+//=============================================================================
+
+bool NimBLEPlatform::transitionMasterState(MasterState expected, MasterState new_state) {
+    bool ok = false;
+    portENTER_CRITICAL(&_state_mux);
+    if (_master_state == expected) {
+        _master_state = new_state;
+        ok = true;
+    }
+    portEXIT_CRITICAL(&_state_mux);
+    if (ok) {
+        DEBUG("NimBLEPlatform: Master state: " + std::string(masterStateName(expected)) +
+              " -> " + std::string(masterStateName(new_state)));
+    }
+    return ok;
+}
+
+bool NimBLEPlatform::transitionSlaveState(SlaveState expected, SlaveState new_state) {
+    bool ok = false;
+    portENTER_CRITICAL(&_state_mux);
+    if (_slave_state == expected) {
+        _slave_state = new_state;
+        ok = true;
+    }
+    portEXIT_CRITICAL(&_state_mux);
+    if (ok) {
+        DEBUG("NimBLEPlatform: Slave state: " + std::string(slaveStateName(expected)) +
+              " -> " + std::string(slaveStateName(new_state)));
+    }
+    return ok;
+}
+
+bool NimBLEPlatform::transitionGAPState(GAPState expected, GAPState new_state) {
+    bool ok = false;
+    portENTER_CRITICAL(&_state_mux);
+    if (_gap_state == expected) {
+        _gap_state = new_state;
+        ok = true;
+    }
+    portEXIT_CRITICAL(&_state_mux);
+    if (ok) {
+        DEBUG("NimBLEPlatform: GAP state: " + std::string(gapStateName(expected)) +
+              " -> " + std::string(gapStateName(new_state)));
+    }
+    return ok;
+}
+
+bool NimBLEPlatform::canStartScan() const {
+    bool ok = false;
+    portENTER_CRITICAL(&_state_mux);
+    ok = (_gap_state == GAPState::READY || _gap_state == GAPState::MASTER_PRIORITY)
+         && _master_state == MasterState::IDLE
+         && !ble_gap_disc_active()
+         && !ble_gap_conn_active();  // Also check no connection in progress
+    portEXIT_CRITICAL(&_state_mux);
+    return ok;
+}
+
+bool NimBLEPlatform::canStartAdvertising() const {
+    bool ok = false;
+    portENTER_CRITICAL(&_state_mux);
+    ok = (_gap_state == GAPState::READY || _gap_state == GAPState::SLAVE_PRIORITY)
+         && _slave_state == SlaveState::IDLE
+         && !ble_gap_adv_active();
+    portEXIT_CRITICAL(&_state_mux);
+    return ok;
+}
+
+bool NimBLEPlatform::canConnect() const {
+    bool ok = false;
+    portENTER_CRITICAL(&_state_mux);
+    ok = (_gap_state == GAPState::READY || _gap_state == GAPState::MASTER_PRIORITY)
+         && _master_state == MasterState::IDLE
+         && !ble_gap_conn_active();
+    portEXIT_CRITICAL(&_state_mux);
+    return ok;
+}
+
+bool NimBLEPlatform::pauseSlaveForMaster() {
+    // Check if slave is currently advertising
+    portENTER_CRITICAL(&_state_mux);
+    SlaveState current_slave = _slave_state;
+    portEXIT_CRITICAL(&_state_mux);
+
+    if (current_slave == SlaveState::IDLE) {
+        DEBUG("NimBLEPlatform: Slave already idle, no pause needed");
+        return true;  // Already idle
+    }
+
+    if (current_slave == SlaveState::ADVERTISING) {
+        // Transition to stopping
+        if (!transitionSlaveState(SlaveState::ADVERTISING, SlaveState::ADV_STOPPING)) {
+            WARNING("NimBLEPlatform: Failed to transition slave to ADV_STOPPING");
+            return false;
+        }
+
+        // Stop advertising
+        if (_advertising_obj) {
+            _advertising_obj->stop();
+        }
+
+        // Also stop at low level
+        if (ble_gap_adv_active()) {
+            ble_gap_adv_stop();
+        }
+
+        // Wait for advertising to stop
+        uint32_t start = millis();
+        while (ble_gap_adv_active() && millis() - start < 2000) {
+            delay(10);
+        }
+
+        if (ble_gap_adv_active()) {
+            ERROR("NimBLEPlatform: Advertising didn't stop within 2s");
+            // Force state to IDLE anyway
+            portENTER_CRITICAL(&_state_mux);
+            _slave_state = SlaveState::IDLE;
+            portEXIT_CRITICAL(&_state_mux);
+            return false;
+        }
+
+        // Transition to IDLE
+        portENTER_CRITICAL(&_state_mux);
+        _slave_state = SlaveState::IDLE;
+        portEXIT_CRITICAL(&_state_mux);
+
+        _slave_paused_for_master = true;
+        DEBUG("NimBLEPlatform: Slave paused for master operation");
+        return true;
+    }
+
+    // In other states (ADV_STARTING, ADV_STOPPING), wait for completion
+    uint32_t start = millis();
+    while (millis() - start < 2000) {
+        portENTER_CRITICAL(&_state_mux);
+        current_slave = _slave_state;
+        portEXIT_CRITICAL(&_state_mux);
+
+        if (current_slave == SlaveState::IDLE) {
+            _slave_paused_for_master = true;
+            return true;
+        }
+        delay(10);
+    }
+
+    WARNING("NimBLEPlatform: Timed out waiting for slave to become idle");
+    return false;
+}
+
+void NimBLEPlatform::resumeSlave() {
+    if (!_slave_paused_for_master) {
+        return;
+    }
+
+    _slave_paused_for_master = false;
+
+    // Only restart advertising if in peripheral/dual mode
+    if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
+        DEBUG("NimBLEPlatform: Resuming slave (restarting advertising)");
+        startAdvertising();
+    }
+}
+
+void NimBLEPlatform::enterErrorRecovery() {
+    WARNING("NimBLEPlatform: Entering error recovery");
+
+    // Reset all states atomically
+    portENTER_CRITICAL(&_state_mux);
+    _gap_state = GAPState::ERROR_RECOVERY;
+    _master_state = MasterState::IDLE;
+    _slave_state = SlaveState::IDLE;
+    portEXIT_CRITICAL(&_state_mux);
+
+    // Force stop all operations
+    if (_scan) {
+        _scan->stop();
+    }
+    if (_advertising_obj) {
+        _advertising_obj->stop();
+    }
+
+    // Also stop at low level
+    if (ble_gap_disc_active()) {
+        ble_gap_disc_cancel();
+    }
+    if (ble_gap_adv_active()) {
+        ble_gap_adv_stop();
+    }
+
+    _scan_stop_time = 0;
+    _slave_paused_for_master = false;
+
+    // ESP32-S3 settling time
+    delay(300);
+
+    // Verify GAP is truly idle
+    if (!ble_gap_disc_active() && !ble_gap_adv_active() && !ble_gap_conn_active()) {
+        portENTER_CRITICAL(&_state_mux);
+        _gap_state = GAPState::READY;
+        portEXIT_CRITICAL(&_state_mux);
+        INFO("NimBLEPlatform: Error recovery complete, GAP ready");
+    } else {
+        ERROR("NimBLEPlatform: GAP still busy after recovery attempt");
+    }
+}
+
+//=============================================================================
 // Central Mode - Scanning
 //=============================================================================
 
@@ -259,25 +507,47 @@ bool NimBLEPlatform::startScan(uint16_t duration_ms) {
         return false;
     }
 
-    if (_scanning) {
+    // Check current master state
+    portENTER_CRITICAL(&_state_mux);
+    MasterState current_master = _master_state;
+    portEXIT_CRITICAL(&_state_mux);
+
+    if (current_master == MasterState::SCANNING) {
         _scan_fail_count = 0;  // Reset on successful state
         return true;
     }
 
-    // Check if BLE stack is busy with other operations (e.g., incoming peripheral connection)
-    // This prevents conflicts between central and peripheral operations
-    if (ble_gap_conn_active()) {
-        DEBUG("NimBLEPlatform: Skipping scan - connection in progress");
-        return false;  // Don't count as failure, just skip this cycle
+    // Log GAP hardware state before checking
+    DEBUG("NimBLEPlatform: Pre-scan GAP state: disc=" + std::to_string(ble_gap_disc_active()) +
+          " adv=" + std::to_string(ble_gap_adv_active()) +
+          " conn=" + std::to_string(ble_gap_conn_active()));
+
+    // Verify we can start scan
+    if (!canStartScan()) {
+        DEBUG("NimBLEPlatform: Cannot start scan - state check failed" +
+              std::string(" master=") + masterStateName(current_master) +
+              " gap_disc=" + std::to_string(ble_gap_disc_active()) +
+              " gap_conn=" + std::to_string(ble_gap_conn_active()));
+        return false;
     }
 
-    // Stop advertising while scanning to avoid conflicts on ESP32
-    bool was_advertising = isAdvertising();
-    if (was_advertising) {
-        stopAdvertising();
-        // Give BLE stack time to complete advertising stop
-        delay(50);
+    // Pause slave (advertising) for master operation
+    if (!pauseSlaveForMaster()) {
+        WARNING("NimBLEPlatform: Failed to pause slave for scan");
+        return false;
     }
+
+    // Transition to SCAN_STARTING
+    if (!transitionMasterState(MasterState::IDLE, MasterState::SCAN_STARTING)) {
+        WARNING("NimBLEPlatform: Failed to transition to SCAN_STARTING");
+        resumeSlave();
+        return false;
+    }
+
+    // Set GAP to master priority
+    portENTER_CRITICAL(&_state_mux);
+    _gap_state = GAPState::MASTER_PRIORITY;
+    portEXIT_CRITICAL(&_state_mux);
 
     uint32_t duration_sec = (duration_ms == 0) ? 0 : (duration_ms / 1000);
     if (duration_sec < 1) duration_sec = 1;  // Minimum 1 second
@@ -288,62 +558,88 @@ bool NimBLEPlatform::startScan(uint16_t duration_ms) {
     _scan->setInterval(_config.scan_interval_ms);
     _scan->setWindow(_config.scan_window_ms);
 
-    DEBUG("NimBLEPlatform: Starting scan with duration=" + std::to_string(duration_sec) + "s" +
-          " nimble_isScanning=" + std::string(_scan->isScanning() ? "true" : "false") +
-          " was_advertising=" + std::string(was_advertising ? "yes" : "no"));
+    DEBUG("NimBLEPlatform: Starting scan with duration=" + std::to_string(duration_sec) + "s");
 
     // NimBLE 2.x: use 0 for continuous scanning (we'll stop it manually in loop())
-    // The duration parameter in seconds doesn't work reliably on ESP32-S3
     bool started = _scan->start(0, false);
-    DEBUG("NimBLEPlatform: Scan start returned " + std::string(started ? "true" : "false") +
-          " nimble_isScanning=" + std::string(_scan->isScanning() ? "true" : "false"));
 
     if (started) {
-        _scanning = true;
-        _scan_fail_count = 0;  // Reset failure counter on success
-        _lightweight_reset_fails = 0;  // Reset recovery counter - BLE is working again
-        _scan_stop_time = millis() + duration_ms;  // Schedule when to stop
-        DEBUG("NimBLEPlatform: Scan started, will stop at " + std::to_string(_scan_stop_time) +
-              " (in " + std::to_string(duration_ms) + "ms)");
+        // Transition to SCANNING
+        portENTER_CRITICAL(&_state_mux);
+        _master_state = MasterState::SCANNING;
+        portEXIT_CRITICAL(&_state_mux);
+
+        _scan_fail_count = 0;
+        _lightweight_reset_fails = 0;
+        _scan_stop_time = millis() + duration_ms;
+        DEBUG("NimBLEPlatform: Scan started, will stop in " + std::to_string(duration_ms) + "ms");
         return true;
     }
 
-    // Scan failed - track failures and attempt recovery if needed
-    _scan_fail_count++;
-    ERROR("NimBLEPlatform: Failed to start scan (attempt " + std::to_string(_scan_fail_count) + ")");
+    // Scan failed
+    ERROR("NimBLEPlatform: Failed to start scan");
 
+    // Reset state
+    portENTER_CRITICAL(&_state_mux);
+    _master_state = MasterState::IDLE;
+    _gap_state = GAPState::READY;
+    portEXIT_CRITICAL(&_state_mux);
+
+    _scan_fail_count++;
     if (_scan_fail_count >= SCAN_FAIL_RECOVERY_THRESHOLD) {
-        WARNING("NimBLEPlatform: Too many scan failures, attempting BLE stack recovery");
-        if (recoverBLEStack()) {
-            INFO("NimBLEPlatform: BLE stack recovered, retrying scan");
-            // Try scan one more time after recovery
-            _scan->clearResults();
-            started = _scan->start(0, false);
-            if (started) {
-                _scanning = true;
-                _scan_fail_count = 0;
-                _scan_stop_time = millis() + duration_ms;
-                INFO("NimBLEPlatform: Scan started after recovery");
-                return true;
-            }
-        }
+        WARNING("NimBLEPlatform: Too many scan failures, entering error recovery");
+        enterErrorRecovery();
     }
 
+    resumeSlave();
     return false;
 }
 
 void NimBLEPlatform::stopScan() {
-    if (_scan && _scanning) {
-        DEBUG("NimBLEPlatform: stopScan() called - stopping scan");
-        _scan->stop();
-        _scanning = false;
-        _scan_stop_time = 0;  // Clear the timer
-        DEBUG("NimBLEPlatform: Scan stopped");
+    portENTER_CRITICAL(&_state_mux);
+    MasterState current_master = _master_state;
+    portEXIT_CRITICAL(&_state_mux);
+
+    if (current_master != MasterState::SCANNING && current_master != MasterState::SCAN_STARTING) {
+        return;
     }
+
+    // Transition to SCAN_STOPPING
+    portENTER_CRITICAL(&_state_mux);
+    _master_state = MasterState::SCAN_STOPPING;
+    portEXIT_CRITICAL(&_state_mux);
+
+    DEBUG("NimBLEPlatform: stopScan() called");
+
+    if (_scan) {
+        _scan->stop();
+    }
+
+    // Wait for scan to actually stop
+    uint32_t start = millis();
+    while (ble_gap_disc_active() && millis() - start < 1000) {
+        delay(10);
+    }
+
+    // Transition to IDLE
+    portENTER_CRITICAL(&_state_mux);
+    _master_state = MasterState::IDLE;
+    _gap_state = GAPState::READY;
+    portEXIT_CRITICAL(&_state_mux);
+
+    _scan_stop_time = 0;
+    DEBUG("NimBLEPlatform: Scan stopped");
+
+    // Resume slave if it was paused
+    resumeSlave();
 }
 
 bool NimBLEPlatform::isScanning() const {
-    return _scanning;
+    portENTER_CRITICAL(&_state_mux);
+    bool scanning = (_master_state == MasterState::SCANNING ||
+                     _master_state == MasterState::SCAN_STARTING);
+    portEXIT_CRITICAL(&_state_mux);
+    return scanning;
 }
 
 //=============================================================================
@@ -374,59 +670,71 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
         return false;
     }
 
-    // Stop scanning and advertising before connecting
-    bool was_advertising = isAdvertising();
+    // Verify we can connect using state machine
+    if (!canConnect()) {
+        portENTER_CRITICAL(&_state_mux);
+        MasterState ms = _master_state;
+        GAPState gs = _gap_state;
+        portEXIT_CRITICAL(&_state_mux);
+        WARNING("NimBLEPlatform: Cannot connect - state check failed" +
+                std::string(" master=") + masterStateName(ms) +
+                " gap=" + gapStateName(gs));
+        return false;
+    }
 
-    // Use high-level NimBLE API to stop scan (low-level ble_gap_disc_cancel can cause timer assertions)
-    if (_scan && (_scan->isScanning() || ble_gap_disc_active())) {
+    // Stop scanning if active
+    portENTER_CRITICAL(&_state_mux);
+    MasterState current_master = _master_state;
+    portEXIT_CRITICAL(&_state_mux);
+
+    if (current_master == MasterState::SCANNING) {
         DEBUG("NimBLEPlatform: Stopping scan before connect");
-        _scan->stop();
-        delay(50);  // Give stack time to process
-        _scanning = false;
-        _scan_stop_time = 0;
+        stopScan();
     }
 
-    // Cancel advertising at low level too
-    if (ble_gap_adv_active()) {
-        DEBUG("NimBLEPlatform: Stopping advertising via ble_gap_adv_stop");
-        ble_gap_adv_stop();
+    // Pause slave (advertising) for master operation
+    if (!pauseSlaveForMaster()) {
+        WARNING("NimBLEPlatform: Failed to pause slave for connect");
+        return false;
     }
 
-    // Stop high-level advertising tracking
-    if (_advertising_obj && _advertising_obj->isAdvertising()) {
-        DEBUG("NimBLEPlatform: Stopping advertising before connect");
-        _advertising_obj->stop();
+    // Transition to CONN_STARTING
+    if (!transitionMasterState(MasterState::IDLE, MasterState::CONN_STARTING)) {
+        WARNING("NimBLEPlatform: Failed to transition to CONN_STARTING");
+        resumeSlave();
+        return false;
     }
 
-    // Wait for GAP operations to fully complete
-    int wait_count = 0;
-    while ((ble_gap_disc_active() || ble_gap_adv_active()) && wait_count < 50) {
-        delay(10);
-        wait_count++;
+    // Set GAP to master priority
+    portENTER_CRITICAL(&_state_mux);
+    _gap_state = GAPState::MASTER_PRIORITY;
+    portEXIT_CRITICAL(&_state_mux);
+
+    // Extra settling delay after stopping advertising
+    delay(200);
+
+    // Verify GAP is truly idle
+    if (ble_gap_disc_active() || ble_gap_adv_active()) {
+        ERROR("NimBLEPlatform: GAP not idle before connect, entering error recovery");
+        enterErrorRecovery();
+        resumeSlave();
+        return false;
     }
 
-    // Give BLE stack extra time to settle - ESP32-S3 may need more time
-    delay(300);
-
-    DEBUG("NimBLEPlatform: Post-delay GAP state: adv=" + std::to_string(ble_gap_adv_active()) +
-          " disc=" + std::to_string(ble_gap_disc_active()) +
-          " conn=" + std::to_string(ble_gap_conn_active()));
-
-    // Mark scan as inactive
-    _scanning = false;
-
-    // Check if there's still a pending connection in the controller
-    bool conn_pending = ble_gap_conn_active();
-    if (conn_pending) {
+    // Check if there's still a pending connection
+    if (ble_gap_conn_active()) {
         WARNING("NimBLEPlatform: Connection still pending in GAP, waiting...");
-        int wait_count = 0;
-        while (ble_gap_conn_active() && wait_count < 100) {
+        uint32_t start = millis();
+        while (ble_gap_conn_active() && millis() - start < 1000) {
             delay(10);
-            wait_count++;
         }
         if (ble_gap_conn_active()) {
             ERROR("NimBLEPlatform: GAP connection still active after timeout");
-            if (was_advertising) startAdvertising();
+            portENTER_CRITICAL(&_state_mux);
+            _master_state = MasterState::IDLE;
+            _gap_state = GAPState::READY;
+            portEXIT_CRITICAL(&_state_mux);
+            resumeSlave();
             return false;
         }
     }
@@ -434,8 +742,7 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
     // Delete any existing clients for this address to ensure clean state
     NimBLEClient* existingClient = NimBLEDevice::getClientByPeerAddress(nimAddr);
     while (existingClient) {
-        DEBUG("NimBLEPlatform: Deleting existing client for " + address.toString() +
-              " connected=" + std::to_string(existingClient->isConnected()));
+        DEBUG("NimBLEPlatform: Deleting existing client for " + address.toString());
         if (existingClient->isConnected()) {
             existingClient->disconnect();
         }
@@ -443,34 +750,48 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
         existingClient = NimBLEDevice::getClientByPeerAddress(nimAddr);
     }
 
-    // Clean up any disconnected clients to free up slots
-    int clientCount = NimBLEDevice::getCreatedClientCount();
-    DEBUG("NimBLEPlatform: Current client count before cleanup: " + std::to_string(clientCount));
-
     DEBUG("NimBLEPlatform: Connecting to " + address.toString() +
-          " timeout=" + std::to_string(timeout_ms / 1000) + "s" +
-          " addrType=" + std::to_string(nimAddr.getType()));
+          " timeout=" + std::to_string(timeout_ms / 1000) + "s");
 
-    // Use native NimBLE connection instead of NimBLE-Arduino wrapper
-    // This bypasses potential issues in NimBLEClient::connect() on ESP32-S3
-    DEBUG("NimBLEPlatform: Using native ble_gap_connect()");
+    // Transition to CONNECTING
+    portENTER_CRITICAL(&_state_mux);
+    _master_state = MasterState::CONNECTING;
+    portEXIT_CRITICAL(&_state_mux);
+
+    // Use native NimBLE connection
     bool connected = connectNative(address, timeout_ms);
 
     if (!connected) {
         ERROR("NimBLEPlatform: Native connection failed to " + address.toString());
-        if (was_advertising) startAdvertising();
+        portENTER_CRITICAL(&_state_mux);
+        _master_state = MasterState::IDLE;
+        _gap_state = GAPState::READY;
+        portEXIT_CRITICAL(&_state_mux);
+        resumeSlave();
         return false;
     }
 
+    // Connection succeeded - transition states
+    portENTER_CRITICAL(&_state_mux);
+    _master_state = MasterState::IDLE;
+    _gap_state = GAPState::READY;
+    portEXIT_CRITICAL(&_state_mux);
+
     // Remove from discovered devices cache
     std::string addrKey = nimAddr.toString().c_str();
-    auto cachedIt = _discovered_devices.find(addrKey);
-    if (cachedIt != _discovered_devices.end()) {
-        _discovered_devices.erase(cachedIt);
-        DEBUG("NimBLEPlatform: Removed connected device from cache");
+    if (xSemaphoreTake(_conn_mutex, pdMS_TO_TICKS(100))) {
+        auto cachedIt = _discovered_devices.find(addrKey);
+        if (cachedIt != _discovered_devices.end()) {
+            _discovered_devices.erase(cachedIt);
+        }
+        xSemaphoreGive(_conn_mutex);
     }
 
     DEBUG("NimBLEPlatform: Connection established successfully");
+
+    // Resume slave operations
+    resumeSlave();
+
     return true;
 }
 
@@ -538,9 +859,9 @@ int NimBLEPlatform::nativeGapEventHandler(struct ble_gap_event* event, void* arg
                     platform->_on_disconnected(conn, static_cast<uint8_t>(disc_reason));
                 }
 
-                // Restart advertising if in peripheral/dual mode
+                // Restart advertising if in peripheral/dual mode and not currently advertising
                 if ((platform->_config.role == Role::PERIPHERAL || platform->_config.role == Role::DUAL) &&
-                    !platform->_advertising) {
+                    !platform->isAdvertising()) {
                     platform->startAdvertising();
                 }
             }
@@ -803,30 +1124,93 @@ bool NimBLEPlatform::startAdvertising() {
         }
     }
 
-    if (_advertising) {
+    // Check current slave state
+    portENTER_CRITICAL(&_state_mux);
+    SlaveState current_slave = _slave_state;
+    portEXIT_CRITICAL(&_state_mux);
+
+    if (current_slave == SlaveState::ADVERTISING) {
         return true;
     }
 
+    // Check if we can start advertising
+    if (!canStartAdvertising()) {
+        DEBUG("NimBLEPlatform: Cannot start advertising - state check failed" +
+              std::string(" slave=") + slaveStateName(current_slave) +
+              " gap_adv=" + std::to_string(ble_gap_adv_active()));
+        return false;
+    }
+
+    // Transition to ADV_STARTING
+    if (!transitionSlaveState(SlaveState::IDLE, SlaveState::ADV_STARTING)) {
+        WARNING("NimBLEPlatform: Failed to transition to ADV_STARTING");
+        return false;
+    }
+
     if (_advertising_obj->start()) {
-        _advertising = true;
+        // Transition to ADVERTISING
+        portENTER_CRITICAL(&_state_mux);
+        _slave_state = SlaveState::ADVERTISING;
+        portEXIT_CRITICAL(&_state_mux);
+
         DEBUG("NimBLEPlatform: Advertising started");
         return true;
     }
+
+    // Failed to start
+    portENTER_CRITICAL(&_state_mux);
+    _slave_state = SlaveState::IDLE;
+    portEXIT_CRITICAL(&_state_mux);
 
     ERROR("NimBLEPlatform: Failed to start advertising");
     return false;
 }
 
 void NimBLEPlatform::stopAdvertising() {
-    if (_advertising_obj && _advertising) {
-        _advertising_obj->stop();
-        _advertising = false;
-        DEBUG("NimBLEPlatform: Advertising stopped");
+    portENTER_CRITICAL(&_state_mux);
+    SlaveState current_slave = _slave_state;
+    portEXIT_CRITICAL(&_state_mux);
+
+    if (current_slave != SlaveState::ADVERTISING && current_slave != SlaveState::ADV_STARTING) {
+        return;
     }
+
+    // Transition to ADV_STOPPING
+    portENTER_CRITICAL(&_state_mux);
+    _slave_state = SlaveState::ADV_STOPPING;
+    portEXIT_CRITICAL(&_state_mux);
+
+    DEBUG("NimBLEPlatform: stopAdvertising() called");
+
+    if (_advertising_obj) {
+        _advertising_obj->stop();
+    }
+
+    // Also stop at low level
+    if (ble_gap_adv_active()) {
+        ble_gap_adv_stop();
+    }
+
+    // Wait for advertising to actually stop
+    uint32_t start = millis();
+    while (ble_gap_adv_active() && millis() - start < 1000) {
+        delay(10);
+    }
+
+    // Transition to IDLE
+    portENTER_CRITICAL(&_state_mux);
+    _slave_state = SlaveState::IDLE;
+    portEXIT_CRITICAL(&_state_mux);
+
+    DEBUG("NimBLEPlatform: Advertising stopped");
 }
 
 bool NimBLEPlatform::isAdvertising() const {
-    return _advertising;
+    portENTER_CRITICAL(&_state_mux);
+    bool advertising = (_slave_state == SlaveState::ADVERTISING ||
+                        _slave_state == SlaveState::ADV_STARTING);
+    portEXIT_CRITICAL(&_state_mux);
+    return advertising;
 }
 
 bool NimBLEPlatform::setAdvertisingData(const Bytes& data) {
@@ -1265,8 +1649,19 @@ void NimBLEPlatform::onResult(const NimBLEAdvertisedDevice* advertisedDevice) {
 }
 
 void NimBLEPlatform::onScanEnd(const NimBLEScanResults& results, int reason) {
-    bool was_scanning = _scanning;
-    _scanning = false;
+    // Check if we were actively scanning
+    portENTER_CRITICAL(&_state_mux);
+    MasterState prev_master = _master_state;
+    bool was_scanning = (prev_master == MasterState::SCANNING ||
+                         prev_master == MasterState::SCAN_STARTING ||
+                         prev_master == MasterState::SCAN_STOPPING);
+    // Transition to IDLE
+    if (was_scanning) {
+        _master_state = MasterState::IDLE;
+        _gap_state = GAPState::READY;
+    }
+    portEXIT_CRITICAL(&_state_mux);
+
     _scan_stop_time = 0;
 
     DEBUG("NimBLEPlatform: onScanEnd callback, reason=" + std::to_string(reason) +
@@ -1278,10 +1673,8 @@ void NimBLEPlatform::onScanEnd(const NimBLEScanResults& results, int reason) {
         return;
     }
 
-    // Restart advertising after scan
-    if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
-        startAdvertising();
-    }
+    // Resume slave if it was paused for this scan
+    resumeSlave();
 
     if (_on_scan_complete) {
         _on_scan_complete();
