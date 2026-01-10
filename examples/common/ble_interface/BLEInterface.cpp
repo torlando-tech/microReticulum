@@ -299,6 +299,49 @@ size_t BLEInterface::peerCount() const {
     return _peer_manager.connectedCount();
 }
 
+size_t BLEInterface::getConnectedPeerSummaries(PeerSummary* out, size_t max_count) const {
+    if (!out || max_count == 0) return 0;
+
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+
+    // Cast away const for read-only access to non-const getConnectedPeers()
+    auto& mutable_peer_manager = const_cast<BLE::BLEPeerManager&>(_peer_manager);
+    auto connected_peers = mutable_peer_manager.getConnectedPeers();
+
+    size_t count = 0;
+    for (const auto* peer : connected_peers) {
+        if (!peer || count >= max_count) break;
+
+        PeerSummary& summary = out[count];
+
+        // Format identity (first 12 hex chars) or empty if no identity
+        // Look up identity from identity manager (where it's actually stored after handshake)
+        Bytes identity = _identity_manager.getIdentityForMac(peer->mac_address);
+        if (identity.size() == Limits::IDENTITY_SIZE) {
+            std::string hex = identity.toHex();
+            size_t len = (hex.length() >= 12) ? 12 : hex.length();
+            memcpy(summary.identity, hex.c_str(), len);
+            summary.identity[len] = '\0';
+        } else {
+            summary.identity[0] = '\0';
+        }
+
+        // Format MAC as AA:BB:CC:DD:EE:FF
+        if (peer->mac_address.size() >= 6) {
+            const uint8_t* mac = peer->mac_address.data();
+            snprintf(summary.mac, sizeof(summary.mac), "%02X:%02X:%02X:%02X:%02X:%02X",
+                     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        } else {
+            summary.mac[0] = '\0';
+        }
+
+        summary.rssi = peer->rssi;
+        count++;
+    }
+
+    return count;
+}
+
 std::map<std::string, float> BLEInterface::get_stats() const {
     std::map<std::string, float> stats;
     stats["central_connections"] = 0.0f;
