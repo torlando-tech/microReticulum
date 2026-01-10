@@ -9,6 +9,7 @@
 #include <WiFi.h>
 #include "../../Log.h"
 #include "../LVGL/LVGLInit.h"
+#include "../LVGL/LVGLLock.h"
 
 using namespace RNS;
 
@@ -52,6 +53,7 @@ StatusScreen::StatusScreen(lv_obj_t* parent)
 }
 
 StatusScreen::~StatusScreen() {
+    LVGL_LOCK();
     if (_screen) {
         lv_obj_del(_screen);
     }
@@ -180,22 +182,26 @@ void StatusScreen::create_content() {
 }
 
 void StatusScreen::set_identity_hash(const Bytes& hash) {
+    LVGL_LOCK();
     _identity_hash = hash;
     update_labels();
 }
 
 void StatusScreen::set_lxmf_address(const Bytes& hash) {
+    LVGL_LOCK();
     _lxmf_address = hash;
     update_labels();
 }
 
 void StatusScreen::set_rns_status(bool connected, const String& server_name) {
+    LVGL_LOCK();
     _rns_connected = connected;
     _rns_server = server_name;
     update_labels();
 }
 
 void StatusScreen::set_ble_info(const BLEPeerInfo* peers, size_t count) {
+    LVGL_LOCK();
     // Copy peer data to internal storage
     _ble_peer_count = (count <= MAX_BLE_PEERS) ? count : MAX_BLE_PEERS;
     for (size_t i = 0; i < _ble_peer_count; i++) {
@@ -205,6 +211,7 @@ void StatusScreen::set_ble_info(const BLEPeerInfo* peers, size_t count) {
 }
 
 void StatusScreen::refresh() {
+    LVGL_LOCK();
     update_labels();
 }
 
@@ -298,6 +305,7 @@ void StatusScreen::set_share_callback(ShareCallback callback) {
 }
 
 void StatusScreen::show() {
+    LVGL_LOCK();
     refresh();  // Update status when shown
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);
@@ -316,6 +324,7 @@ void StatusScreen::show() {
 }
 
 void StatusScreen::hide() {
+    LVGL_LOCK();
     // Remove from focus group when hiding
     lv_group_t* group = LVGL::LVGLInit::get_default_group();
     if (group) {

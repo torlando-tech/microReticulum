@@ -11,6 +11,7 @@
 #include "../../Utilities/OS.h"
 #include "../../Hardware/TDeck/Config.h"
 #include "../LVGL/LVGLInit.h"
+#include "../LVGL/LVGLLock.h"
 #include <WiFi.h>
 #include <MsgPack.h>
 #include <TinyGPSPlus.h>
@@ -28,6 +29,7 @@ ConversationListScreen::ConversationListScreen(lv_obj_t* parent)
       _label_battery_icon(nullptr), _label_battery_pct(nullptr),
       _lora_interface(nullptr), _ble_interface(nullptr), _gps(nullptr),
       _message_store(nullptr) {
+    LVGL_LOCK();
 
     // Create screen object
     if (parent) {
@@ -53,6 +55,7 @@ ConversationListScreen::ConversationListScreen(lv_obj_t* parent)
 }
 
 ConversationListScreen::~ConversationListScreen() {
+    LVGL_LOCK();
     // Pool handles cleanup automatically when vector destructs
     if (_screen) {
         lv_obj_del(_screen);
@@ -174,11 +177,13 @@ void ConversationListScreen::create_bottom_nav() {
 }
 
 void ConversationListScreen::load_conversations(::LXMF::MessageStore& store) {
+    LVGL_LOCK();
     _message_store = &store;
     refresh();
 }
 
 void ConversationListScreen::refresh() {
+    LVGL_LOCK();
     if (!_message_store) {
         return;
     }
@@ -315,6 +320,7 @@ void ConversationListScreen::create_conversation_item(const ConversationItem& it
 }
 
 void ConversationListScreen::update_unread_count(const Bytes& peer_hash, uint16_t unread_count) {
+    LVGL_LOCK();
     // Find conversation and update
     for (auto& conv : _conversations) {
         if (conv.peer_hash == peer_hash) {
@@ -350,6 +356,7 @@ void ConversationListScreen::set_status_callback(StatusCallback callback) {
 }
 
 void ConversationListScreen::show() {
+    LVGL_LOCK();
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);  // Bring to front for touch events
 
@@ -376,6 +383,7 @@ void ConversationListScreen::show() {
 }
 
 void ConversationListScreen::hide() {
+    LVGL_LOCK();
     // Remove from focus group when hiding
     lv_group_t* group = LVGL::LVGLInit::get_default_group();
     if (group) {
@@ -397,6 +405,7 @@ lv_obj_t* ConversationListScreen::get_object() {
 }
 
 void ConversationListScreen::update_status() {
+    LVGL_LOCK();
     // Update WiFi RSSI
     if (WiFi.status() == WL_CONNECTED) {
         int rssi = WiFi.RSSI();

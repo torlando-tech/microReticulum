@@ -7,6 +7,7 @@
 #ifdef ARDUINO
 
 #include <WiFi.h>
+#include "../LVGL/LVGLLock.h"
 #include <SPIFFS.h>
 #include <TinyGPSPlus.h>
 #include "../../Log.h"
@@ -956,6 +957,7 @@ void SettingsScreen::save_settings() {
 }
 
 void SettingsScreen::update_ui_from_settings() {
+    LVGL_LOCK();
     if (_ta_wifi_ssid) {
         lv_textarea_set_text(_ta_wifi_ssid, _settings.wifi_ssid.c_str());
     }
@@ -1108,6 +1110,7 @@ void SettingsScreen::update_ui_from_settings() {
 }
 
 void SettingsScreen::update_settings_from_ui() {
+    LVGL_LOCK();
     if (_ta_wifi_ssid) {
         _settings.wifi_ssid = lv_textarea_get_text(_ta_wifi_ssid);
     }
@@ -1204,6 +1207,7 @@ void SettingsScreen::update_settings_from_ui() {
 }
 
 void SettingsScreen::update_gps_display() {
+    LVGL_LOCK();
     if (!_gps) {
         lv_label_set_text(_label_gps_sats, "Satellites: N/A");
         lv_label_set_text(_label_gps_coords, "Location: GPS not available");
@@ -1254,6 +1258,7 @@ void SettingsScreen::update_gps_display() {
 }
 
 void SettingsScreen::update_system_info() {
+    LVGL_LOCK();
     // Identity hash
     if (_identity_hash.size() > 0) {
         String hash = "Identity: " + String(_identity_hash.toHex().substr(0, 16).c_str()) + "...";
@@ -1317,6 +1322,7 @@ void SettingsScreen::set_propagation_nodes_callback(PropagationNodesCallback cal
 }
 
 void SettingsScreen::show() {
+    LVGL_LOCK();
     refresh();
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);
@@ -1335,6 +1341,7 @@ void SettingsScreen::show() {
 }
 
 void SettingsScreen::hide() {
+    LVGL_LOCK();
     // Remove from focus group when hiding
     lv_group_t* group = LVGL::LVGLInit::get_default_group();
     if (group) {

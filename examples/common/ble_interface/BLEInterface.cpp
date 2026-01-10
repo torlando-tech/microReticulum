@@ -774,7 +774,8 @@ void BLEInterface::processDiscoveredPeers() {
         _last_connection_attempt = now;
 
         // Handle immediate connection failure (resets state for retry)
-        if (!_platform->connect(addr, 10000)) {
+        // Reduced timeout from 10s to 3s to avoid long UI freezes
+        if (!_platform->connect(addr, 3000)) {
             WARNING("BLEInterface: Connection attempt failed immediately");
             _peer_manager.connectionFailed(candidate->mac_address);
         }
@@ -886,3 +887,57 @@ void BLEInterface::initiateHandshake(const ConnectionHandle& conn) {
         DEBUG("BLEInterface: Sent identity handshake to " + conn.peer_address.toString());
     }
 }
+
+//=============================================================================
+// FreeRTOS Task Support
+//=============================================================================
+
+#ifdef ARDUINO
+
+void BLEInterface::ble_task(void* param) {
+    BLEInterface* self = static_cast<BLEInterface*>(param);
+    Serial.printf("BLE task started on core %d\n", xPortGetCoreID());
+
+    while (true) {
+        // Run the BLE loop (already has internal mutex protection)
+        self->loop();
+
+        // Yield to other tasks
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+bool BLEInterface::start_task(int priority, int core) {
+    if (_task_handle != nullptr) {
+        WARNING("BLEInterface: Task already running");
+        return true;
+    }
+
+    BaseType_t result = xTaskCreatePinnedToCore(
+        ble_task,
+        "ble",
+        8192,           // 8KB stack
+        this,
+        priority,
+        &_task_handle,
+        core
+    );
+
+    if (result != pdPASS) {
+        ERROR("BLEInterface: Failed to create BLE task");
+        return false;
+    }
+
+    Serial.printf("BLE task created with priority %d on core %d\n", priority, core);
+    return true;
+}
+
+#else
+
+// Non-Arduino stub
+bool BLEInterface::start_task(int priority, int core) {
+    WARNING("BLEInterface: Task mode not supported on this platform");
+    return false;
+}
+
+#endif

@@ -23,6 +23,8 @@ lv_indev_t* LVGLInit::_keyboard = nullptr;
 lv_indev_t* LVGLInit::_touch = nullptr;
 lv_indev_t* LVGLInit::_trackball = nullptr;
 lv_group_t* LVGLInit::_default_group = nullptr;
+TaskHandle_t LVGLInit::_task_handle = nullptr;
+SemaphoreHandle_t LVGLInit::_mutex = nullptr;
 
 bool LVGLInit::init() {
     if (_initialized) {
@@ -30,6 +32,14 @@ bool LVGLInit::init() {
     }
 
     INFO("Initializing LVGL");
+
+    // Create recursive mutex for thread-safe LVGL access
+    // Recursive because LVGL callbacks may call other LVGL functions
+    _mutex = xSemaphoreCreateRecursiveMutex();
+    if (!_mutex) {
+        ERROR("Failed to create LVGL mutex");
+        return false;
+    }
 
     // Initialize LVGL library
     lv_init();
@@ -131,7 +141,81 @@ void LVGLInit::task_handler() {
         return;
     }
 
+    // If running as a task, this is a no-op
+    if (_task_handle != nullptr) {
+        return;
+    }
+
     lv_task_handler();
+}
+
+void LVGLInit::lvgl_task(void* param) {
+    Serial.printf("LVGL task started on core %d\n", xPortGetCoreID());
+
+    while (true) {
+        // Acquire mutex before calling LVGL
+        if (xSemaphoreTakeRecursive(_mutex, portMAX_DELAY) == pdTRUE) {
+            lv_task_handler();
+            xSemaphoreGiveRecursive(_mutex);
+        }
+
+        // Yield to other tasks - LVGL recommends 5-10ms between calls
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+
+bool LVGLInit::start_task(int priority, int core) {
+    if (!_initialized) {
+        ERROR("Cannot start LVGL task - not initialized");
+        return false;
+    }
+
+    if (_task_handle != nullptr) {
+        WARNING("LVGL task already running");
+        return true;
+    }
+
+    // Create the task
+    BaseType_t result;
+    if (core >= 0) {
+        result = xTaskCreatePinnedToCore(
+            lvgl_task,
+            "lvgl",
+            8192,           // Stack size (8KB should be enough for LVGL)
+            nullptr,
+            priority,
+            &_task_handle,
+            core
+        );
+    } else {
+        result = xTaskCreate(
+            lvgl_task,
+            "lvgl",
+            8192,
+            nullptr,
+            priority,
+            &_task_handle
+        );
+    }
+
+    if (result != pdPASS) {
+        ERROR("Failed to create LVGL task");
+        return false;
+    }
+
+    Serial.printf("LVGL task created with priority %d%s%d\n",
+                   priority,
+                   core >= 0 ? " on core " : "",
+                   core >= 0 ? core : 0);
+    return true;
+}
+
+bool LVGLInit::is_task_running() {
+    return _task_handle != nullptr;
+}
+
+SemaphoreHandle_t LVGLInit::get_mutex() {
+    return _mutex;
 }
 
 uint32_t LVGLInit::get_tick() {

@@ -7,6 +7,7 @@
 
 #include "../../Log.h"
 #include "../LVGL/LVGLInit.h"
+#include "../LVGL/LVGLLock.h"
 
 using namespace RNS;
 
@@ -43,6 +44,7 @@ QRScreen::QRScreen(lv_obj_t* parent)
 }
 
 QRScreen::~QRScreen() {
+    LVGL_LOCK();
     if (_screen) {
         lv_obj_del(_screen);
     }
@@ -102,11 +104,13 @@ void QRScreen::create_content() {
 }
 
 void QRScreen::set_identity(const Identity& identity) {
+    LVGL_LOCK();
     _identity = identity;
     update_qr_code();
 }
 
 void QRScreen::set_lxmf_address(const Bytes& hash) {
+    LVGL_LOCK();
     _lxmf_address = hash;
     update_qr_code();
 }
@@ -134,6 +138,7 @@ void QRScreen::set_back_callback(BackCallback callback) {
 }
 
 void QRScreen::show() {
+    LVGL_LOCK();
     update_qr_code();  // Refresh QR when shown
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);
@@ -147,6 +152,7 @@ void QRScreen::show() {
 }
 
 void QRScreen::hide() {
+    LVGL_LOCK();
     // Remove from focus group when hiding
     lv_group_t* group = LVGL::LVGLInit::get_default_group();
     if (group && _btn_back) {

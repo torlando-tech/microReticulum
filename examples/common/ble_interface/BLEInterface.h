@@ -29,6 +29,11 @@
 #include <map>
 #include <mutex>
 
+#ifdef ARDUINO
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#endif
+
 /**
  * @brief Reticulum BLE Interface
  *
@@ -137,6 +142,23 @@ public:
      * @brief Check if BLE is running
      */
     bool isRunning() const { return _platform && _platform->isRunning(); }
+
+    /**
+     * @brief Start BLE on its own FreeRTOS task
+     *
+     * This allows BLE operations to run independently of the main loop,
+     * preventing UI freezes during scans and connections.
+     *
+     * @param priority Task priority (default 1)
+     * @param core Core to pin the task to (default 0, where BT controller runs)
+     * @return true if task started successfully
+     */
+    bool start_task(int priority = 1, int core = 0);
+
+    /**
+     * @brief Check if BLE is running on its own task
+     */
+    bool is_task_running() const { return _task_handle != nullptr; }
 
 protected:
     virtual void send_outgoing(const RNS::Bytes& data) override;
@@ -248,4 +270,11 @@ private:
     // calling processReceivedData, which can trigger onHandshakeComplete callback
     // that also needs the lock
     mutable std::recursive_mutex _mutex;
+
+    //=========================================================================
+    // FreeRTOS Task Support
+    //=========================================================================
+
+    TaskHandle_t _task_handle = nullptr;
+    static void ble_task(void* param);
 };

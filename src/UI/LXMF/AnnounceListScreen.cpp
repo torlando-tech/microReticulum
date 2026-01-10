@@ -7,6 +7,7 @@
 #ifdef ARDUINO
 
 #include "../../Log.h"
+#include "../LVGL/LVGLLock.h"
 #include "../../Transport.h"
 #include "../../Identity.h"
 #include "../../Destination.h"
@@ -124,6 +125,7 @@ void AnnounceListScreen::create_list() {
 }
 
 void AnnounceListScreen::refresh() {
+    LVGL_LOCK();
     INFO("Refreshing announce list");
 
     // Clear existing items (also removes from focus group when deleted)
@@ -285,6 +287,7 @@ void AnnounceListScreen::set_send_announce_callback(SendAnnounceCallback callbac
 }
 
 void AnnounceListScreen::show() {
+    LVGL_LOCK();
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);
 
@@ -311,6 +314,7 @@ void AnnounceListScreen::show() {
 }
 
 void AnnounceListScreen::hide() {
+    LVGL_LOCK();
     // Remove from focus group when hiding
     lv_group_t* group = LVGL::LVGLInit::get_default_group();
     if (group) {

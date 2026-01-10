@@ -48,6 +48,7 @@
 
 // UI
 #include <UI/LVGL/LVGLInit.h>
+#include <UI/LVGL/LVGLLock.h>
 #include <UI/LXMF/UIManager.h>
 #include <UI/LXMF/SettingsScreen.h>
 
@@ -486,6 +487,16 @@ void setup_lvgl_and_ui() {
     }
 
     INFO("LVGL initialized");
+
+    // Start LVGL on its own FreeRTOS task for responsive UI
+    // Core 1, priority 2 (higher than default to ensure smooth rendering)
+    // All LVGL API calls from other code are protected by mutex (LVGL_LOCK)
+    if (!UI::LVGL::LVGLInit::start_task(2, 1)) {
+        ERROR("Failed to start LVGL task!");
+        while (1) delay(1000);
+    }
+
+    INFO("LVGL task started on core 1");
 }
 
 void setup_reticulum() {
@@ -621,6 +632,14 @@ void setup_reticulum() {
         } else {
             INFO("BLE Mesh interface started");
             Transport::register_interface(*ble_interface);
+
+            // Start BLE on its own FreeRTOS task (core 0, priority 1)
+            // This prevents BLE operations from blocking the main loop
+            if (ble_interface_impl->start_task(1, 0)) {
+                INFO("BLE task started on core 0");
+            } else {
+                WARNING("Failed to start BLE task, will run in main loop");
+            }
         }
     } else {
         INFO("BLE Mesh interface disabled in settings");
@@ -1083,8 +1102,8 @@ void loop() {
         lora_interface->loop();
     }
 
-    // Process BLE interface
-    if (ble_interface) {
+    // Process BLE interface (skip if running on its own task)
+    if (ble_interface && ble_interface_impl && !ble_interface_impl->is_task_running()) {
         ble_interface->loop();
     }
 
@@ -1208,7 +1227,11 @@ void loop() {
 
     // Screen timeout handling
     if (app_settings.screen_timeout > 0) {  // 0 = never timeout
-        uint32_t inactive_ms = lv_disp_get_inactive_time(NULL);
+        uint32_t inactive_ms;
+        {
+            LVGL_LOCK();
+            inactive_ms = lv_disp_get_inactive_time(NULL);
+        }
         uint32_t timeout_ms = app_settings.screen_timeout * 1000;
 
         if (!screen_off && inactive_ms > timeout_ms) {

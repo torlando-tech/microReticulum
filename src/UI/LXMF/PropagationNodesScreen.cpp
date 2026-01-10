@@ -10,6 +10,7 @@
 #include "../../LXMF/PropagationNodeManager.h"
 #include "../../Utilities/OS.h"
 #include "../LVGL/LVGLInit.h"
+#include "../LVGL/LVGLLock.h"
 
 using namespace RNS;
 
@@ -49,6 +50,7 @@ PropagationNodesScreen::PropagationNodesScreen(lv_obj_t* parent)
 }
 
 PropagationNodesScreen::~PropagationNodesScreen() {
+    LVGL_LOCK();
     if (_screen) {
         lv_obj_del(_screen);
     }
@@ -145,6 +147,7 @@ void PropagationNodesScreen::create_list() {
 void PropagationNodesScreen::load_nodes(::LXMF::PropagationNodeManager& manager,
                                         const RNS::Bytes& selected_hash,
                                         bool auto_select_enabled) {
+    LVGL_LOCK();
     INFO("Loading propagation nodes");
 
     _selected_hash = selected_hash;
@@ -363,6 +366,7 @@ void PropagationNodesScreen::set_auto_select_changed_callback(AutoSelectChangedC
 
 // Visibility
 void PropagationNodesScreen::show() {
+    LVGL_LOCK();
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);
 
@@ -380,6 +384,7 @@ void PropagationNodesScreen::show() {
 }
 
 void PropagationNodesScreen::hide() {
+    LVGL_LOCK();
     // Remove from focus group when hiding
     lv_group_t* group = LVGL::LVGLInit::get_default_group();
     if (group) {

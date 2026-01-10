@@ -507,8 +507,8 @@ void NimBLEPlatform::enterErrorRecovery() {
         }
     }
 
-    // ESP32-S3 settling time after sync
-    delay(200);
+    // ESP32-S3 settling time after sync (reduced from 200ms)
+    delay(50);
 
     // Re-acquire scan object to reset NimBLE internal state
     // This is necessary because NimBLE scan object can get into stuck state
@@ -584,8 +584,8 @@ bool NimBLEPlatform::startScan(uint16_t duration_ms) {
         return false;
     }
 
-    // Settling delay for NimBLE internal state (matches connect function)
-    delay(100);
+    // Brief settling delay for NimBLE internal state (reduced from 100ms)
+    delay(20);
 
     // Transition to SCAN_STARTING
     if (!transitionMasterState(MasterState::IDLE, MasterState::SCAN_STARTING)) {
@@ -700,11 +700,12 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
     NimBLEAddress nimAddr = toNimBLE(address);
 
     // Rate limit connections to avoid overwhelming the BLE stack
+    // Non-blocking: return false if too soon, caller can retry later
     static unsigned long last_connect_time = 0;
     unsigned long now = millis();
-    if (now - last_connect_time < 500) {
-        DEBUG("NimBLEPlatform: Connection rate limited, waiting");
-        delay(500 - (now - last_connect_time));
+    if (now - last_connect_time < 300) {  // Reduced from 500ms
+        DEBUG("NimBLEPlatform: Connection rate limited, try again later");
+        return false;  // Non-blocking: fail fast instead of delay
     }
     last_connect_time = millis();
 
@@ -764,8 +765,8 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
     _gap_state = GAPState::MASTER_PRIORITY;
     portEXIT_CRITICAL(&_state_mux);
 
-    // Extra settling delay after stopping advertising
-    delay(200);
+    // Brief settling delay after stopping advertising (reduced from 200ms)
+    delay(20);
 
     // Verify GAP is truly idle
     if (ble_gap_disc_active() || ble_gap_adv_active()) {
@@ -1034,7 +1035,7 @@ bool NimBLEPlatform::connectNative(const BLEAddress& address, uint16_t timeout_m
             ERROR("NimBLEPlatform::connectNative: Host desync detected (rc=22), scheduling host reset");
             // Schedule a host reset to resynchronize with controller
             ble_hs_sched_reset(0);
-            delay(300);  // Give time for reset to process
+            delay(50);  // Brief delay for reset to process (reduced from 300ms)
             enterErrorRecovery();
         }
 
@@ -1057,7 +1058,7 @@ bool NimBLEPlatform::connectNative(const BLEAddress& address, uint16_t timeout_m
                 DEBUG("NimBLEPlatform::connectNative: ble_gap_conn_cancel returned " + std::to_string(rc));
             }
         }
-        delay(50);  // Give stack time to process
+        delay(10);  // Brief delay for stack to process (reduced from 50ms)
         _native_connect_pending = false;
         return false;
     }

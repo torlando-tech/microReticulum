@@ -41,8 +41,32 @@ public:
     /**
      * Task handler - must be called periodically (e.g., in main loop)
      * Handles LVGL rendering and input processing
+     * NOTE: If start_task() was called, this is a no-op as LVGL runs on its own task
      */
     static void task_handler();
+
+    /**
+     * Start LVGL on its own FreeRTOS task
+     * This allows LVGL to run independently of the main loop, preventing
+     * UI freezes when other operations (like BLE) take time.
+     * @param priority Task priority (default 1, higher than idle)
+     * @param core Core to pin the task to (-1 for no affinity, 0 or 1 for specific core)
+     * @return true if task started successfully
+     */
+    static bool start_task(int priority = 1, int core = 1);
+
+    /**
+     * Check if LVGL is running on its own task
+     * @return true if running as a FreeRTOS task
+     */
+    static bool is_task_running();
+
+    /**
+     * Get the LVGL mutex for thread-safe access
+     * All LVGL API calls from outside the LVGL task must acquire this mutex.
+     * @return Recursive mutex handle
+     */
+    static SemaphoreHandle_t get_mutex();
 
     /**
      * Get time in milliseconds for LVGL
@@ -105,6 +129,11 @@ private:
     static lv_indev_t* _touch;
     static lv_indev_t* _trackball;
     static lv_group_t* _default_group;
+
+    // FreeRTOS task support
+    static TaskHandle_t _task_handle;
+    static SemaphoreHandle_t _mutex;
+    static void lvgl_task(void* param);
 
     // LVGL logging callback
     static void log_print(const char* buf);

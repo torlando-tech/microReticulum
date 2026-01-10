@@ -7,6 +7,7 @@
 #ifdef ARDUINO
 
 #include "../../Log.h"
+#include "../LVGL/LVGLLock.h"
 #include "../LVGL/LVGLInit.h"
 #include "../TextAreaHelper.h"
 
@@ -177,11 +178,13 @@ void ComposeScreen::create_button_area() {
 }
 
 void ComposeScreen::clear() {
+    LVGL_LOCK();
     lv_textarea_set_text(_text_area_dest, "");
     lv_textarea_set_text(_text_area_message, "");
 }
 
 void ComposeScreen::set_destination(const Bytes& dest_hash) {
+    LVGL_LOCK();
     String hash_str = dest_hash.toHex().c_str();
     lv_textarea_set_text(_text_area_dest, hash_str.c_str());
 }
@@ -195,6 +198,7 @@ void ComposeScreen::set_send_callback(SendCallback callback) {
 }
 
 void ComposeScreen::show() {
+    LVGL_LOCK();
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);  // Bring to front for touch events
 
@@ -214,6 +218,7 @@ void ComposeScreen::show() {
 }
 
 void ComposeScreen::hide() {
+    LVGL_LOCK();
     // Remove from focus group when hiding
     lv_group_t* group = LVGL::LVGLInit::get_default_group();
     if (group) {

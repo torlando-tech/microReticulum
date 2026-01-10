@@ -9,6 +9,7 @@
 #include "../../Log.h"
 #include "../../Identity.h"
 #include "../LVGL/LVGLInit.h"
+#include "../LVGL/LVGLLock.h"
 #include "../Clipboard.h"
 #include <MsgPack.h>
 
@@ -21,6 +22,7 @@ ChatScreen::ChatScreen(lv_obj_t* parent)
     : _screen(nullptr), _header(nullptr), _message_list(nullptr), _input_area(nullptr),
       _text_area(nullptr), _btn_send(nullptr), _btn_back(nullptr),
       _message_store(nullptr), _display_start_idx(0), _loading_more(false) {
+    LVGL_LOCK();
 
     // Create screen object
     if (parent) {
@@ -49,6 +51,7 @@ ChatScreen::ChatScreen(lv_obj_t* parent)
 }
 
 ChatScreen::~ChatScreen() {
+    LVGL_LOCK();
     if (_screen) {
         lv_obj_del(_screen);
     }
@@ -140,6 +143,7 @@ void ChatScreen::create_input_area() {
 }
 
 void ChatScreen::load_conversation(const Bytes& peer_hash, ::LXMF::MessageStore& store) {
+    LVGL_LOCK();
     _peer_hash = peer_hash;
     _message_store = &store;
 
@@ -172,6 +176,7 @@ void ChatScreen::load_conversation(const Bytes& peer_hash, ::LXMF::MessageStore&
 }
 
 void ChatScreen::refresh() {
+    LVGL_LOCK();
     if (!_message_store) {
         return;
     }
@@ -230,6 +235,7 @@ void ChatScreen::refresh() {
 }
 
 void ChatScreen::load_more_messages() {
+    LVGL_LOCK();
     if (_loading_more || _display_start_idx == 0 || !_message_store) {
         return;  // Already at the beginning or already loading
     }
@@ -395,6 +401,7 @@ void ChatScreen::create_message_bubble(const MessageItem& item) {
 }
 
 void ChatScreen::add_message(const ::LXMF::LXMessage& message, bool outgoing) {
+    LVGL_LOCK();
     MessageItem item;
     item.message_hash = message.hash();
 
@@ -425,6 +432,7 @@ void ChatScreen::add_message(const ::LXMF::LXMessage& message, bool outgoing) {
 }
 
 void ChatScreen::update_message_status(const Bytes& message_hash, bool delivered) {
+    LVGL_LOCK();
     // Find message and update status in our data
     for (auto& msg : _messages) {
         if (msg.message_hash == message_hash) {
@@ -465,6 +473,7 @@ void ChatScreen::set_send_message_callback(SendMessageCallback callback) {
 }
 
 void ChatScreen::show() {
+    LVGL_LOCK();
     lv_obj_clear_flag(_screen, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_screen);  // Bring to front for touch events
 
@@ -483,6 +492,7 @@ void ChatScreen::show() {
 }
 
 void ChatScreen::hide() {
+    LVGL_LOCK();
     // Remove from focus group when hiding
     lv_group_t* group = LVGL::LVGLInit::get_default_group();
     if (group) {

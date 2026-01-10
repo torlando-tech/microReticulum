@@ -9,6 +9,7 @@
 #include <Preferences.h>
 #include "../../Log.h"
 #include "tone/Tone.h"
+#include "../LVGL/LVGLLock.h"
 
 using namespace RNS;
 
@@ -64,6 +65,7 @@ UIManager::~UIManager() {
 }
 
 bool UIManager::init() {
+    LVGL_LOCK();
     if (_initialized) {
         return true;
     }
@@ -213,6 +215,7 @@ bool UIManager::init() {
 }
 
 void UIManager::update() {
+    LVGL_LOCK();
     // Process outbound LXMF messages
     _router.process_outbound();
 
@@ -235,6 +238,7 @@ void UIManager::update() {
 }
 
 void UIManager::show_conversation_list() {
+    LVGL_LOCK();
     INFO("Showing conversation list");
 
     _conversation_list_screen->refresh();
@@ -250,6 +254,7 @@ void UIManager::show_conversation_list() {
 }
 
 void UIManager::show_chat(const Bytes& peer_hash) {
+    LVGL_LOCK();
     std::string hash_hex = peer_hash.toHex().substr(0, 8);
     std::string msg = "Showing chat with peer " + hash_hex + "...";
     INFO(msg.c_str());
@@ -269,6 +274,7 @@ void UIManager::show_chat(const Bytes& peer_hash) {
 }
 
 void UIManager::show_compose() {
+    LVGL_LOCK();
     INFO("Showing compose screen");
 
     _compose_screen->clear();
@@ -284,6 +290,7 @@ void UIManager::show_compose() {
 }
 
 void UIManager::show_announces() {
+    LVGL_LOCK();
     INFO("Showing announces screen");
 
     _announce_list_screen->refresh();
@@ -299,6 +306,7 @@ void UIManager::show_announces() {
 }
 
 void UIManager::show_status() {
+    LVGL_LOCK();
     INFO("Showing status screen");
 
     _status_screen->refresh();
@@ -322,6 +330,7 @@ void UIManager::on_new_message() {
 }
 
 void UIManager::show_settings() {
+    LVGL_LOCK();
     INFO("Showing settings screen");
 
     _settings_screen->refresh();
@@ -337,6 +346,7 @@ void UIManager::show_settings() {
 }
 
 void UIManager::show_propagation_nodes() {
+    LVGL_LOCK();
     INFO("Showing propagation nodes screen");
 
     if (_propagation_manager) {
@@ -433,12 +443,14 @@ void UIManager::on_back_from_status() {
 }
 
 void UIManager::on_share_from_status() {
+    LVGL_LOCK();
     _status_screen->hide();
     _qr_screen->show();
     _current_screen = SCREEN_QR;
 }
 
 void UIManager::on_back_from_qr() {
+    LVGL_LOCK();
     _qr_screen->hide();
     _status_screen->show();
     _current_screen = SCREEN_STATUS;
@@ -553,6 +565,7 @@ void UIManager::send_message(const Bytes& dest_hash, const String& content) {
 }
 
 void UIManager::on_message_received(::LXMF::LXMessage& message) {
+    LVGL_LOCK();
     std::string source_hex = message.source_hash().toHex().substr(0, 8);
     std::string msg = "Message received from " + source_hex + "...";
     INFO(msg.c_str());
@@ -582,6 +595,7 @@ void UIManager::on_message_received(::LXMF::LXMessage& message) {
 }
 
 void UIManager::on_message_delivered(::LXMF::LXMessage& message) {
+    LVGL_LOCK();
     std::string hash_hex = message.hash().toHex().substr(0, 8);
     std::string msg = "Message delivered: " + hash_hex + "...";
     INFO(msg.c_str());
@@ -593,6 +607,7 @@ void UIManager::on_message_delivered(::LXMF::LXMessage& message) {
 }
 
 void UIManager::on_message_failed(::LXMF::LXMessage& message) {
+    LVGL_LOCK();
     std::string hash_hex = message.hash().toHex().substr(0, 8);
     std::string msg = "Message delivery failed: " + hash_hex + "...";
     WARNING(msg.c_str());
@@ -604,6 +619,7 @@ void UIManager::on_message_failed(::LXMF::LXMessage& message) {
 }
 
 void UIManager::refresh_current_screen() {
+    LVGL_LOCK();
     switch (_current_screen) {
         case SCREEN_CONVERSATION_LIST:
             _conversation_list_screen->refresh();
