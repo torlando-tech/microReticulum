@@ -464,15 +464,7 @@ void NimBLEPlatform::enterErrorRecovery() {
     _slave_state = SlaveState::IDLE;
     portEXIT_CRITICAL(&_state_mux);
 
-    // Force stop all operations
-    if (_scan) {
-        _scan->stop();
-    }
-    if (_advertising_obj) {
-        _advertising_obj->stop();
-    }
-
-    // Also stop at low level
+    // Force stop all operations at low level first
     if (ble_gap_disc_active()) {
         ble_gap_disc_cancel();
     }
@@ -480,11 +472,32 @@ void NimBLEPlatform::enterErrorRecovery() {
         ble_gap_adv_stop();
     }
 
+    // Stop high level objects
+    if (_scan) {
+        _scan->stop();
+    }
+    if (_advertising_obj) {
+        _advertising_obj->stop();
+    }
+
     _scan_stop_time = 0;
     _slave_paused_for_master = false;
 
     // ESP32-S3 settling time
     delay(300);
+
+    // Re-acquire scan object to reset NimBLE internal state
+    // This is necessary because NimBLE scan object can get into stuck state
+    _scan = NimBLEDevice::getScan();
+    if (_scan) {
+        _scan->setScanCallbacks(this, false);
+        _scan->setActiveScan(_config.scan_mode == ScanMode::ACTIVE);
+        _scan->setInterval(_config.scan_interval_ms);
+        _scan->setWindow(_config.scan_window_ms);
+        _scan->setFilterPolicy(BLE_HCI_SCAN_FILT_NO_WL);
+        _scan->setDuplicateFilter(true);
+        _scan->clearResults();
+    }
 
     // Verify GAP is truly idle
     if (!ble_gap_disc_active() && !ble_gap_adv_active() && !ble_gap_conn_active()) {
