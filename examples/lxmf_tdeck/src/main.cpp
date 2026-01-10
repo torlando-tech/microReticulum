@@ -1185,6 +1185,20 @@ void loop() {
                 WARNING("All RNS interfaces offline");
             }
         }
+
+        // Update BLE peer info on status screen (every 3 seconds)
+        static uint32_t last_ble_update = 0;
+        if (millis() - last_ble_update > 3000) {
+            last_ble_update = millis();
+            if (ble_interface_impl && ui_manager && ui_manager->get_status_screen()) {
+                BLEInterface::PeerSummary peers[BLEInterface::MAX_PEER_SUMMARIES];
+                size_t count = ble_interface_impl->getConnectedPeerSummaries(peers, BLEInterface::MAX_PEER_SUMMARIES);
+
+                // Cast is safe - both structs have identical memory layout
+                ui_manager->get_status_screen()->set_ble_info(
+                    reinterpret_cast<UI::LXMF::StatusScreen::BLEPeerInfo*>(peers), count);
+            }
+        }
     }
 
     // Read GPS data continuously (TinyGPSPlus needs constant feeding)

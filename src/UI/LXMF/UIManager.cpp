@@ -32,6 +32,7 @@ UIManager::UIManager(Reticulum& reticulum, ::LXMF::LXMRouter& router, ::LXMF::Me
       _settings_screen(nullptr),
       _propagation_nodes_screen(nullptr),
       _propagation_manager(nullptr),
+      _ble_interface(nullptr),
       _initialized(false) {
 }
 
@@ -383,6 +384,7 @@ void UIManager::set_lora_interface(Interface* iface) {
 }
 
 void UIManager::set_ble_interface(Interface* iface) {
+    _ble_interface = iface;
     if (_conversation_list_screen) {
         _conversation_list_screen->set_ble_interface(iface);
     }

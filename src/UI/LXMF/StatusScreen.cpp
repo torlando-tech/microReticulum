@@ -19,7 +19,12 @@ StatusScreen::StatusScreen(lv_obj_t* parent)
     : _screen(nullptr), _header(nullptr), _content(nullptr), _btn_back(nullptr),
       _btn_share(nullptr), _label_identity_value(nullptr), _label_lxmf_value(nullptr),
       _label_wifi_status(nullptr), _label_wifi_ip(nullptr), _label_wifi_rssi(nullptr),
-      _label_rns_status(nullptr), _rns_connected(false) {
+      _label_rns_status(nullptr), _label_ble_header(nullptr),
+      _rns_connected(false), _ble_peer_count(0) {
+    // Initialize BLE peer labels array
+    for (size_t i = 0; i < MAX_BLE_PEERS; i++) {
+        _label_ble_peers[i] = nullptr;
+    }
 
     // Create screen object
     if (parent) {
@@ -156,6 +161,22 @@ void StatusScreen::create_content() {
     lv_obj_set_style_text_color(_label_rns_status, Theme::textPrimary(), 0);
     lv_obj_set_width(_label_rns_status, lv_pct(100));
     lv_label_set_long_mode(_label_rns_status, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_pad_bottom(_label_rns_status, 8, 0);
+
+    // BLE section header
+    _label_ble_header = lv_label_create(_content);
+    lv_label_set_text(_label_ble_header, "BLE: No peers");
+    lv_obj_set_style_text_color(_label_ble_header, Theme::textPrimary(), 0);
+
+    // Pre-create BLE peer labels (hidden until needed)
+    for (size_t i = 0; i < MAX_BLE_PEERS; i++) {
+        _label_ble_peers[i] = lv_label_create(_content);
+        lv_label_set_text(_label_ble_peers[i], "");
+        lv_obj_set_style_text_color(_label_ble_peers[i], Theme::textTertiary(), 0);
+        lv_obj_set_style_text_font(_label_ble_peers[i], &lv_font_montserrat_12, 0);
+        lv_obj_set_style_pad_left(_label_ble_peers[i], 8, 0);
+        lv_obj_add_flag(_label_ble_peers[i], LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void StatusScreen::set_identity_hash(const Bytes& hash) {
@@ -171,6 +192,15 @@ void StatusScreen::set_lxmf_address(const Bytes& hash) {
 void StatusScreen::set_rns_status(bool connected, const String& server_name) {
     _rns_connected = connected;
     _rns_server = server_name;
+    update_labels();
+}
+
+void StatusScreen::set_ble_info(const BLEPeerInfo* peers, size_t count) {
+    // Copy peer data to internal storage
+    _ble_peer_count = (count <= MAX_BLE_PEERS) ? count : MAX_BLE_PEERS;
+    for (size_t i = 0; i < _ble_peer_count; i++) {
+        memcpy(&_ble_peers[i], &peers[i], sizeof(BLEPeerInfo));
+    }
     update_labels();
 }
 
@@ -221,6 +251,41 @@ void StatusScreen::update_labels() {
     } else {
         lv_label_set_text(_label_rns_status, "RNS: Disconnected");
         lv_obj_set_style_text_color(_label_rns_status, Theme::error(), 0);
+    }
+
+    // Update BLE peer info
+    if (_ble_peer_count > 0) {
+        char ble_header[32];
+        snprintf(ble_header, sizeof(ble_header), "BLE: %zu peer%s",
+                 _ble_peer_count, _ble_peer_count == 1 ? "" : "s");
+        lv_label_set_text(_label_ble_header, ble_header);
+        lv_obj_set_style_text_color(_label_ble_header, Theme::success(), 0);
+
+        for (size_t i = 0; i < MAX_BLE_PEERS; i++) {
+            if (i < _ble_peer_count) {
+                // Format: "a1b2c3d4e5f6  -45 dBm\nAA:BB:CC:DD:EE:FF"
+                char peer_text[64];
+                if (_ble_peers[i].identity[0] != '\0') {
+                    snprintf(peer_text, sizeof(peer_text), "%s  %d dBm\n%s",
+                             _ble_peers[i].identity, _ble_peers[i].rssi, _ble_peers[i].mac);
+                } else {
+                    snprintf(peer_text, sizeof(peer_text), "(no identity)  %d dBm\n%s",
+                             _ble_peers[i].rssi, _ble_peers[i].mac);
+                }
+                lv_label_set_text(_label_ble_peers[i], peer_text);
+                lv_obj_clear_flag(_label_ble_peers[i], LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(_label_ble_peers[i], LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    } else {
+        lv_label_set_text(_label_ble_header, "BLE: No peers");
+        lv_obj_set_style_text_color(_label_ble_header, Theme::textMuted(), 0);
+
+        // Hide all peer labels
+        for (size_t i = 0; i < MAX_BLE_PEERS; i++) {
+            lv_obj_add_flag(_label_ble_peers[i], LV_OBJ_FLAG_HIDDEN);
+        }
     }
 }
 

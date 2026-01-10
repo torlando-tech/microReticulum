@@ -111,9 +111,27 @@ public:
     //=========================================================================
 
     /**
+     * @brief Summary info for a connected peer (fixed-size, no heap allocation)
+     */
+    struct PeerSummary {
+        char identity[14];    // First 12 hex chars + null, or empty if unknown
+        char mac[18];         // "AA:BB:CC:DD:EE:FF" format
+        int8_t rssi;
+    };
+    static constexpr size_t MAX_PEER_SUMMARIES = 8;
+
+    /**
      * @brief Get count of connected peers
      */
     size_t peerCount() const;
+
+    /**
+     * @brief Get summaries of connected peers (for UI display)
+     * @param out Pre-allocated array to fill
+     * @param max_count Maximum entries to fill
+     * @return Actual number of entries filled
+     */
+    size_t getConnectedPeerSummaries(PeerSummary* out, size_t max_count) const;
 
     /**
      * @brief Check if BLE is running

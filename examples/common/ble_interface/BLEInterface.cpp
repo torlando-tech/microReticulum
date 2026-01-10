@@ -529,6 +529,13 @@ void BLEInterface::onServicesDiscovered(const ConnectionHandle& conn, bool succe
 
     if (!success) {
         WARNING("BLEInterface: Service discovery failed for " + conn.peer_address.toString());
+
+        // Clean up peer state - NimBLE may have already disconnected internally,
+        // so onDisconnected callback might not fire. Manually reset peer state.
+        Bytes mac = conn.peer_address.toBytes();
+        _peer_manager.connectionFailed(mac);
+
+        // Try to disconnect (may be no-op if already disconnected)
         _platform->disconnect(conn.handle);
         return;
     }

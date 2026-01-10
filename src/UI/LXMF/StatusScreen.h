@@ -77,6 +77,23 @@ public:
     void set_rns_status(bool connected, const String& server_name = "");
 
     /**
+     * BLE peer summary for display (matches BLEInterface::PeerSummary)
+     */
+    struct BLEPeerInfo {
+        char identity[14];    // First 12 hex chars + null
+        char mac[18];         // "AA:BB:CC:DD:EE:FF" format
+        int8_t rssi;
+    };
+    static constexpr size_t MAX_BLE_PEERS = 8;
+
+    /**
+     * Set BLE peer info for display
+     * @param peers Array of peer summaries
+     * @param count Number of peers
+     */
+    void set_ble_info(const BLEPeerInfo* peers, size_t count);
+
+    /**
      * Refresh WiFi and connection status
      */
     void refresh();
@@ -123,10 +140,18 @@ private:
     lv_obj_t* _label_wifi_rssi;
     lv_obj_t* _label_rns_status;
 
+    // BLE peer labels (pre-allocated, hidden when unused)
+    lv_obj_t* _label_ble_header;
+    lv_obj_t* _label_ble_peers[MAX_BLE_PEERS];  // Each shows identity + rssi + mac
+
     RNS::Bytes _identity_hash;
     RNS::Bytes _lxmf_address;
     bool _rns_connected;
     String _rns_server;
+
+    // BLE peer data (cached for display)
+    BLEPeerInfo _ble_peers[MAX_BLE_PEERS];
+    size_t _ble_peer_count;
 
     BackCallback _back_callback;
     ShareCallback _share_callback;

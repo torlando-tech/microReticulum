@@ -132,6 +132,11 @@ public:
     SettingsScreen* get_settings_screen() { return _settings_screen; }
 
     /**
+     * Get status screen for external updates (e.g., BLE peer info)
+     */
+    StatusScreen* get_status_screen() { return _status_screen; }
+
+    /**
      * Update RNS connection status displayed on status screen
      * @param connected Whether connected to RNS server
      * @param server_name Server hostname (optional)
@@ -186,6 +191,7 @@ private:
     PropagationNodesScreen* _propagation_nodes_screen;
 
     ::LXMF::PropagationNodeManager* _propagation_manager;
+    RNS::Interface* _ble_interface;
 
     bool _initialized;
 
