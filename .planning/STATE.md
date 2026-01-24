@@ -9,18 +9,18 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 
 ## Current Position
 
-Phase: 6 of 6 complete (v1.1 shipped)
-Plan: N/A — milestone complete
-Status: Ready for next milestone
-Last activity: 2026-01-24 — v1.1 milestone archived
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements for v1.2
+Last activity: 2026-01-24 — Milestone v1.2 started
 
-Progress: [█████████████████████████] 100% (17/17 plans across 6 phases)
+Progress: Awaiting roadmap
 
 ## Milestones
 
 - ✅ v1.0 Stability Audit — shipped 2026-01-24
 - ✅ v1.1 Stability Quick Wins — shipped 2026-01-24
-- 📋 v1.2+ — TBD
+- 🚧 v1.2 Stability Complete — in progress
 
 ## Performance Metrics
 
@@ -64,4 +64,4 @@ Stopped at: v1.1 milestone complete and archived
 Resume file: None
 
 ---
-*Last updated: 2026-01-24 after v1.1 milestone complete*
+*Last updated: 2026-01-24 after v1.2 milestone started*

@@ -8,20 +8,15 @@ A comprehensive stability audit and fix program for the microReticulum codebase 
 
 Reliable firmware operation for extended periods without crashes or performance degradation.
 
-## Current State (v1.1 Shipped)
+## Current Milestone: v1.2 Stability Complete
 
-**v1.1 Stability Quick Wins — Shipped 2026-01-24**
+**Goal:** Complete all remaining P2 and P3 stability issues from the v1 audit, making firmware production-ready.
 
-All 5 P1 stability issues from the v1 audit are now fixed:
-- ✅ ODR violation in Persistence module fixed (ArduinoJson 7 API)
-- ✅ ResourceData vectors pre-allocated (256 slots)
-- ✅ Task Watchdog Timer enabled (10s timeout)
-- ✅ LXStamper yield frequency improved 10x
-- ✅ BLE callback mutex protection added
+**Target scope:**
+- 11 P2 issues (LVGL thread-safety, allocation patterns, BLE cache, mutex docs)
+- 9 P3 issues (Bytes/Packet optimization, shutdown safety, documentation)
 
 **Build status:** Clean (0 warnings), RAM 41.9%, Flash 77.2%
-
-**Next:** Runtime testing on hardware, then P2 issues or new features
 
 ## Requirements
 
@@ -47,7 +42,38 @@ All 5 P1 stability issues from the v1 audit are now fixed:
 
 ### Active
 
-None — define requirements for next milestone with `/gsd:new-milestone`
+**Memory Allocation (P2):**
+- [ ] MEM-M1: Bytes newData make_shared pattern
+- [ ] MEM-M2: PacketReceipt default constructor allocates
+- [ ] MEM-M3: DynamicJsonDocument in Persistence (remaining migration)
+
+**LVGL Thread-Safety (P2):**
+- [ ] CONC-M1: SettingsScreen missing LVGL_LOCK
+- [ ] CONC-M2: ComposeScreen missing LVGL_LOCK
+- [ ] CONC-M3: AnnounceListScreen missing LVGL_LOCK
+- [ ] CONC-M7: LVGL mutex uses portMAX_DELAY
+
+**BLE/NimBLE (P2):**
+- [ ] CONC-M5: Mutex timeout may lose cache updates
+- [ ] CONC-M6: Discovered devices cache unbounded
+
+**Infrastructure (P2):**
+- [ ] CONC-M8: Audio I2S blocking write
+- [ ] CONC-M9: No formal mutex ordering enforcement
+
+**Memory Optimization (P3):**
+- [ ] MEM-H1: Bytes COW copy allocation
+- [ ] MEM-H2: Packet Object allocation (pool)
+- [ ] MEM-H3: Packet 9 Bytes members overhead
+- [ ] MEM-H4: PacketReceipt allocation (lazy)
+- [ ] MEM-L1: toHex string reallocation
+
+**Concurrency Hardening (P3):**
+- [ ] CONC-H4: Shutdown during active operations
+- [ ] CONC-M4: Soft reset does not release NimBLE state
+- [ ] CONC-L1: Native GAP handler volatile usage
+- [ ] CONC-L2: Undocumented 50ms delay
+- [ ] CONC-L4: portMAX_DELAY masks deadlock detection
 
 ### Out of Scope
 
@@ -134,4 +160,4 @@ None — define requirements for next milestone with `/gsd:new-milestone`
 </details>
 
 ---
-*Last updated: 2026-01-24 after v1.1 milestone complete*
+*Last updated: 2026-01-24 after v1.2 milestone started*
