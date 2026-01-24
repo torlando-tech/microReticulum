@@ -1,5 +1,33 @@
 # Project Milestones: microReticulum
 
+## v1.2 Stability Complete (Shipped: 2026-01-24)
+
+**Delivered:** Completed all P2 and P3 stability issues from v1 audit, making firmware production-ready.
+
+**Phases completed:** 7-8 (13 plans total)
+
+**Key accomplishments:**
+
+- LVGL thread safety: All screen constructors/destructors protected with LVGL_LOCK, 5s debug timeout
+- Memory pool architecture: BytesPool (4-tier) and ObjectPool for Packet/Receipt eliminating heap fragmentation
+- Packet inline buffers: Fixed-size fields use inline storage saving ~150 bytes/packet overhead
+- BLE graceful shutdown: 10s timeout for active operations, prevents use-after-free on restart
+- Bounded BLE cache: LRU eviction with connected device protection
+- Comprehensive CONCURRENCY.md with mutex ordering, timing rationale, volatile usage
+
+**Stats:**
+
+- 55 files modified (7,844 insertions, 174 deletions)
+- 2 phases, 13 plans
+- 60 commits
+- Same-day execution (2026-01-24)
+
+**Git range:** `82be835` → `51305b2`
+
+**What's next:** Production testing, then v1.3 for new features or additional optimizations
+
+---
+
 ## v1.1 Stability Quick Wins (Shipped: 2026-01-24)
 
 **Delivered:** Fixed all 5 P1 stability issues from v1 audit for reliable extended firmware operation.

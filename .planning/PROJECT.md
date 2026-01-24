@@ -8,15 +8,18 @@ A comprehensive stability audit and fix program for the microReticulum codebase 
 
 Reliable firmware operation for extended periods without crashes or performance degradation.
 
-## Current Milestone: v1.2 Stability Complete
+## Current State: v1.2 Shipped
 
-**Goal:** Complete all remaining P2 and P3 stability issues from the v1 audit, making firmware production-ready.
+**Delivered:** All P2 and P3 stability issues from the v1 audit complete. Firmware is production-ready.
 
-**Target scope:**
-- 11 P2 issues (LVGL thread-safety, allocation patterns, BLE cache, mutex docs)
-- 9 P3 issues (Bytes/Packet optimization, shutdown safety, documentation)
+**Completed:**
+- 21 stability requirements across 2 phases (7-8)
+- LVGL thread safety, memory pools, BLE graceful shutdown
+- Comprehensive concurrency documentation
 
-**Build status:** Clean (0 warnings), RAM 41.9%, Flash 77.2%
+**Build status:** Clean (0 warnings), RAM ~42%, Flash ~77%
+
+**Next Milestone:** TBD — production testing recommended before new feature work
 
 ## Requirements
 
@@ -39,41 +42,12 @@ Reliable firmware operation for extended periods without crashes or performance 
 - ✅ CONC-01: Enable TWDT for application tasks — v1.1
 - ✅ CONC-02: Fix LXStamper yield frequency — v1.1
 - ✅ CONC-03: Add mutex to BLE pending queues — v1.1
+- ✅ All P2 issues (MEM-M1/M2/M3, CONC-M1/M2/M3/M5/M6/M7/M8/M9) — v1.2
+- ✅ All P3 issues (MEM-H1/H2/H3/H4/L1, CONC-H4/M4/L1/L2/L4) — v1.2
 
 ### Active
 
-**Memory Allocation (P2):**
-- [ ] MEM-M1: Bytes newData make_shared pattern
-- [ ] MEM-M2: PacketReceipt default constructor allocates
-- [ ] MEM-M3: DynamicJsonDocument in Persistence (remaining migration)
-
-**LVGL Thread-Safety (P2):**
-- [ ] CONC-M1: SettingsScreen missing LVGL_LOCK
-- [ ] CONC-M2: ComposeScreen missing LVGL_LOCK
-- [ ] CONC-M3: AnnounceListScreen missing LVGL_LOCK
-- [ ] CONC-M7: LVGL mutex uses portMAX_DELAY
-
-**BLE/NimBLE (P2):**
-- [ ] CONC-M5: Mutex timeout may lose cache updates
-- [ ] CONC-M6: Discovered devices cache unbounded
-
-**Infrastructure (P2):**
-- [ ] CONC-M8: Audio I2S blocking write
-- [ ] CONC-M9: No formal mutex ordering enforcement
-
-**Memory Optimization (P3):**
-- [ ] MEM-H1: Bytes COW copy allocation
-- [ ] MEM-H2: Packet Object allocation (pool)
-- [ ] MEM-H3: Packet 9 Bytes members overhead
-- [ ] MEM-H4: PacketReceipt allocation (lazy)
-- [ ] MEM-L1: toHex string reallocation
-
-**Concurrency Hardening (P3):**
-- [ ] CONC-H4: Shutdown during active operations
-- [ ] CONC-M4: Soft reset does not release NimBLE state
-- [ ] CONC-L1: Native GAP handler volatile usage
-- [ ] CONC-L2: Undocumented 50ms delay
-- [ ] CONC-L4: portMAX_DELAY masks deadlock detection
+(No active requirements — v1.2 milestone complete, awaiting v1.3 definition)
 
 ### Out of Scope
 
@@ -160,4 +134,4 @@ Reliable firmware operation for extended periods without crashes or performance 
 </details>
 
 ---
-*Last updated: 2026-01-24 after v1.2 milestone started*
+*Last updated: 2026-01-24 after v1.2 milestone complete*
