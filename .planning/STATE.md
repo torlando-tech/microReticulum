@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-24)
 
 **Core value:** Reliable firmware operation for extended periods without crashes or performance degradation.
-**Current focus:** Phase 8 - P3 Optimization & Hardening (COMPLETE + all gap closures)
+**Current focus:** Phase 8 - P3 Optimization & Hardening (COMPLETE + all gap closures + resilience)
 
 ## Current Position
 
 Phase: 8 of 8 (P3 Optimization & Hardening)
-Plan: 7 of 7 complete (including 08-06, 08-07 gap closures)
-Status: Phase complete - MEM-H1, MEM-H2, MEM-H3 all complete
-Last activity: 2026-01-24 — Completed 08-07-PLAN.md (Packet Object pooling)
+Plan: 8 of 8 complete (including 08-06, 08-07, 08-08 gap closures)
+Status: Phase complete - MEM-H1, MEM-H2, MEM-H3 all complete with resilience hardening
+Last activity: 2026-01-24 -- Completed 08-08-PLAN.md (Production resilience)
 
-Progress: [=========================] 29/29 plans (100% through v1.0-v1.2 + gap closures)
+Progress: [==========================] 30/30 plans (100% through v1.0-v1.2 + all gap closures)
 
 ## Milestones
 
@@ -25,9 +25,9 @@ Progress: [=========================] 29/29 plans (100% through v1.0-v1.2 + gap 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 29
-- Average duration: ~28 min
-- Total execution time: ~13.5 hours
+- Total plans completed: 30
+- Average duration: ~27 min
+- Total execution time: ~13.6 hours
 
 **By Milestone:**
 
@@ -35,7 +35,7 @@ Progress: [=========================] 29/29 plans (100% through v1.0-v1.2 + gap 
 |-----------|--------|-------|----------|
 | v1.0 Stability Audit | 5 | 15 | ~11h |
 | v1.1 Quick Wins | 1 | 2 | ~13m |
-| v1.2 Stability Complete | 2 | 12 (5 phase 7, 7 phase 8) | ~2h |
+| v1.2 Stability Complete | 2 | 13 (5 phase 7, 8 phase 8) | ~2h |
 
 ## Accumulated Context
 
@@ -75,6 +75,9 @@ Key decisions from Phase 8:
 - PacketObjectPool: 24 slots for Packet::Object (MEM-H2 COMPLETE)
 - ReceiptObjectPool: 24 slots for PacketReceipt::Object (MEM-H2 COMPLETE)
 - Variadic ObjectPool::allocate() for constructor args forwarding
+- WARNINGF for pool exhaustion with full pool state (08-08 resilience)
+- try/catch around heap fallback allocations (08-08 resilience)
+- Static fallback counters per pool class for monitoring (08-08 resilience)
 
 ### Pending Todos
 
@@ -82,13 +85,14 @@ None.
 
 ### Blockers/Concerns
 
-None. All phases complete.
+- Native build has pre-existing msgpack type compatibility issues in LXMessage.cpp/Link.cpp
+- ESP32 builds have pre-existing missing lvgl.h for TDeck hardware
 
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 08-07-PLAN.md - Packet Object pooling complete
+Stopped at: Completed 08-08-PLAN.md - Production resilience complete
 Resume file: None
 
 ---
-*Last updated: 2026-01-24 after 08-07 complete*
+*Last updated: 2026-01-24 after 08-08 complete*
