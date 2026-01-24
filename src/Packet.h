@@ -115,9 +115,15 @@ namespace RNS {
 		inline void concluded_at(double concluded_at) { assert(_object); _object->_concluded_at = concluded_at; }
 
 		// Ensure _object is allocated (lazy initialization)
+		// MEM-H2: Uses pool allocation to prevent heap fragmentation
 		void ensure_object() {
 			if (!_object) {
-				_object = std::make_shared<Object>();
+				Object* obj = objectPool().allocate();
+				if (obj) {
+					_object = std::shared_ptr<Object>(obj, ReceiptObjectDeleter{true});
+				} else {
+					_object = std::shared_ptr<Object>(new Object(), ReceiptObjectDeleter{false});
+				}
 			}
 		}
 
@@ -141,6 +147,32 @@ namespace RNS {
 			int16_t _timeout = 0;
 		friend class PacketReceipt;
 		};
+
+		// Pool for PacketReceipt::Object instances (MEM-H2)
+		// 24 slots covers typical concurrent receipts (pending delivery confirmations)
+		static constexpr size_t RECEIPT_OBJECT_POOL_SIZE = 24;
+		using ReceiptObjectPool = ObjectPool<Object, RECEIPT_OBJECT_POOL_SIZE>;
+		static ReceiptObjectPool& objectPool();
+
+		// Custom deleter returns Object to pool instead of destroying
+		struct ReceiptObjectDeleter {
+			bool from_pool;
+
+			explicit ReceiptObjectDeleter(bool pooled = false) : from_pool(pooled) {}
+
+			void operator()(Object* obj) const {
+				if (obj) {
+					if (from_pool) {
+						// Return to pool (destructor called by deallocate)
+						objectPool().deallocate(obj);
+					} else {
+						// Heap fallback - normal delete
+						delete obj;
+					}
+				}
+			}
+		};
+
 		std::shared_ptr<Object> _object;
 
 	};

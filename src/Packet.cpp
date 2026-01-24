@@ -24,6 +24,12 @@ Packet::PacketObjectPool& Packet::objectPool() {
 	return pool;
 }
 
+// Pool singleton accessor for PacketReceipt::Object (MEM-H2)
+PacketReceipt::ReceiptObjectPool& PacketReceipt::objectPool() {
+	static ReceiptObjectPool pool;
+	return pool;
+}
+
 // MEM-H2: Packet::Object allocation now uses pool to prevent heap fragmentation
 // Pool provides 24 slots, falls back to heap on exhaustion
 Packet::Packet(const Destination& destination, const Interface& attached_interface, const Bytes& data, types packet_type /*= DATA*/, context_types context /*= CONTEXT_NONE*/, Type::Transport::types transport_type /*= Type::Transport::BROADCAST*/, header_types header_type /*= HEADER_1*/, const Bytes& transport_id /*= {Bytes::NONE}*/, bool create_receipt /*= true*/, context_flag context_flag /*= FLAG_UNSET*/)
@@ -822,8 +828,15 @@ std::string Packet::dumpString() const {
 #endif
 
 
-// FIXME(frag): Per-packet allocation for receipt - new Object creates shared_ptr control block (High)
-PacketReceipt::PacketReceipt(const Packet& packet) : _object(new Object()) {
+// MEM-H2: PacketReceipt::Object allocation uses pool to prevent heap fragmentation
+PacketReceipt::PacketReceipt(const Packet& packet) {
+	// Try pool first, fall back to heap on exhaustion
+	Object* obj = objectPool().allocate();
+	if (obj) {
+		_object = std::shared_ptr<Object>(obj, ReceiptObjectDeleter{true});
+	} else {
+		_object = std::shared_ptr<Object>(new Object(), ReceiptObjectDeleter{false});
+	}
 
 	if (!packet.destination()) {
 		throw std::invalid_argument("Packet with destination is required");
