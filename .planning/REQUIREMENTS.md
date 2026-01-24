@@ -27,11 +27,11 @@ Requirements for comprehensive stability audit. Each maps to roadmap phases.
 
 ### Concurrency
 
-- [ ] **CONC-01**: Audit LVGL mutex usage for thread safety
-- [ ] **CONC-02**: Audit NimBLE init/deinit lifecycle (leak potential)
-- [ ] **CONC-03**: Verify all tasks feed watchdog appropriately
-- [ ] **CONC-04**: Audit mutex ordering for deadlock potential
-- [ ] **CONC-05**: Verify task stack sizes are adequate
+- [x] **CONC-01**: Audit LVGL mutex usage for thread safety
+- [x] **CONC-02**: Audit NimBLE init/deinit lifecycle (leak potential)
+- [x] **CONC-03**: Verify all tasks feed watchdog appropriately
+- [x] **CONC-04**: Audit mutex ordering for deadlock potential
+- [x] **CONC-05**: Verify task stack sizes are adequate
 
 ### Deliverables
 
@@ -85,11 +85,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BOOT-03 | Phase 2 | Pending |
 | BOOT-04 | Phase 2 | Pending |
 | BOOT-05 | Phase 2 | Pending |
-| CONC-01 | Phase 4 | Pending |
-| CONC-02 | Phase 4 | Pending |
-| CONC-03 | Phase 4 | Pending |
-| CONC-04 | Phase 4 | Pending |
-| CONC-05 | Phase 4 | Pending |
+| CONC-01 | Phase 4 | Complete |
+| CONC-02 | Phase 4 | Complete |
+| CONC-03 | Phase 4 | Complete |
+| CONC-04 | Phase 4 | Complete |
+| CONC-05 | Phase 4 | Complete |
 | DLVR-01 | Phase 5 | Pending |
 | DLVR-02 | Phase 1 | Complete |
 | DLVR-03 | Phase 2 | Pending |
@@ -101,4 +101,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-23*
-*Last updated: 2026-01-24 — Phase 3 requirements complete*
+*Last updated: 2026-01-24 — Phase 4 requirements complete*

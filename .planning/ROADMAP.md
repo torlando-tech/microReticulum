@@ -84,10 +84,10 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 04-01-PLAN.md - LVGL Thread Safety Audit (mutex protection, event handlers - CONC-01)
-- [ ] 04-02-PLAN.md - NimBLE Lifecycle and Callback Audit (init/deinit, state machine - CONC-02)
-- [ ] 04-03-PLAN.md - FreeRTOS Tasks and Watchdog Audit (yield patterns, stack sizes - CONC-03, CONC-05)
-- [ ] 04-04-PLAN.md - Mutex Ordering and Synthesis (deadlock analysis, consolidated summary - CONC-04)
+- [x] 04-01-PLAN.md - LVGL Thread Safety Audit (mutex protection, event handlers - CONC-01)
+- [x] 04-02-PLAN.md - NimBLE Lifecycle and Callback Audit (init/deinit, state machine - CONC-02)
+- [x] 04-03-PLAN.md - FreeRTOS Tasks and Watchdog Audit (yield patterns, stack sizes - CONC-03, CONC-05)
+- [x] 04-04-PLAN.md - Mutex Ordering and Synthesis (deadlock analysis, consolidated summary - CONC-04)
 
 ### Phase 5: Synthesis
 **Goal**: Prioritized backlog of issues with severity ratings and fix recommendations
@@ -113,7 +113,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 1. Memory Instrumentation | 2/2 | ✓ Complete | 2026-01-23 |
 | 2. Boot Profiling | 4/4 | ✓ Complete | 2026-01-24 |
 | 3. Memory Allocation Audit | 4/4 | ✓ Complete | 2026-01-24 |
-| 4. Concurrency Audit | 0/4 | Not started | - |
+| 4. Concurrency Audit | 4/4 | ✓ Complete | 2026-01-24 |
 | 5. Synthesis | 0/TBD | Not started | - |
 
 ---
