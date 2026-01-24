@@ -71,7 +71,7 @@ Plans:
   3. BLE shutdown waits for active operations to complete (no use-after-free on restart)
   4. All portMAX_DELAY sites have debug timeout variants to detect stuck tasks
   5. Undocumented delays and volatile usage have rationale comments
-**Plans**: 7 plans in 4 waves
+**Plans**: 8 plans in 5 waves
 
 Plans:
 - [x] 08-01-PLAN.md - Quick wins: toHex reserve, ArduinoJson v7 API migration
@@ -81,6 +81,7 @@ Plans:
 - [x] 08-05-PLAN.md - BLE graceful shutdown with timeout
 - [x] 08-06-PLAN.md - Gap closure: BytesPool integration (MEM-H1)
 - [x] 08-07-PLAN.md - Gap closure: Packet/Receipt pool integration (MEM-H2)
+- [x] 08-08-PLAN.md - Pool exhaustion visibility and graceful failure handling
 
 ## Progress
 
@@ -93,9 +94,9 @@ Plans:
 | 5. Synthesis | v1.0 | 2/2 | Complete | 2026-01-24 |
 | 6. P1 Stability Fixes | v1.1 | 2/2 | Complete | 2026-01-24 |
 | 7. P2 Production Readiness | v1.2 | 5/5 | Complete | 2026-01-24 |
-| 8. P3 Optimization & Hardening | v1.2 | 7/7 | Complete | 2026-01-24 |
+| 8. P3 Optimization & Hardening | v1.2 | 8/8 | Complete | 2026-01-24 |
 
-**Total:** 8 phases, 29 plans completed (v1.0-v1.2)
+**Total:** 8 phases, 30 plans completed (v1.0-v1.2)
 
 ---
 *Last updated: 2026-01-24 after Phase 8 complete with gap closures*
