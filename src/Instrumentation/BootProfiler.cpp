@@ -18,6 +18,7 @@
 #include "../Log.h"
 
 #include <Arduino.h>
+#include <SPIFFS.h>
 #include <cstring>
 
 namespace RNS { namespace Instrumentation {
@@ -31,6 +32,15 @@ char BootProfiler::_current_wait[32] = {0};
 uint32_t BootProfiler::_wait_start_ms = 0;
 uint32_t BootProfiler::_total_wait_ms = 0;
 char BootProfiler::_log_buffer[256] = {0};
+bool BootProfiler::_fs_ready = false;
+
+
+void BootProfiler::setFilesystemReady(bool ready) {
+    _fs_ready = ready;
+    if (ready) {
+        NOTICE("[BOOT] Filesystem ready for boot profile persistence");
+    }
+}
 
 
 void BootProfiler::markStart(const char* phase) {
@@ -154,6 +164,72 @@ uint32_t BootProfiler::getInitMs() {
 
 uint32_t BootProfiler::getWaitMs() {
     return _total_wait_ms;
+}
+
+
+bool BootProfiler::saveToFile() {
+    if (!_fs_ready) {
+        WARNING("[BOOT] Cannot save profile - filesystem not ready");
+        return false;
+    }
+
+    // Calculate final timings
+    uint32_t total_ms = getTotalMs();
+    uint32_t init_ms = getInitMs();
+    uint32_t wait_ms = getWaitMs();
+
+    // Rotate existing boot logs (delete oldest, shift others)
+    // Files: boot_1.log (newest) -> boot_5.log (oldest)
+    char old_path[32];
+    char new_path[32];
+
+    // Delete oldest log if exists
+    snprintf(old_path, sizeof(old_path), "/boot_%d.log", MAX_BOOT_LOGS);
+    if (SPIFFS.exists(old_path)) {
+        SPIFFS.remove(old_path);
+    }
+
+    // Shift remaining logs (4->5, 3->4, 2->3, 1->2)
+    for (int i = MAX_BOOT_LOGS - 1; i >= 1; i--) {
+        snprintf(old_path, sizeof(old_path), "/boot_%d.log", i);
+        snprintf(new_path, sizeof(new_path), "/boot_%d.log", i + 1);
+        if (SPIFFS.exists(old_path)) {
+            SPIFFS.rename(old_path, new_path);
+        }
+    }
+
+    // Write new boot profile to boot_1.log
+    File file = SPIFFS.open("/boot_1.log", FILE_WRITE);
+    if (!file) {
+        ERROR("[BOOT] Failed to create boot profile file");
+        return false;
+    }
+
+    // Write boot timing summary
+    file.printf("Boot Profile\n");
+    file.printf("============\n");
+    file.printf("Total: %u ms\n", total_ms);
+    file.printf("Init:  %u ms\n", init_ms);
+    file.printf("Wait:  %u ms\n", wait_ms);
+
+    // Add timestamp if available
+    time_t now = time(nullptr);
+    if (now > 1704067200) {  // After 2024-01-01
+        struct tm timeinfo;
+        localtime_r(&now, &timeinfo);
+        char time_str[32];
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", &timeinfo);
+        file.printf("Time:  %s\n", time_str);
+    }
+
+    file.close();
+
+    snprintf(_log_buffer, sizeof(_log_buffer),
+             "[BOOT] Profile saved to /boot_1.log (total=%ums, init=%ums, wait=%ums)",
+             total_ms, init_ms, wait_ms);
+    NOTICE(_log_buffer);
+
+    return true;
 }
 
 }} // namespace RNS::Instrumentation

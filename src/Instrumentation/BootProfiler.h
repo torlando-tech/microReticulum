@@ -106,7 +106,28 @@ public:
      */
     static uint32_t getWaitMs();
 
+    /**
+     * Set filesystem ready state
+     *
+     * Must be called after SPIFFS is mounted before saveToFile() can work.
+     *
+     * @param ready True if filesystem is ready for writes
+     */
+    static void setFilesystemReady(bool ready);
+
+    /**
+     * Save boot profile to SPIFFS file
+     *
+     * Writes boot timing data to /boot_1.log, rotating existing files
+     * (max 5 boot logs retained). Requires filesystem to be ready.
+     *
+     * @return True if file was saved successfully
+     */
+    static bool saveToFile();
+
 private:
+    // Maximum number of boot log files to retain
+    static const uint8_t MAX_BOOT_LOGS = 5;
     // Boot timing
     static uint32_t _boot_start_ms;
     static uint32_t _cumulative_ms;
@@ -122,6 +143,9 @@ private:
 
     // Static buffer for log formatting (avoid stack allocation)
     static char _log_buffer[256];
+
+    // Filesystem ready flag
+    static bool _fs_ready;
 };
 
 }} // namespace RNS::Instrumentation
@@ -132,6 +156,7 @@ private:
 #define BOOT_PROFILE_WAIT_START(phase) RNS::Instrumentation::BootProfiler::markWaitStart(phase)
 #define BOOT_PROFILE_WAIT_END(phase) RNS::Instrumentation::BootProfiler::markWaitEnd(phase)
 #define BOOT_PROFILE_COMPLETE() RNS::Instrumentation::BootProfiler::bootComplete()
+#define BOOT_PROFILE_SAVE() RNS::Instrumentation::BootProfiler::saveToFile()
 
 #else // BOOT_PROFILING_ENABLED not defined
 
@@ -141,5 +166,6 @@ private:
 #define BOOT_PROFILE_WAIT_START(phase) ((void)0)
 #define BOOT_PROFILE_WAIT_END(phase) ((void)0)
 #define BOOT_PROFILE_COMPLETE() ((void)0)
+#define BOOT_PROFILE_SAVE() ((void)0)
 
 #endif // BOOT_PROFILING_ENABLED
