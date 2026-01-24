@@ -49,3 +49,21 @@ CONFIG_SPIRAM_USE_MALLOC=y
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=64
 # Reserve this much internal RAM for DMA/ISR (bytes)
 CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
+
+# ============================================================================
+# Boot Time Optimizations
+# These settings reduce boot time. See BOOT_OPTIMIZATIONS.md for details.
+# ============================================================================
+
+# Disable PSRAM memory test at boot (~2 seconds saved for 8MB PSRAM)
+# The memory test verifies PSRAM integrity but is redundant for stable hardware.
+# To re-enable for debugging: comment out this line or set to y
+CONFIG_SPIRAM_MEMTEST=n
+
+# Reduce bootloader log verbosity (saves serial output time)
+# Bootloader messages are rarely needed in production
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+CONFIG_BOOTLOADER_LOG_LEVEL=2
+
+# Skip ROM bootloader output (saves serial time)
+CONFIG_BOOT_ROM_LOG_ALWAYS_OFF=y
