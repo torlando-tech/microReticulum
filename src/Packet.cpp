@@ -18,11 +18,24 @@ ProofDestination::ProofDestination(const Packet& packet) : Destination({Type::NO
 {
 }
 
-// FIXME(frag): Per-packet allocation - new Object creates shared_ptr control block each time (High)
-// Consider: Object pool or arena allocator for Packet::Object instances
-Packet::Packet(const Destination& destination, const Interface& attached_interface, const Bytes& data, types packet_type /*= DATA*/, context_types context /*= CONTEXT_NONE*/, Type::Transport::types transport_type /*= Type::Transport::BROADCAST*/, header_types header_type /*= HEADER_1*/, const Bytes& transport_id /*= {Bytes::NONE}*/, bool create_receipt /*= true*/, context_flag context_flag /*= FLAG_UNSET*/) :
-	_object(new Object(destination, attached_interface))
+// Pool singleton accessor for Packet::Object (MEM-H2)
+Packet::PacketObjectPool& Packet::objectPool() {
+	static PacketObjectPool pool;
+	return pool;
+}
+
+// MEM-H2: Packet::Object allocation now uses pool to prevent heap fragmentation
+// Pool provides 24 slots, falls back to heap on exhaustion
+Packet::Packet(const Destination& destination, const Interface& attached_interface, const Bytes& data, types packet_type /*= DATA*/, context_types context /*= CONTEXT_NONE*/, Type::Transport::types transport_type /*= Type::Transport::BROADCAST*/, header_types header_type /*= HEADER_1*/, const Bytes& transport_id /*= {Bytes::NONE}*/, bool create_receipt /*= true*/, context_flag context_flag /*= FLAG_UNSET*/)
 {
+	// Try pool first, fall back to heap on exhaustion
+	Object* obj = objectPool().allocate(destination, attached_interface);
+	if (obj) {
+		_object = std::shared_ptr<Object>(obj, PacketObjectDeleter{true});
+	} else {
+		// Pool exhausted - fall back to heap (will happen during burst traffic)
+		_object = std::shared_ptr<Object>(new Object(destination, attached_interface), PacketObjectDeleter{false});
+	}
 
 	if (_object->_destination) {
 		TRACE("Creating packet with destination...");

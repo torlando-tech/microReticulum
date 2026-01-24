@@ -7,6 +7,7 @@
 #include "Log.h"
 #include "Type.h"
 #include "Utilities/OS.h"
+#include "ObjectPool.h"
 
 #include <memory>
 #include <cassert>
@@ -422,6 +423,33 @@ namespace RNS {
 
 		friend class Packet;
 		};
+
+		// Pool for Packet::Object instances (MEM-H2)
+		// 24 slots covers typical concurrent packet count during high-throughput
+		// (receives + sends + retransmit queue)
+		static constexpr size_t PACKET_OBJECT_POOL_SIZE = 24;
+		using PacketObjectPool = ObjectPool<Object, PACKET_OBJECT_POOL_SIZE>;
+		static PacketObjectPool& objectPool();
+
+		// Custom deleter returns Object to pool instead of destroying
+		struct PacketObjectDeleter {
+			bool from_pool;
+
+			explicit PacketObjectDeleter(bool pooled = false) : from_pool(pooled) {}
+
+			void operator()(Object* obj) const {
+				if (obj) {
+					if (from_pool) {
+						// Return to pool (destructor called by deallocate)
+						objectPool().deallocate(obj);
+					} else {
+						// Heap fallback - normal delete
+						delete obj;
+					}
+				}
+			}
+		};
+
 		std::shared_ptr<Object> _object;
 
 	};
