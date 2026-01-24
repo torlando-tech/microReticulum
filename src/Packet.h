@@ -48,8 +48,8 @@ namespace RNS {
 		};
 
 	public:
-		// FIXME(frag): Default constructor allocates - consider lazy allocation (Medium)
-		PacketReceipt() : _object(new Object()) {}
+		// Default constructor defers allocation - object allocated on first use via ensure_object()
+		PacketReceipt() : _object(nullptr) {}
 		PacketReceipt(Type::NoneConstructor none) {}
 		PacketReceipt(const PacketReceipt& packet_receipt) : _object(packet_receipt._object) {}
 		PacketReceipt(const Packet& packet);
@@ -112,6 +112,13 @@ namespace RNS {
 		inline void status(Type::PacketReceipt::Status status) { assert(_object); _object->_status = status; }
 		inline void proved(bool proved) { assert(_object); _object->_proved = proved; }
 		inline void concluded_at(double concluded_at) { assert(_object); _object->_concluded_at = concluded_at; }
+
+		// Ensure _object is allocated (lazy initialization)
+		void ensure_object() {
+			if (!_object) {
+				_object = std::make_shared<Object>();
+			}
+		}
 
 	private:
 		class Object {
