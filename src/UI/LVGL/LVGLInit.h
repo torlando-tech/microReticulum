@@ -69,6 +69,13 @@ public:
     static SemaphoreHandle_t get_mutex();
 
     /**
+     * Get the LVGL FreeRTOS task handle
+     * Useful for stack monitoring and task introspection.
+     * @return Task handle, or nullptr if task not started
+     */
+    static TaskHandle_t get_task_handle() { return _task_handle; }
+
+    /**
      * Get time in milliseconds for LVGL
      * Required LVGL callback
      */
