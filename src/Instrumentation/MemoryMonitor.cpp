@@ -16,6 +16,7 @@
 #ifdef MEMORY_INSTRUMENTATION_ENABLED
 
 #include "../Log.h"
+#include "../BytesPool.h"
 
 #include <cstring>
 
@@ -211,6 +212,16 @@ void MemoryMonitor::logHeapStats() {
     if (internal_min < 10000) {
         WARNINGF("[HEAP] Internal RAM watermark low: %u bytes", internal_min);
     }
+
+    // BytesPool stats - shows actual pool usage
+    auto& pool = BytesPool::instance();
+    NOTICEF("[POOL] tiny=%zu/%zu small=%zu/%zu med=%zu/%zu large=%zu/%zu "
+            "hits=%zu misses=%zu fallbacks=%zu",
+            pool.tiny_in_use(), BytesPoolConfig::TINY_SLOTS,
+            pool.small_in_use(), BytesPoolConfig::SMALL_SLOTS,
+            pool.medium_in_use(), BytesPoolConfig::MEDIUM_SLOTS,
+            pool.large_in_use(), BytesPoolConfig::LARGE_SLOTS,
+            pool.pool_hits(), pool.pool_misses(), pool.fallback_count());
 }
 
 
