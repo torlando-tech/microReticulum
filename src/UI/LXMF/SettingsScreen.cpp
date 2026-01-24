@@ -70,6 +70,7 @@ SettingsScreen::SettingsScreen(lv_obj_t* parent)
       _ta_announce_interval(nullptr), _ta_sync_interval(nullptr), _switch_gps_sync(nullptr),
       _btn_propagation_nodes(nullptr), _switch_prop_fallback(nullptr), _switch_prop_only(nullptr),
       _gps(nullptr) {
+    LVGL_LOCK();
 
     // Create screen object
     if (parent) {
@@ -103,6 +104,7 @@ SettingsScreen::SettingsScreen(lv_obj_t* parent)
 }
 
 SettingsScreen::~SettingsScreen() {
+    LVGL_LOCK();
     if (_screen) {
         lv_obj_del(_screen);
     }
