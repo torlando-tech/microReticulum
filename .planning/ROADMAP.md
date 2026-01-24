@@ -70,13 +70,14 @@ Plans:
   3. BLE shutdown waits for active operations to complete (no use-after-free on restart)
   4. All portMAX_DELAY sites have debug timeout variants to detect stuck tasks
   5. Undocumented delays and volatile usage have rationale comments
-**Plans**: TBD (estimated 3-4 plans)
+**Plans**: 5 plans in 2 waves
 
 Plans:
-- [ ] 08-01: TBD
-- [ ] 08-02: TBD
-- [ ] 08-03: TBD
-- [ ] 08-04: TBD
+- [ ] 08-01-PLAN.md - Quick wins: toHex reserve, ArduinoJson v7 API migration
+- [ ] 08-02-PLAN.md - Debug timeouts for remaining portMAX_DELAY sites
+- [ ] 08-03-PLAN.md - Volatile and delay rationale documentation
+- [ ] 08-04-PLAN.md - Pool allocators and Packet inline buffers
+- [ ] 08-05-PLAN.md - BLE graceful shutdown with timeout
 
 ## Progress
 
@@ -89,7 +90,7 @@ Plans:
 | 5. Synthesis | v1.0 | 2/2 | Complete | 2026-01-24 |
 | 6. P1 Stability Fixes | v1.1 | 2/2 | Complete | 2026-01-24 |
 | 7. P2 Production Readiness | v1.2 | 5/5 | Complete | 2026-01-24 |
-| 8. P3 Optimization & Hardening | v1.2 | 0/? | Not started | - |
+| 8. P3 Optimization & Hardening | v1.2 | 0/5 | Planned | - |
 
 **Total:** 8 phases, 22 plans completed (v1.0-v1.2), 1 phase remaining (v1.2)
 
