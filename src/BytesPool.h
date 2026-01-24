@@ -14,7 +14,7 @@
  * of destroying it.
  *
  * The pool has four tiers sized for Reticulum packet processing:
- *   - 64 bytes (48 slots): hashes (16-32 bytes), small fields - highest traffic
+ *   - 64 bytes (128 slots): hashes (16-32 bytes), small fields - highest traffic
  *   - 256 bytes (24 slots): keys, small announces
  *   - 512 bytes (16 slots): standard packets (MTU=500 + margin)
  *   - 1024 bytes (16 slots): resource advertisements, large packets
@@ -62,7 +62,7 @@ namespace BytesPoolConfig {
     static constexpr size_t TIER_LARGE = 1024;    // Large packets, resource ads
 
     // Slot counts per tier - tiny gets more slots since most allocations are small
-    static constexpr size_t TINY_SLOTS = 48;      // High traffic tier
+    static constexpr size_t TINY_SLOTS = 128;     // High traffic tier (burst packet processing)
     static constexpr size_t SMALL_SLOTS = 24;     // Medium traffic
     static constexpr size_t MEDIUM_SLOTS = 16;    // Lower traffic
     static constexpr size_t LARGE_SLOTS = 16;     // Lower traffic
@@ -92,11 +92,11 @@ using PooledData = std::vector<uint8_t, PSRAMAllocator<uint8_t>>;
  *   - shared_ptr control block allocations (via make_shared replacement)
  *
  * Memory footprint:
- *   - Tiny: 48 slots x 64 bytes = 3KB backing + metadata
+ *   - Tiny: 128 slots x 64 bytes = 8KB backing + metadata
  *   - Small: 24 slots x 256 bytes = 6KB backing + metadata
  *   - Medium: 16 slots x 512 bytes = 8KB backing + metadata
  *   - Large: 16 slots x 1024 bytes = 16KB backing + metadata
- *   - Total: ~33KB backing + ~2.5KB metadata = ~36KB
+ *   - Total: ~38KB backing + ~5KB metadata = ~43KB
  */
 class BytesPool {
 public:
