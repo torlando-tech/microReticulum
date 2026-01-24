@@ -171,7 +171,7 @@ void MessageStore::load_index() {
 			slot.info.last_activity = conv["last_activity"] | 0.0;
 			slot.info.unread_count = conv["unread_count"] | 0;
 
-			if (conv.containsKey("last_message_hash")) {
+			if (!conv["last_message_hash"].isNull()) {
 				const char* last_msg_hex = conv["last_message_hash"];
 				Bytes last_msg_bytes;
 				last_msg_bytes.assignHex(last_msg_hex);
@@ -368,7 +368,7 @@ LXMessage MessageStore::load_message(const Bytes& message_hash) {
 		LXMessage message = LXMessage::unpack_from_bytes(packed, LXMF::Type::Message::DIRECT, true);
 
 		// Restore incoming flag from storage (unpack_from_bytes defaults to true)
-		if (_json_doc.containsKey("incoming")) {
+		if (!_json_doc["incoming"].isNull()) {
 			message.incoming(_json_doc["incoming"].as<bool>());
 		}
 
