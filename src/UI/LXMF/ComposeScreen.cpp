@@ -20,6 +20,7 @@ ComposeScreen::ComposeScreen(lv_obj_t* parent)
     : _screen(nullptr), _header(nullptr), _content_area(nullptr), _button_area(nullptr),
       _text_area_dest(nullptr), _text_area_message(nullptr),
       _btn_cancel(nullptr), _btn_send(nullptr), _btn_back(nullptr) {
+    LVGL_LOCK();
 
     // Create screen object
     if (parent) {
@@ -48,6 +49,7 @@ ComposeScreen::ComposeScreen(lv_obj_t* parent)
 }
 
 ComposeScreen::~ComposeScreen() {
+    LVGL_LOCK();
     if (_screen) {
         lv_obj_del(_screen);
     }
