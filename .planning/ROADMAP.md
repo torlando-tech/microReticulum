@@ -4,7 +4,7 @@
 
 - ✅ **v1.0 Stability Audit** - Phases 1-5 (shipped 2026-01-24)
 - ✅ **v1.1 Stability Quick Wins** - Phase 6 (shipped 2026-01-24)
-- 📋 **v1.2+** - TBD (use `/gsd:new-milestone` to define)
+- 🚧 **v1.2 Stability Complete** - Phases 7-8 (in progress)
 
 ## Phases
 
@@ -30,6 +30,52 @@ See: .planning/milestones/v1.1-ROADMAP.md
 
 </details>
 
+### 🚧 v1.2 Stability Complete (In Progress)
+
+**Milestone Goal:** Complete all remaining P2 and P3 stability issues from v1 audit, making firmware production-ready.
+
+- [ ] **Phase 7: P2 Production Readiness** - Fix all P2 issues (LVGL threading, allocation patterns, BLE cache, documentation)
+- [ ] **Phase 8: P3 Optimization & Hardening** - Complete P3 issues (memory pools, shutdown safety, documentation)
+
+## Phase Details
+
+### Phase 7: P2 Production Readiness
+
+**Goal**: Fix all P2 medium-severity issues to make firmware production-ready
+**Depends on**: Phase 6 (v1.1 complete)
+**Requirements**: MEM-M1, MEM-M2, MEM-M3, CONC-M1, CONC-M2, CONC-M3, CONC-M5, CONC-M6, CONC-M7, CONC-M8, CONC-M9
+**Success Criteria** (what must be TRUE):
+  1. All LVGL screen constructors/destructors use LVGL_LOCK (no race conditions during screen transitions)
+  2. LVGL mutex uses debug timeout (5s) to detect deadlocks in debug builds
+  3. BLE discovered devices cache is bounded with LRU eviction (connected devices never evicted)
+  4. Bytes and PacketReceipt allocation patterns use single-allocation or deferred patterns
+  5. Mutex ordering is documented in CONTRIBUTING.md
+**Plans**: TBD (estimated 2-3 plans)
+
+Plans:
+- [ ] 07-01: TBD
+- [ ] 07-02: TBD
+- [ ] 07-03: TBD
+
+### Phase 8: P3 Optimization & Hardening
+
+**Goal**: Complete P3 optimizations and hardening for long-term stability
+**Depends on**: Phase 7
+**Requirements**: MEM-H1, MEM-H2, MEM-H3, MEM-H4, MEM-L1, CONC-H4, CONC-M4, CONC-L1, CONC-L2, CONC-L4
+**Success Criteria** (what must be TRUE):
+  1. Bytes and Packet use pool/arena allocators reducing per-packet heap fragmentation
+  2. Packet fixed-size members use inline buffers (saving ~150 bytes/packet)
+  3. BLE shutdown waits for active operations to complete (no use-after-free on restart)
+  4. All portMAX_DELAY sites have debug timeout variants to detect stuck tasks
+  5. Undocumented delays and volatile usage have rationale comments
+**Plans**: TBD (estimated 3-4 plans)
+
+Plans:
+- [ ] 08-01: TBD
+- [ ] 08-02: TBD
+- [ ] 08-03: TBD
+- [ ] 08-04: TBD
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -40,8 +86,10 @@ See: .planning/milestones/v1.1-ROADMAP.md
 | 4. Concurrency Audit | v1.0 | 3/3 | Complete | 2026-01-24 |
 | 5. Synthesis | v1.0 | 2/2 | Complete | 2026-01-24 |
 | 6. P1 Stability Fixes | v1.1 | 2/2 | Complete | 2026-01-24 |
+| 7. P2 Production Readiness | v1.2 | 0/? | Not started | - |
+| 8. P3 Optimization & Hardening | v1.2 | 0/? | Not started | - |
 
-**Total:** 6 phases, 17 plans completed
+**Total:** 8 phases, 17 plans completed (v1.0-v1.1), 2 phases remaining (v1.2)
 
 ---
-*Last updated: 2026-01-24 after v1.1 milestone complete*
+*Last updated: 2026-01-24 after v1.2 roadmap created*

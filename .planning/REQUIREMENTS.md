@@ -64,9 +64,9 @@ Complete all P2 and P3 stability issues from the v1 audit. Each requirement maps
 | CONC-M1 | Phase 7 | Pending |
 | CONC-M2 | Phase 7 | Pending |
 | CONC-M3 | Phase 7 | Pending |
-| CONC-M7 | Phase 7 | Pending |
 | CONC-M5 | Phase 7 | Pending |
 | CONC-M6 | Phase 7 | Pending |
+| CONC-M7 | Phase 7 | Pending |
 | CONC-M8 | Phase 7 | Pending |
 | CONC-M9 | Phase 7 | Pending |
 | MEM-H1 | Phase 8 | Pending |
@@ -83,8 +83,8 @@ Complete all P2 and P3 stability issues from the v1 audit. Each requirement maps
 **Coverage:**
 - v1.2 requirements: 21 total
 - Mapped to phases: 21
-- Unmapped: 0 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-01-24*
-*Last updated: 2026-01-24 after initial definition*
+*Last updated: 2026-01-24 after roadmap created*
