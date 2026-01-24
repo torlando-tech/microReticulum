@@ -97,12 +97,17 @@ void tone_play(uint16_t frequency, uint16_t duration_ms, uint8_t volume) {
             _sample_counter++;
             samples_written++;
         }
-        i2s_write(I2S_PORT, samples, sizeof(samples), &bytes_written, portMAX_DELAY);
+        esp_err_t err = i2s_write(I2S_PORT, samples, sizeof(samples), &bytes_written, pdMS_TO_TICKS(2000));
+        if (err != ESP_OK) {
+            Serial.printf("[TONE] I2S write timeout/error: %d\n", err);
+            break;  // Abort tone on error
+        }
     }
 
     // Write silence to flush DMA buffers
     int16_t silence[128] = {0};
-    i2s_write(I2S_PORT, silence, sizeof(silence), &bytes_written, portMAX_DELAY);
+    // Silence flush - timeout OK to ignore here
+    i2s_write(I2S_PORT, silence, sizeof(silence), &bytes_written, pdMS_TO_TICKS(2000));
 
     _playing = false;
 }
@@ -115,7 +120,8 @@ void tone_stop() {
     // Write silence
     int16_t silence[128] = {0};
     size_t bytes_written;
-    i2s_write(I2S_PORT, silence, sizeof(silence), &bytes_written, portMAX_DELAY);
+    // Silence on stop - timeout OK to ignore
+    i2s_write(I2S_PORT, silence, sizeof(silence), &bytes_written, pdMS_TO_TICKS(2000));
 }
 
 bool tone_is_playing() {
