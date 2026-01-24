@@ -8,9 +8,20 @@ A comprehensive audit of the microReticulum codebase — a C++ implementation of
 
 Identify and prioritize the root causes of instability so the firmware can run reliably for extended periods without crashes or performance degradation.
 
-## Current State (v1 Shipped)
+## Current Milestone: v1.1 Stability Quick Wins
 
-**v1 Stability Audit delivered:**
+**Goal:** Fix the 5 highest-priority stability issues identified in v1 audit (P1 items with WSJF ≥ 3.0).
+
+**Target fixes:**
+- MEM-M4: Duplicate static definition in Persistence (WSJF 4.00)
+- CONC-H1: Enable Task Watchdog Timer for application tasks (WSJF 3.50)
+- CONC-H2: Fix LXStamper CPU hogging during stamp generation (WSJF 3.50)
+- CONC-H3: Add mutex protection to BLE pending queues (WSJF 3.50)
+- MEM-H5: Pre-allocate resource vectors to prevent resize during transfers (WSJF 3.50)
+
+## v1 Audit Summary
+
+**Delivered 2026-01-24:**
 - MemoryMonitor module: 30s periodic heap/stack monitoring
 - BootProfiler module: millisecond timing with SPIFFS persistence
 - 40+ memory pools documented (~550KB static, ~330KB PSRAM)
@@ -46,7 +57,11 @@ Identify and prioritize the root causes of instability so the firmware can run r
 
 ### Active
 
-(Defined for next milestone)
+- [ ] MEM-M4: Fix duplicate static definition in Persistence
+- [ ] CONC-H1: Enable TWDT for application tasks
+- [ ] CONC-H2: Fix LXStamper yield frequency (100 → 10 rounds)
+- [ ] CONC-H3: Add mutex to BLE pending queues
+- [ ] MEM-H5: Pre-allocate ResourceData vectors
 
 ### Out of Scope
 
@@ -100,4 +115,4 @@ Identify and prioritize the root causes of instability so the firmware can run r
 | 5s boot target | Aspirational, config-only | Partial — 5.3s achieved, code changes needed for <5s |
 
 ---
-*Last updated: 2026-01-24 after v1 milestone*
+*Last updated: 2026-01-24 after v1.1 milestone start*
