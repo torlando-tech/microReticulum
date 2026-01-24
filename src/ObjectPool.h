@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <new>
+#include <utility>
 
 // FreeRTOS spinlock support - only on ESP32
 #if defined(ESP_PLATFORM) || defined(ARDUINO)
@@ -59,8 +60,12 @@ public:
      * Allocate object from pool.
      * Returns nullptr if pool exhausted (caller should fall back to heap).
      * Thread-safe.
+     *
+     * Supports variadic constructor arguments via perfect forwarding.
+     * Example: pool.allocate(arg1, arg2) calls T(arg1, arg2)
      */
-    T* allocate() {
+    template<typename... Args>
+    T* allocate(Args&&... args) {
 #if OBJECTPOOL_USE_SPINLOCK
         portENTER_CRITICAL(&_mux);
 #else
@@ -79,8 +84,8 @@ public:
         portEXIT_CRITICAL(&_mux);
 #endif
 
-        // Placement new to construct object
-        return new (&_slots[slot].storage) T();
+        // Placement new to construct object with forwarded arguments
+        return new (&_slots[slot].storage) T(std::forward<Args>(args)...);
     }
 
     /**
