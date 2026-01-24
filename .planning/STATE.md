@@ -9,19 +9,19 @@ See: .planning/PROJECT.md (updated 2026-01-23)
 
 ## Current Position
 
-Phase: 2 of 5 COMPLETE (Boot Profiling)
-Plan: Ready to start Phase 3
-Status: Phase 2 verified, proceeding to Phase 3
-Last activity: 2026-01-24 — Phase 2 complete, all 4 plans executed
+Phase: 3 of 5 IN PROGRESS (Memory Allocation Audit)
+Plan: 02 of 4 COMPLETE
+Status: Executing Phase 3 plans
+Last activity: 2026-01-24 — Completed 03-02 (shared_ptr and session object audit)
 
-Progress: [######----] 60%
+Progress: [######----] 62%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 6
-- Average duration: 2 min
-- Total execution time: 12 min
+- Total plans completed: 7
+- Average duration: 4 min
+- Total execution time: 30 min
 
 **By Phase:**
 
@@ -29,10 +29,11 @@ Progress: [######----] 60%
 |-------|-------|-------|----------|
 | 01-memory-instrumentation | 2 | 4min | 2min |
 | 02-boot-profiling | 4 | 8min | 2min |
+| 03-memory-allocation-audit | 1 | 18min | 18min |
 
 **Recent Trend:**
-- Last 5 plans: 01-02 (2min), 02-01 (1min), 02-02 (2min), 02-03 (2min), 02-04 (3min)
-- Trend: Consistent
+- Last 5 plans: 02-02 (2min), 02-03 (2min), 02-04 (3min), 03-01 (unknown), 03-02 (18min)
+- Trend: Audit plans slower (more reading/analysis)
 
 *Updated after each plan completion*
 
@@ -58,6 +59,8 @@ Recent decisions affecting current work:
 - [02-03]: Disable PSRAM memory test for ~2s boot time savings
 - [02-04]: Enable BOOT_REDUCED_LOGGING with CORE_DEBUG_LEVEL=2
 - [02-04]: 5s target not achievable via config - reticulum init is 2.5s
+- [03-02]: new/shared_ptr pattern acceptable for startup allocations
+- [03-02]: Resource vectors identified as fragmentation risk during transfers
 
 ### Boot Profiling Findings
 
@@ -78,6 +81,26 @@ Recent decisions affecting current work:
 - WiFi connect: ~1,000ms (30s timeout)
 - GPS sync: ~370-950ms variable
 
+### Memory Allocation Audit Findings
+
+**03-02: shared_ptr and Session Objects**
+- 14 sites use `new T()` + `shared_ptr` pattern (2 allocations)
+- 2 sites use `make_shared` (1 allocation) - Buffer.cpp, BLEPlatform.cpp
+- Identity pools use PSRAM via heap_caps_aligned_alloc (verified)
+- Fixed pools in Link/Channel eliminate fragmentation
+- Resource vectors resize during transfers - fragmentation risk
+
+**Fixed Pool Inventory:**
+| Pool | Size | Location |
+|------|------|----------|
+| known_destinations | 192 | Identity (PSRAM) |
+| known_ratchets | 128 | Identity (static) |
+| incoming_resources | 8 | LinkData |
+| outgoing_resources | 8 | LinkData |
+| pending_requests | 8 | LinkData |
+| rx_ring_pool | 16 | ChannelData |
+| tx_ring_pool | 16 | ChannelData |
+
 ### Pending Todos
 
 None yet.
@@ -88,11 +111,15 @@ None yet.
 - `PSRAMAllocator.h` - Created in src/
 - `partitions.csv` - Created in examples/lxmf_tdeck/
 
+**Identified for Phase 5:**
+- Resource vectors (`_parts`, `_hashmap`) resize during transfers
+- 14 sites could use `make_shared` for ~40 bytes savings each
+
 ## Session Continuity
 
 Last session: 2026-01-24
-Completed: Phase 2 (Boot Profiling)
-Next: Phase 3 (Memory Allocation Audit)
+Completed: 03-02-PLAN.md (shared_ptr and session object audit)
+Next: 03-03-PLAN.md (Interface and Packet allocation patterns)
 
 ---
-*Phase 2 complete. Ready for Phase 3 planning.*
+*Phase 3 Plan 2 complete. Continuing Phase 3.*
