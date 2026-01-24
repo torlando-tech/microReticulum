@@ -122,7 +122,15 @@ namespace RNS {
 				if (obj) {
 					_object = std::shared_ptr<Object>(obj, ReceiptObjectDeleter{true});
 				} else {
-					_object = std::shared_ptr<Object>(new Object(), ReceiptObjectDeleter{false});
+					// Pool exhausted - log and fall back to heap
+					_pool_fallback_count++;
+					// Note: WARNING logged in .cpp via WARNINGF, can't use here in header
+					try {
+						_object = std::shared_ptr<Object>(new Object(), ReceiptObjectDeleter{false});
+					} catch (const std::bad_alloc&) {
+						_object = nullptr;
+						return;  // Caller must check _object validity
+					}
 				}
 			}
 		}
@@ -153,6 +161,11 @@ namespace RNS {
 		static constexpr size_t RECEIPT_OBJECT_POOL_SIZE = 24;
 		using ReceiptObjectPool = ObjectPool<Object, RECEIPT_OBJECT_POOL_SIZE>;
 		static ReceiptObjectPool& objectPool();
+
+		// Pool fallback tracking for monitoring
+		static size_t _pool_fallback_count;
+	public:
+		static size_t poolFallbackCount() { return _pool_fallback_count; }
 
 		// Custom deleter returns Object to pool instead of destroying
 		struct ReceiptObjectDeleter {
@@ -462,6 +475,11 @@ namespace RNS {
 		static constexpr size_t PACKET_OBJECT_POOL_SIZE = 24;
 		using PacketObjectPool = ObjectPool<Object, PACKET_OBJECT_POOL_SIZE>;
 		static PacketObjectPool& objectPool();
+
+		// Pool fallback tracking for monitoring
+		static size_t _pool_fallback_count;
+	public:
+		static size_t poolFallbackCount() { return _pool_fallback_count; }
 
 		// Custom deleter returns Object to pool instead of destroying
 		struct PacketObjectDeleter {

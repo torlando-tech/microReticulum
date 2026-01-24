@@ -24,11 +24,17 @@ Packet::PacketObjectPool& Packet::objectPool() {
 	return pool;
 }
 
+// Pool fallback counter for Packet (MEM-H2 resilience)
+size_t Packet::_pool_fallback_count = 0;
+
 // Pool singleton accessor for PacketReceipt::Object (MEM-H2)
 PacketReceipt::ReceiptObjectPool& PacketReceipt::objectPool() {
 	static ReceiptObjectPool pool;
 	return pool;
 }
+
+// Pool fallback counter for PacketReceipt (MEM-H2 resilience)
+size_t PacketReceipt::_pool_fallback_count = 0;
 
 // MEM-H2: Packet::Object allocation now uses pool to prevent heap fragmentation
 // Pool provides 24 slots, falls back to heap on exhaustion
@@ -39,8 +45,22 @@ Packet::Packet(const Destination& destination, const Interface& attached_interfa
 	if (obj) {
 		_object = std::shared_ptr<Object>(obj, PacketObjectDeleter{true});
 	} else {
-		// Pool exhausted - fall back to heap (will happen during burst traffic)
-		_object = std::shared_ptr<Object>(new Object(destination, attached_interface), PacketObjectDeleter{false});
+		// Pool exhausted - log and fall back to heap
+		_pool_fallback_count++;
+		WARNINGF("PacketObjectPool: exhausted, falling back to heap (allocated=%zu/%zu)",
+		         objectPool().allocated(), PACKET_OBJECT_POOL_SIZE);
+		try {
+			_object = std::shared_ptr<Object>(new Object(destination, attached_interface), PacketObjectDeleter{false});
+		} catch (const std::bad_alloc& e) {
+			ERRORF("Packet heap allocation failed: %s", e.what());
+			_object = nullptr;
+			return;  // Caller must check _object validity
+		}
+	}
+
+	if (!_object) {
+		ERROR("Packet object allocation failed");
+		return;
 	}
 
 	if (_object->_destination) {
@@ -835,7 +855,22 @@ PacketReceipt::PacketReceipt(const Packet& packet) {
 	if (obj) {
 		_object = std::shared_ptr<Object>(obj, ReceiptObjectDeleter{true});
 	} else {
-		_object = std::shared_ptr<Object>(new Object(), ReceiptObjectDeleter{false});
+		// Pool exhausted - log and fall back to heap
+		_pool_fallback_count++;
+		WARNINGF("ReceiptObjectPool: exhausted, falling back to heap (allocated=%zu/%zu)",
+		         objectPool().allocated(), RECEIPT_OBJECT_POOL_SIZE);
+		try {
+			_object = std::shared_ptr<Object>(new Object(), ReceiptObjectDeleter{false});
+		} catch (const std::bad_alloc& e) {
+			ERRORF("PacketReceipt heap allocation failed: %s", e.what());
+			_object = nullptr;
+			return;  // Caller must check _object validity
+		}
+	}
+
+	if (!_object) {
+		ERROR("PacketReceipt object allocation failed");
+		return;
 	}
 
 	if (!packet.destination()) {
