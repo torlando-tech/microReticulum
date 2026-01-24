@@ -284,12 +284,31 @@ private:
     // Connection handle allocator (NimBLE uses its own, we wrap for consistency)
     uint16_t _next_conn_handle = 1;
 
-    // Async connection tracking
+    // VOLATILE RATIONALE: NimBLE callback synchronization flags
+    //
+    // These volatile flags synchronize between:
+    // 1. NimBLE host task (callback context - runs asynchronously like ISR)
+    // 2. BLE task (loop() context - application thread)
+    //
+    // Volatile is appropriate because:
+    // - Single-word reads/writes are atomic on ESP32 (32-bit aligned)
+    // - These are simple status flags, not complex state
+    // - Mutex would cause priority inversion in callback context
+    // - Memory barriers not needed - flag semantics sufficient
+    //
+    // Alternative rejected: Mutex acquisition in NimBLE callbacks can cause
+    // priority inversion or deadlock since callbacks run in host task context.
+    //
+    // Reference: ESP32 Technical Reference Manual, Section 5.4 (Memory Consistency)
+
+    // Async connection tracking (NimBLEClientCallbacks)
     volatile bool _async_connect_pending = false;
     volatile bool _async_connect_failed = false;
     volatile int _async_connect_error = 0;
 
-    // Native GAP connection tracking
+    // VOLATILE RATIONALE: Native GAP handler callback flags
+    // Same rationale as above - nativeGapEventHandler runs in NimBLE host task.
+    // These track connection state during ble_gap_connect() operations.
     volatile bool _native_connect_pending = false;
     volatile bool _native_connect_success = false;
     volatile int _native_connect_result = 0;
