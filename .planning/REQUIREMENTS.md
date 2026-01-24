@@ -9,26 +9,26 @@ Complete all P2 and P3 stability issues from the v1 audit. Each requirement maps
 
 ### Memory Allocation (P2)
 
-- [ ] **MEM-M1**: Bytes newData uses make_shared pattern (single allocation)
-- [ ] **MEM-M2**: PacketReceipt default constructor defers allocation until use
+- [x] **MEM-M1**: Bytes newData uses make_shared pattern (single allocation)
+- [x] **MEM-M2**: PacketReceipt default constructor defers allocation until use
 - [ ] **MEM-M3**: Persistence uses JsonDocument (ArduinoJson 7 API fully migrated)
 
 ### LVGL Thread-Safety (P2)
 
-- [ ] **CONC-M1**: SettingsScreen constructor/destructor uses LVGL_LOCK
-- [ ] **CONC-M2**: ComposeScreen constructor/destructor uses LVGL_LOCK
-- [ ] **CONC-M3**: AnnounceListScreen constructor/destructor uses LVGL_LOCK
-- [ ] **CONC-M7**: LVGL mutex uses debug timeout (5s) to detect deadlocks
+- [x] **CONC-M1**: SettingsScreen constructor/destructor uses LVGL_LOCK
+- [x] **CONC-M2**: ComposeScreen constructor/destructor uses LVGL_LOCK
+- [x] **CONC-M3**: AnnounceListScreen constructor/destructor uses LVGL_LOCK
+- [x] **CONC-M7**: LVGL mutex uses debug timeout (5s) to detect deadlocks
 
 ### BLE/NimBLE (P2)
 
-- [ ] **CONC-M5**: Connection mutex timeout failures are logged
-- [ ] **CONC-M6**: Discovered devices cache bounded with LRU eviction
+- [x] **CONC-M5**: Connection mutex timeout failures are logged
+- [x] **CONC-M6**: Discovered devices cache bounded with LRU eviction
 
 ### Infrastructure (P2)
 
-- [ ] **CONC-M8**: Audio I2S write uses reasonable timeout (not portMAX_DELAY)
-- [ ] **CONC-M9**: Mutex ordering documented in CONTRIBUTING.md
+- [x] **CONC-M8**: Audio I2S write uses reasonable timeout (not portMAX_DELAY)
+- [x] **CONC-M9**: Mutex ordering documented in docs/CONCURRENCY.md
 
 ### Memory Optimization (P3)
 
@@ -58,17 +58,17 @@ Complete all P2 and P3 stability issues from the v1 audit. Each requirement maps
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MEM-M1 | Phase 7 | Pending |
-| MEM-M2 | Phase 7 | Pending |
-| MEM-M3 | Phase 7 | Pending |
-| CONC-M1 | Phase 7 | Pending |
-| CONC-M2 | Phase 7 | Pending |
-| CONC-M3 | Phase 7 | Pending |
-| CONC-M5 | Phase 7 | Pending |
-| CONC-M6 | Phase 7 | Pending |
-| CONC-M7 | Phase 7 | Pending |
-| CONC-M8 | Phase 7 | Pending |
-| CONC-M9 | Phase 7 | Pending |
+| MEM-M1 | Phase 7 | Complete |
+| MEM-M2 | Phase 7 | Complete |
+| MEM-M3 | Phase 8 | Pending |
+| CONC-M1 | Phase 7 | Complete |
+| CONC-M2 | Phase 7 | Complete |
+| CONC-M3 | Phase 7 | Complete |
+| CONC-M5 | Phase 7 | Complete |
+| CONC-M6 | Phase 7 | Complete |
+| CONC-M7 | Phase 7 | Complete |
+| CONC-M8 | Phase 7 | Complete |
+| CONC-M9 | Phase 7 | Complete |
 | MEM-H1 | Phase 8 | Pending |
 | MEM-H2 | Phase 8 | Pending |
 | MEM-H3 | Phase 8 | Pending |
@@ -87,4 +87,4 @@ Complete all P2 and P3 stability issues from the v1 audit. Each requirement maps
 
 ---
 *Requirements defined: 2026-01-24*
-*Last updated: 2026-01-24 after roadmap created*
+*Last updated: 2026-01-24 after Phase 7 complete*
