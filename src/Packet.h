@@ -229,7 +229,7 @@ namespace RNS {
 		const Bytes getTruncatedHash() const;
 		const Bytes get_hashable_part() const;
 
-		inline std::string toString() const { if (!_object) return ""; return "{Packet:" + _object->_packet_hash.toHex() + "}"; }
+		inline std::string toString() const { if (!_object) return ""; return "{Packet:" + _object->get_packet_hash().toHex() + "}"; }
 
 		// getters
 		inline const Destination& destination() const { assert(_object); return _object->_destination; }
@@ -248,9 +248,11 @@ namespace RNS {
 		inline uint8_t flags() const { assert(_object); return _object->_flags; }
 		inline uint8_t hops() const { assert(_object); return _object->_hops; }
 		inline bool cached() const { assert(_object); return _object->_cached; }
-		inline const Bytes& packet_hash() const { assert(_object); return _object->_packet_hash; }
-		inline const Bytes& destination_hash() const { assert(_object); return _object->_destination_hash; }
-		inline const Bytes& transport_id() const { assert(_object); return _object->_transport_id; }
+		// Inline buffer accessors - return Bytes by value (constructs from inline buffer)
+		// Note: Returns Bytes by value, not reference. Caller should cache if used multiple times.
+		inline Bytes packet_hash() const { assert(_object); return _object->get_packet_hash(); }
+		inline Bytes destination_hash() const { assert(_object); return _object->get_destination_hash(); }
+		inline Bytes transport_id() const { assert(_object); return _object->get_transport_id(); }
 		inline const Bytes& raw() const { assert(_object); return _object->_raw; }
 		inline const Bytes& data() const { assert(_object); return _object->_data; }
 		// CBA LINK
@@ -267,7 +269,7 @@ namespace RNS {
 		inline void receipt(const PacketReceipt& receipt) { assert(_object); _object->_receipt = receipt; }
 		inline void hops(uint8_t hops) { assert(_object); _object->_hops = hops; }
 		inline void cached(bool cached) { assert(_object); _object->_cached = cached; }
-		inline void transport_id(const Bytes& transport_id) { assert(_object); _object->_transport_id = transport_id; }
+		inline void transport_id(const Bytes& transport_id) { assert(_object); _object->set_transport_id(transport_id); }
 		//CBA Following method is only used by Link to provide Resource access to decrypted resource advertisement. Consider a better way.
 		inline void plaintext(const Bytes& plaintext) { assert(_object); _object->_plaintext = plaintext; }
 
@@ -277,16 +279,83 @@ namespace RNS {
 #endif
 
 	private:
-		// FIXME(frag): Object has 9 Bytes members - each creates PSRAM vector (~24 bytes overhead each)
-		// Per-packet allocation of ~216 bytes overhead + shared_ptr control block (High)
-		// Consider: Object pool, or reduce Bytes member count, or inline small buffers
+		// MEM-H3: Inline buffers for fixed-size fields save ~250 bytes per packet
+		// (avoids 4x Bytes overhead: shared_ptr control block + vector metadata)
+		// Remaining Bytes members (_raw, _data, etc.) are variable-size and stay as Bytes
 		class Object {
 		public:
-			Object(const Destination& destination, const Interface& attached_interface) : _destination(destination), _attached_interface(attached_interface) { MEM("Packet::Data object created, this: " + std::to_string((uintptr_t)this)); }
+			// Buffer size constants
+			static constexpr size_t PACKET_HASH_SIZE = 32;      // SHA256 hash
+			static constexpr size_t RATCHET_ID_SIZE = 32;       // Ratchet ID
+			static constexpr size_t DEST_HASH_SIZE = 16;        // Type::Reticulum::DESTINATION_LENGTH
+			static constexpr size_t TRANSPORT_ID_SIZE = 16;     // Type::Reticulum::DESTINATION_LENGTH
+
+			Object(const Destination& destination, const Interface& attached_interface) : _destination(destination), _attached_interface(attached_interface) {
+				MEM("Packet::Data object created, this: " + std::to_string((uintptr_t)this));
+				// Zero-initialize inline buffers
+				memset(_packet_hash_buf, 0, PACKET_HASH_SIZE);
+				memset(_ratchet_id_buf, 0, RATCHET_ID_SIZE);
+				memset(_destination_hash_buf, 0, DEST_HASH_SIZE);
+				memset(_transport_id_buf, 0, TRANSPORT_ID_SIZE);
+			}
 			// CBA LINK
 			//Object(const Destination& destination, const Link& destination_link) : _destination(destination), _destination_link(destination_link) { MEM("Packet::Data object created, this: " + std::to_string((uintptr_t)this)); }
 			//Object(const Link& link) : _destination(link.destination()), _destination_link(link) { MEM("Packet::Data object created, this: " + std::to_string((uintptr_t)this)); }
 			virtual ~Object() { MEM("Packet::Data object destroyed, this: " + std::to_string((uintptr_t)this)); }
+
+			// Inline buffer accessors - construct Bytes from buffer (no heap allocation for buffer itself)
+			Bytes get_packet_hash() const {
+				if (_packet_hash_len == 0) return Bytes();
+				return Bytes(_packet_hash_buf, _packet_hash_len);
+			}
+			void set_packet_hash(const Bytes& hash) {
+				size_t len = std::min(hash.size(), PACKET_HASH_SIZE);
+				memcpy(_packet_hash_buf, hash.data(), len);
+				_packet_hash_len = static_cast<uint8_t>(len);
+			}
+
+			Bytes get_ratchet_id() const {
+				if (_ratchet_id_len == 0) return Bytes();
+				return Bytes(_ratchet_id_buf, _ratchet_id_len);
+			}
+			void set_ratchet_id(const Bytes& id) {
+				size_t len = std::min(id.size(), RATCHET_ID_SIZE);
+				memcpy(_ratchet_id_buf, id.data(), len);
+				_ratchet_id_len = static_cast<uint8_t>(len);
+			}
+
+			Bytes get_destination_hash() const {
+				if (_destination_hash_len == 0) return Bytes();
+				return Bytes(_destination_hash_buf, _destination_hash_len);
+			}
+			void set_destination_hash(const Bytes& hash) {
+				size_t len = std::min(hash.size(), DEST_HASH_SIZE);
+				memcpy(_destination_hash_buf, hash.data(), len);
+				_destination_hash_len = static_cast<uint8_t>(len);
+			}
+			void set_destination_hash(const uint8_t* data, size_t len) {
+				len = std::min(len, DEST_HASH_SIZE);
+				memcpy(_destination_hash_buf, data, len);
+				_destination_hash_len = static_cast<uint8_t>(len);
+			}
+
+			Bytes get_transport_id() const {
+				if (_transport_id_len == 0) return Bytes();
+				return Bytes(_transport_id_buf, _transport_id_len);
+			}
+			void set_transport_id(const Bytes& id) {
+				size_t len = std::min(id.size(), TRANSPORT_ID_SIZE);
+				memcpy(_transport_id_buf, id.data(), len);
+				_transport_id_len = static_cast<uint8_t>(len);
+			}
+			void set_transport_id(const uint8_t* data, size_t len) {
+				len = std::min(len, TRANSPORT_ID_SIZE);
+				memcpy(_transport_id_buf, data, len);
+				_transport_id_len = static_cast<uint8_t>(len);
+			}
+			void clear_transport_id() { _transport_id_len = 0; }
+			bool has_transport_id() const { return _transport_id_len > 0; }
+
 		private:
 			Destination _destination = {Type::NONE};
 
@@ -325,11 +394,24 @@ namespace RNS {
 			float _snr = 0.0;
 			float _q = 0.0;
 
-			Bytes _packet_hash;
-			Bytes _ratchet_id;
-			Bytes _destination_hash;
-			Bytes _transport_id;
+			// Inline buffers for fixed-size fields (MEM-H3)
+			// Saves ~250 bytes per packet vs Bytes members:
+			//   - No shared_ptr control block (16 bytes each)
+			//   - No vector metadata (24 bytes each)
+			//   - Buffers are part of Object's single allocation
+			uint8_t _packet_hash_buf[PACKET_HASH_SIZE];
+			uint8_t _packet_hash_len = 0;
 
+			uint8_t _ratchet_id_buf[RATCHET_ID_SIZE];
+			uint8_t _ratchet_id_len = 0;
+
+			uint8_t _destination_hash_buf[DEST_HASH_SIZE];
+			uint8_t _destination_hash_len = 0;
+
+			uint8_t _transport_id_buf[TRANSPORT_ID_SIZE];
+			uint8_t _transport_id_len = 0;
+
+			// Variable-size fields remain as Bytes (COW semantics beneficial)
 			Bytes _raw;		// header + ( plaintext | ciphertext-token )
 			Bytes _data;	// plaintext | ciphertext
 

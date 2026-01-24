@@ -38,7 +38,7 @@ Packet::Packet(const Destination& destination, const Interface& attached_interfa
 		_object->_context = context;
         _object->_context_flag = context_flag;
 
-		_object->_transport_id = transport_id;
+		_object->set_transport_id(transport_id);
 		_object->_data = data;
 		if (_object->_data.size() > MDU) {
 			_object->_truncated = true;
@@ -281,7 +281,7 @@ void Packet::pack() {
 	if (!_object->_destination) {
 		throw std::logic_error("Packet destination is required");
 	}
-	_object->_destination_hash = _object->_destination.hash();
+	_object->set_destination_hash(_object->_destination.hash());
 
 	_object->_header.clear();
 	_object->_encrypted = false;
@@ -354,12 +354,12 @@ TRACEF("***** Destination Data: %s", _object->_ciphertext.toHex().c_str());
 			}
 		}
 		else if (_object->_header_type == HEADER_2) {
-			if (!_object->_transport_id) {
+			if (!_object->has_transport_id()) {
                 throw std::invalid_argument("Packet with header type 2 must have a transport ID");
 			}
-			TRACE("Packet::pack: transport id: " + _object->_transport_id.toHex() );
+			TRACE("Packet::pack: transport id: " + _object->get_transport_id().toHex() );
 			TRACE("Packet::pack: destination hash: " + _object->_destination.hash().toHex() );
-			_object->_header << _object->_transport_id;
+			_object->_header << _object->get_transport_id();
 			_object->_header << _object->_destination.hash();
 
 			if (_object->_packet_type == ANNOUNCE) {
@@ -415,16 +415,16 @@ bool Packet::unpack() {
 				snprintf(errbuf, sizeof(errbuf), "Packet size of %zu does not meet minimum header size of %d bytes", _object->_raw.size(), Type::Reticulum::HEADER_MAXSIZE);
 				throw std::length_error(errbuf);
 			}
-			_object->_transport_id.assign(raw+2, Type::Reticulum::DESTINATION_LENGTH);
-			_object->_destination_hash.assign(raw+Type::Reticulum::DESTINATION_LENGTH+2, Type::Reticulum::DESTINATION_LENGTH);
+			_object->set_transport_id(raw+2, Type::Reticulum::DESTINATION_LENGTH);
+			_object->set_destination_hash(raw+Type::Reticulum::DESTINATION_LENGTH+2, Type::Reticulum::DESTINATION_LENGTH);
 			_object->_context = static_cast<context_types>(raw[2*Type::Reticulum::DESTINATION_LENGTH+2]);
 			_object->_data.assign(raw+2*Type::Reticulum::DESTINATION_LENGTH+3, _object->_raw.size()-(2*Type::Reticulum::DESTINATION_LENGTH+3));
 			// uknown at this point whether data is encrypted or not
 			_object->_encrypted = false;
 		}
 		else {
-			_object->_transport_id.clear();
-			_object->_destination_hash.assign(raw+2, Type::Reticulum::DESTINATION_LENGTH);
+			_object->clear_transport_id();
+			_object->set_destination_hash(raw+2, Type::Reticulum::DESTINATION_LENGTH);
 			_object->_context = static_cast<context_types>(raw[Type::Reticulum::DESTINATION_LENGTH+2]);
 			_object->_data.assign(raw+Type::Reticulum::DESTINATION_LENGTH+3, _object->_raw.size()-(Type::Reticulum::DESTINATION_LENGTH+3));
 			// uknown at this point whether data is encrypted or not
@@ -561,7 +561,7 @@ bool Packet::validate_proof(const Bytes& proof) {
 
 void Packet::update_hash() {
 	assert(_object);
-	_object->_packet_hash = get_hash();
+	_object->set_packet_hash(get_hash());
 }
 
 const Bytes Packet::get_hash() const {
@@ -602,14 +602,14 @@ std::string Packet::debugString() const {
 	if (_object->_packed) {
 		//unpack();
 	}
-	std::string str = "ph=" + _object->_packet_hash.toHex();
+	std::string str = "ph=" + _object->get_packet_hash().toHex();
 	str += " ht=" + std::to_string(_object->_header_type);
 	str += " tt=" + std::to_string(_object->_transport_type);
 	str += " dt=" + std::to_string(_object->_destination_type);
 	str += " pt=" + std::to_string(_object->_packet_type);
 	str += " hp=" + std::to_string(_object->_hops);
-	str += " ti=" + _object->_transport_id.toHex();
-	str += " dh=" + _object->_destination_hash.toHex();
+	str += " ti=" + _object->get_transport_id().toHex();
+	str += " dh=" + _object->get_destination_hash().toHex();
 	return str;
 }
 std::string Packet::dumpString() const {
@@ -622,7 +622,7 @@ std::string Packet::dumpString() const {
 	bool encrypted = true;
 	std::string dump;
 	dump = "\n------------------------------------------------------------------------------\n";
-	dump += "hash:         " + _object->_packet_hash.toHex() + "\n";
+	dump += "hash:         " + _object->get_packet_hash().toHex() + "\n";
 	dump += "flags:        " + hexFromByte(_object->_flags) + "\n";
 	//dump += "  header_type:      " + std::to_string(_object->_header_type) + "\n";
 	dump += "  header_type:      ";
@@ -704,8 +704,8 @@ std::string Packet::dumpString() const {
 		std::to_string(_object->_packet_type) + "\n";
 	}
 	dump += "hops:         " + std::to_string(_object->_hops) + "\n";
-	dump += "transport:    " + _object->_transport_id.toHex() + "\n";
-	dump += "destination:  " + _object->_destination_hash.toHex() + "\n";
+	dump += "transport:    " + _object->get_transport_id().toHex() + "\n";
+	dump += "destination:  " + _object->get_destination_hash().toHex() + "\n";
 	//dump += "context:      " + std::to_string(_object->_context) + "\n";
 	dump += "context:      ";
 	switch (_object->_context) {
