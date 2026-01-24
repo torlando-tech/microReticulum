@@ -306,6 +306,9 @@ bool NimBLEPlatform::isRunning() const {
 //=============================================================================
 
 bool NimBLEPlatform::recoverBLEStack() {
+    // CONC-M4: Enhanced soft reset with graceful shutdown
+    INFO("NimBLEPlatform: Soft reset requested");
+
     // Track consecutive recovery attempts using existing member variable
     _lightweight_reset_fails++;
     WARNING("NimBLEPlatform: Performing soft BLE reset (attempt " +
@@ -322,35 +325,36 @@ bool NimBLEPlatform::recoverBLEStack() {
         return false;  // Won't reach here
     }
 
-    // Use enterErrorRecovery for state machine reset
-    enterErrorRecovery();
+    // CONC-M4: Use graceful shutdown to wait for active operations
+    // This ensures write operations complete before we reset state
+    // Save config before shutdown clears it
+    PlatformConfig saved_config = _config;
 
-    // Clear scan results and discovered devices
-    if (_scan) {
-        _scan->clearResults();
+    // Perform graceful shutdown (waits for writes, cleans up properly)
+    shutdown();
+
+    // Brief delay for NimBLE host task to process shutdown
+    // DELAY RATIONALE: Soft reset processing - allow stack to fully quiesce after deinit
+    delay(100);
+
+    // Reinitialize with saved config
+    if (!initialize(saved_config)) {
+        WARNING("NimBLEPlatform: Soft reset reinitialization failed");
+        // Log detailed state for debugging
+        ERROR("NimBLEPlatform: Soft reset failed - stack may need hard recovery (ESP.restart)");
+        // Return false - caller can decide to trigger ESP.restart() if needed
+        return false;
     }
-    _discovered_devices.clear();
-    _discovered_order.clear();
 
-    // Reconfigure scan - this can help recover from bad state
-    if (_scan) {
-        _scan->setScanCallbacks(this, false);
-        _scan->setActiveScan(_config.scan_mode == ScanMode::ACTIVE);
-        _scan->setInterval(_config.scan_interval_ms);
-        _scan->setWindow(_config.scan_window_ms);
-        _scan->setFilterPolicy(BLE_HCI_SCAN_FILT_NO_WL);
-        _scan->setDuplicateFilter(true);
+    // Restart the platform
+    if (!start()) {
+        WARNING("NimBLEPlatform: Soft reset start failed");
+        return false;
     }
 
-    // Reset scan failure counter
+    // Reset failure counters on successful reset
+    _lightweight_reset_fails = 0;
     _scan_fail_count = 0;
-
-    // Restart advertising if in peripheral/dual mode
-    if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
-        // DELAY RATIONALE: Advertising restart - allow stack to process state change before retry
-        delay(100);
-        startAdvertising();
-    }
 
     INFO("NimBLEPlatform: Soft reset complete");
     return true;
