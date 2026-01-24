@@ -164,13 +164,12 @@ std::string RNS::hexFromByte(uint8_t byte, bool upper /*= true*/) {
 	return hex;
 }
 
-// FIXME(frag): toHex creates temporary std::string that grows via +=, multiple reallocs (Low)
 std::string Bytes::toHex(bool upper /*= false*/) const {
 	if (!_data) {
 		return "";
 	}
 	std::string hex;
-	// Consider: hex.reserve(_data->size() * 2);
+	hex.reserve(_data->size() * 2);
 	for (uint8_t byte : *_data) {
 		if (upper) {
 			hex += hex_upper_chars[ (byte&  0xF0) >> 4];
