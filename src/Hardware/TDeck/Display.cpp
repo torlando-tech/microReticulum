@@ -101,10 +101,14 @@ void Display::init_registers() {
 
     // Software reset
     write_command(Command::SWRESET);
+    // DELAY RATIONALE: LCD reset pulse width
+    // ST7789 datasheet specifies minimum 120ms reset low time for reliable initialization.
+    // Using 150ms for margin. Shorter values cause display initialization failures.
     delay(150);
 
     // Sleep out
     write_command(Command::SLPOUT);
+    // DELAY RATIONALE: SPI command settling - allow display controller to process command before next
     delay(10);
 
     // Color mode: 16-bit (RGB565)
@@ -121,14 +125,17 @@ void Display::init_registers() {
 
     // Inversion on (required for ST7789V panels)
     write_command(Command::INVON);
+    // DELAY RATIONALE: SPI command settling - allow display controller to process command before next
     delay(10);
 
     // Normal display mode
     write_command(Command::NORON);
+    // DELAY RATIONALE: SPI command settling - allow display controller to process command before next
     delay(10);
 
     // Display on
     write_command(Command::DISPON);
+    // DELAY RATIONALE: SPI command settling - allow display controller to process command before next
     delay(10);
 
     // Clear screen to black
