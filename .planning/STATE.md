@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-23)
 
 **Core value:** Identify and prioritize root causes of instability for reliable extended operation
-**Current focus:** Phase 4 (Concurrency Audit) - Plan 01 complete
+**Current focus:** Phase 4 (Concurrency Audit) - Plan 03 complete
 
 ## Current Position
 
 Phase: 4 of 5 IN PROGRESS (Concurrency Audit)
-Plan: 01 of 4 COMPLETE
-Status: LVGL audit complete, ready for NimBLE audit
-Last activity: 2026-01-24 — Completed 04-01 (LVGL Thread Safety Audit)
+Plan: 03 of 4 COMPLETE
+Status: FreeRTOS task audit complete, ready for Synthesis
+Last activity: 2026-01-24 — Completed 04-03 (FreeRTOS Tasks and Watchdog Audit)
 
-Progress: [########--] 82%
+Progress: [#########-] 88%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 10
+- Total plans completed: 12
 - Average duration: 5 min
-- Total execution time: 50 min
+- Total execution time: 58 min
 
 **By Phase:**
 
@@ -30,11 +30,11 @@ Progress: [########--] 82%
 | 01-memory-instrumentation | 2 | 4min | 2min |
 | 02-boot-profiling | 4 | 8min | 2min |
 | 03-memory-allocation-audit | 4 | 26min | 6.5min |
-| 04-concurrency-audit | 1 | 12min | 12min |
+| 04-concurrency-audit | 3 | 20min | 7min |
 
 **Recent Trend:**
-- Last 5 plans: 03-02 (18min), 03-03 (3min), 03-04 (5min), 04-01 (12min)
-- Trend: Audit plans vary (more reading/analysis)
+- Last 5 plans: 03-03 (3min), 03-04 (5min), 04-01 (12min), 04-02 (4min), 04-03 (4min)
+- Trend: Concurrency audit averaging 7min/plan
 
 *Updated after each plan completion*
 
@@ -143,6 +143,19 @@ Recent decisions affecting current work:
 - Threading model documented with ASCII diagrams
 - Audit report: .planning/phases/04-concurrency-audit/04-LVGL.md
 
+**04-03: FreeRTOS Tasks and Watchdog Audit (COMPLETE)**
+- 3 FreeRTOS tasks inventoried (LVGL, BLE, main loop) + 1 timer
+- TWDT (Task Watchdog Timer) NOT configured - critical gap
+- 5 issues identified (0 critical, 2 high, 2 medium, 1 low):
+  - TASK-01: TWDT not configured (High)
+  - TASK-02: LXStamper CPU hogging with infrequent yields (High)
+  - TASK-03: LVGL mutex uses portMAX_DELAY (Medium)
+  - TASK-04: Audio I2S blocking write (Medium)
+  - TASK-05: Link watchdog TODO not implemented (Low)
+- Yield patterns and blocking operations documented with risk assessment
+- Stack sizes assessed against Phase 1 monitoring
+- Audit report: .planning/phases/04-concurrency-audit/04-TASKS.md
+
 ### Phase 5 Backlog (from 03-AUDIT.md)
 
 **Priority 2 (High):**
@@ -162,9 +175,16 @@ Recent decisions affecting current work:
 **From 04-LVGL.md:**
 - P3-3: Add LVGL_LOCK() to 3 screen constructors/destructors (Medium)
 
+**From 04-TASKS.md:**
+- P1-1: Enable TWDT with 10s timeout, subscribe critical tasks (High)
+- P2-4: Improve LXStamper yield frequency (High)
+- P3-4: Add timeout to LVGL mutex acquisition (Medium)
+- P3-5: Add timeout to I2S audio writes (Medium)
+- P4-4: Implement Link watchdog (Low)
+
 ### Pending Todos
 
-None - Phase 4 Plan 01 complete.
+None - Phase 4 Plan 03 complete.
 
 ### Blockers/Concerns
 
@@ -177,13 +197,15 @@ None - Phase 4 Plan 01 complete.
 - 14 sites could use `make_shared` for ~40 bytes savings each
 - DynamicJsonDocument in Persistence.h/cpp needs migration
 - 3 screen classes need LVGL_LOCK() in constructors/destructors
+- TWDT not configured for any application tasks
+- LXStamper yields only every 100 rounds during stamp generation
 
 ## Session Continuity
 
 Last session: 2026-01-24
-Completed: 04-01-PLAN.md (LVGL Thread Safety Audit)
-Next: 04-02-PLAN.md (NimBLE Lifecycle Audit)
+Completed: 04-03-PLAN.md (FreeRTOS Tasks and Watchdog Audit)
+Next: 04-04-PLAN.md (Concurrency Synthesis)
 
 ---
-*Phase 4 (Concurrency Audit) Plan 01 COMPLETE.*
-*LVGL audit report: .planning/phases/04-concurrency-audit/04-LVGL.md*
+*Phase 4 (Concurrency Audit) Plan 03 COMPLETE.*
+*Task audit report: .planning/phases/04-concurrency-audit/04-TASKS.md*
