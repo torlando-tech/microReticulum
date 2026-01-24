@@ -48,6 +48,7 @@ namespace RNS {
 		};
 
 	public:
+		// FIXME(frag): Default constructor allocates - consider lazy allocation (Medium)
 		PacketReceipt() : _object(new Object()) {}
 		PacketReceipt(Type::NoneConstructor none) {}
 		PacketReceipt(const PacketReceipt& packet_receipt) : _object(packet_receipt._object) {}
@@ -269,6 +270,9 @@ namespace RNS {
 #endif
 
 	private:
+		// FIXME(frag): Object has 9 Bytes members - each creates PSRAM vector (~24 bytes overhead each)
+		// Per-packet allocation of ~216 bytes overhead + shared_ptr control block (High)
+		// Consider: Object pool, or reduce Bytes member count, or inline small buffers
 		class Object {
 		public:
 			Object(const Destination& destination, const Interface& attached_interface) : _destination(destination), _attached_interface(attached_interface) { MEM("Packet::Data object created, this: " + std::to_string((uintptr_t)this)); }

@@ -18,6 +18,8 @@ ProofDestination::ProofDestination(const Packet& packet) : Destination({Type::NO
 {
 }
 
+// FIXME(frag): Per-packet allocation - new Object creates shared_ptr control block each time (High)
+// Consider: Object pool or arena allocator for Packet::Object instances
 Packet::Packet(const Destination& destination, const Interface& attached_interface, const Bytes& data, types packet_type /*= DATA*/, context_types context /*= CONTEXT_NONE*/, Type::Transport::types transport_type /*= Type::Transport::BROADCAST*/, header_types header_type /*= HEADER_1*/, const Bytes& transport_id /*= {Bytes::NONE}*/, bool create_receipt /*= true*/, context_flag context_flag /*= FLAG_UNSET*/) :
 	_object(new Object(destination, attached_interface))
 {
@@ -807,6 +809,7 @@ std::string Packet::dumpString() const {
 #endif
 
 
+// FIXME(frag): Per-packet allocation for receipt - new Object creates shared_ptr control block (High)
 PacketReceipt::PacketReceipt(const Packet& packet) : _object(new Object()) {
 
 	if (!packet.destination()) {

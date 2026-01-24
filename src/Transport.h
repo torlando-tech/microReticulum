@@ -389,6 +389,8 @@ namespace RNS {
 		};
 
 		// Fixed-size pool structures for zero heap fragmentation
+		// Overflow behavior: find_empty_*_slot() returns nullptr when pool full
+		// Callers must check for nullptr and handle gracefully (drop/log/cull)
 		static constexpr size_t ANNOUNCE_TABLE_SIZE = 8;  // Reduced for testing
 		struct AnnounceTableSlot {
 			bool in_use = false;
