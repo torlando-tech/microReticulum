@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-01-23)
 ## Current Position
 
 Phase: 2 of 5 (Boot Profiling)
-Plan: 2 of 3 in current phase
-Status: In progress
-Last activity: 2026-01-24 — Completed 02-02-PLAN.md
+Plan: 3 of 3 in current phase
+Status: Phase complete
+Last activity: 2026-01-24 — Completed 02-03-PLAN.md
 
-Progress: [####------] 40%
+Progress: [#####-----] 50%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
+- Total plans completed: 5
 - Average duration: 2 min
-- Total execution time: 7 min
+- Total execution time: 9 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-memory-instrumentation | 2 | 4min | 2min |
-| 02-boot-profiling | 2 | 3min | 1.5min |
+| 02-boot-profiling | 3 | 5min | 1.7min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (2min), 01-02 (2min), 02-01 (1min), 02-02 (2min)
+- Last 5 plans: 01-01 (2min), 01-02 (2min), 02-01 (1min), 02-02 (2min), 02-03 (2min)
 - Trend: Consistent
 
 *Updated after each plan completion*
@@ -55,6 +55,8 @@ Recent decisions affecting current work:
 - [02-01]: Wait time tracked separately from init time
 - [02-02]: Wrap setup_*() calls in main setup() rather than inside each function
 - [02-02]: WAIT markers inside setup_wifi() and setup_lxmf() where waits occur
+- [02-03]: Disable PSRAM memory test for ~2s boot time savings
+- [02-03]: Keep app log level at INFO for development (production opt-in)
 
 ### Pending Todos
 
@@ -71,8 +73,8 @@ These block full build verification but do not affect the code changes made in t
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 02-02-PLAN.md
+Stopped at: Completed 02-03-PLAN.md
 Resume file: None
 
 ---
-*Next step: Execute 02-03-PLAN.md (boot time optimizations)*
+*Phase 02-boot-profiling complete. Next step: Execute Phase 03*
