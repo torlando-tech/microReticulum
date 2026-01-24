@@ -2,14 +2,14 @@
 
 ## Milestones
 
-- ✅ **v1.0 Stability Audit** - Phases 1-5 (shipped 2026-01-24)
-- ✅ **v1.1 Stability Quick Wins** - Phase 6 (shipped 2026-01-24)
-- 🚧 **v1.2 Stability Complete** - Phases 7-8 (in progress)
+- v1.0 Stability Audit - Phases 1-5 (shipped 2026-01-24)
+- v1.1 Stability Quick Wins - Phase 6 (shipped 2026-01-24)
+- v1.2 Stability Complete - Phases 7-8 (in progress)
 
 ## Phases
 
 <details>
-<summary>✅ v1.0 Stability Audit (Phases 1-5) — SHIPPED 2026-01-24</summary>
+<summary>v1.0 Stability Audit (Phases 1-5) - SHIPPED 2026-01-24</summary>
 
 See: .planning/milestones/v1.0-ROADMAP.md (if archived) or phase directories
 
@@ -22,7 +22,7 @@ See: .planning/milestones/v1.0-ROADMAP.md (if archived) or phase directories
 </details>
 
 <details>
-<summary>✅ v1.1 Stability Quick Wins (Phase 6) — SHIPPED 2026-01-24</summary>
+<summary>v1.1 Stability Quick Wins (Phase 6) - SHIPPED 2026-01-24</summary>
 
 See: .planning/milestones/v1.1-ROADMAP.md
 
@@ -30,7 +30,7 @@ See: .planning/milestones/v1.1-ROADMAP.md
 
 </details>
 
-### 🚧 v1.2 Stability Complete (In Progress)
+### v1.2 Stability Complete (In Progress)
 
 **Milestone Goal:** Complete all remaining P2 and P3 stability issues from v1 audit, making firmware production-ready.
 
@@ -63,21 +63,23 @@ Plans:
 
 **Goal**: Complete P3 optimizations and hardening for long-term stability
 **Depends on**: Phase 7
-**Requirements**: MEM-H1, MEM-H2, MEM-H3, MEM-H4, MEM-L1, CONC-H4, CONC-M4, CONC-L1, CONC-L2, CONC-L4
+**Requirements**: MEM-H1, MEM-H2, MEM-H3, MEM-L1, CONC-H4, CONC-M4, CONC-L1, CONC-L2, CONC-L4
+<!-- Note: MEM-H4 (PacketReceipt lazy allocation) was completed in Phase 7 as MEM-M2 -->
 **Success Criteria** (what must be TRUE):
   1. Bytes and Packet use pool/arena allocators reducing per-packet heap fragmentation
   2. Packet fixed-size members use inline buffers (saving ~150 bytes/packet)
   3. BLE shutdown waits for active operations to complete (no use-after-free on restart)
   4. All portMAX_DELAY sites have debug timeout variants to detect stuck tasks
   5. Undocumented delays and volatile usage have rationale comments
-**Plans**: 5 plans in 2 waves
+**Plans**: 6 plans in 3 waves
 
 Plans:
-- [ ] 08-01-PLAN.md - Quick wins: toHex reserve, ArduinoJson v7 API migration
-- [ ] 08-02-PLAN.md - Debug timeouts for remaining portMAX_DELAY sites
-- [ ] 08-03-PLAN.md - Volatile and delay rationale documentation
-- [ ] 08-04-PLAN.md - Pool allocators and Packet inline buffers
-- [ ] 08-05-PLAN.md - BLE graceful shutdown with timeout
+- [x] 08-01-PLAN.md - Quick wins: toHex reserve, ArduinoJson v7 API migration
+- [x] 08-02-PLAN.md - Debug timeouts for remaining portMAX_DELAY sites
+- [x] 08-03-PLAN.md - Volatile and delay rationale documentation
+- [x] 08-04-PLAN.md - Pool allocators and Packet inline buffers
+- [x] 08-05-PLAN.md - BLE graceful shutdown with timeout
+- [ ] 08-06-PLAN.md - Gap closure: BytesBufferPool integration (MEM-H1)
 
 ## Progress
 
@@ -90,9 +92,9 @@ Plans:
 | 5. Synthesis | v1.0 | 2/2 | Complete | 2026-01-24 |
 | 6. P1 Stability Fixes | v1.1 | 2/2 | Complete | 2026-01-24 |
 | 7. P2 Production Readiness | v1.2 | 5/5 | Complete | 2026-01-24 |
-| 8. P3 Optimization & Hardening | v1.2 | 0/5 | Planned | - |
+| 8. P3 Optimization & Hardening | v1.2 | 5/6 | Gap closure | - |
 
-**Total:** 8 phases, 22 plans completed (v1.0-v1.2), 1 phase remaining (v1.2)
+**Total:** 8 phases, 27 plans completed (v1.0-v1.2), 1 gap closure plan remaining
 
 ---
-*Last updated: 2026-01-24 after Phase 7 complete*
+*Last updated: 2026-01-24 after 08-06 gap closure plan created*
