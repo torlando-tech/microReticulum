@@ -254,6 +254,7 @@ bool NimBLEPlatform::recoverBLEStack() {
     if (_lightweight_reset_fails >= 5) {
         ERROR("NimBLEPlatform: BLE stack unrecoverable after " +
               std::to_string(_lightweight_reset_fails) + " attempts - rebooting device");
+        // DELAY RATIONALE: Stack init settling - allow log message to flush before reboot
         delay(100);
         ESP.restart();
         return false;  // Won't reach here
@@ -284,6 +285,7 @@ bool NimBLEPlatform::recoverBLEStack() {
 
     // Restart advertising if in peripheral/dual mode
     if (_config.role == Role::PERIPHERAL || _config.role == Role::DUAL) {
+        // DELAY RATIONALE: Advertising restart - allow stack to process state change before retry
         delay(100);
         startAdvertising();
     }
@@ -403,6 +405,7 @@ bool NimBLEPlatform::pauseSlaveForMaster() {
         // Wait for advertising to stop
         uint32_t start = millis();
         while (ble_gap_adv_active() && millis() - start < 2000) {
+            // DELAY RATIONALE: Advertising stop polling - check completion every NimBLE scheduler tick (~10ms)
             delay(10);
         }
 
@@ -436,6 +439,7 @@ bool NimBLEPlatform::pauseSlaveForMaster() {
             _slave_paused_for_master = true;
             return true;
         }
+        // DELAY RATIONALE: Slave state polling - check completion every NimBLE scheduler tick (~10ms)
         delay(10);
     }
 
@@ -499,6 +503,10 @@ void NimBLEPlatform::enterErrorRecovery() {
         DEBUG("NimBLEPlatform: Waiting for host sync during recovery...");
         uint32_t sync_start = millis();
         while (!ble_hs_synced() && (millis() - sync_start) < 3000) {
+            // DELAY RATIONALE: Error recovery before retry
+            // After BLE operation failure, NimBLE stack needs processing time before retry.
+            // Without delay: immediate retry fails, rapid retries can trigger assertions.
+            // 50ms = 5 NimBLE scheduler ticks, empirically chosen balance of recovery vs latency.
             delay(50);
         }
         if (ble_hs_synced()) {
@@ -510,7 +518,7 @@ void NimBLEPlatform::enterErrorRecovery() {
         }
     }
 
-    // ESP32-S3 settling time after sync (reduced from 200ms)
+    // DELAY RATIONALE: Connect attempt recovery - ESP32-S3 settling time after host sync
     delay(50);
 
     // Re-acquire scan object to reset NimBLE internal state
@@ -587,7 +595,7 @@ bool NimBLEPlatform::startScan(uint16_t duration_ms) {
         return false;
     }
 
-    // Brief settling delay for NimBLE internal state (reduced from 100ms)
+    // DELAY RATIONALE: MTU negotiation settling - allow stack to stabilize before scan start
     delay(20);
 
     // Transition to SCAN_STARTING
@@ -671,6 +679,7 @@ void NimBLEPlatform::stopScan() {
     // Wait for scan to actually stop
     uint32_t start = millis();
     while (ble_gap_disc_active() && millis() - start < 1000) {
+        // DELAY RATIONALE: Scan stop polling - check completion every NimBLE scheduler tick (~10ms)
         delay(10);
     }
 
@@ -768,7 +777,7 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
     _gap_state = GAPState::MASTER_PRIORITY;
     portEXIT_CRITICAL(&_state_mux);
 
-    // Brief settling delay after stopping advertising (reduced from 200ms)
+    // DELAY RATIONALE: Service discovery settling - allow stack to finalize after advertising stop
     delay(20);
 
     // Verify GAP is truly idle
@@ -784,6 +793,7 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
         WARNING("NimBLEPlatform: Connection still pending in GAP, waiting...");
         uint32_t start = millis();
         while (ble_gap_conn_active() && millis() - start < 1000) {
+            // DELAY RATIONALE: Service discovery polling - check completion per scheduler tick
             delay(10);
         }
         if (ble_gap_conn_active()) {
@@ -967,6 +977,7 @@ bool NimBLEPlatform::connectNative(const BLEAddress& address, uint16_t timeout_m
         WARNING("NimBLEPlatform::connectNative: Host not synced, waiting for sync");
         uint32_t sync_start = millis();
         while (!ble_hs_synced() && (millis() - sync_start) < 1000) {
+            // DELAY RATIONALE: Notification send retry - respect scheduler tick for queue processing
             delay(10);
         }
         if (!ble_hs_synced()) {
@@ -1047,7 +1058,8 @@ bool NimBLEPlatform::connectNative(const BLEAddress& address, uint16_t timeout_m
             ERROR("NimBLEPlatform::connectNative: Host desync detected (rc=22), scheduling host reset");
             // Schedule a host reset to resynchronize with controller
             ble_hs_sched_reset(0);
-            delay(50);  // Brief delay for reset to process (reduced from 300ms)
+            // DELAY RATIONALE: Soft reset processing - allow stack to process host reset
+            delay(50);
             enterErrorRecovery();
         }
 
@@ -1057,6 +1069,7 @@ bool NimBLEPlatform::connectNative(const BLEAddress& address, uint16_t timeout_m
     // Wait for connection to complete
     unsigned long start = millis();
     while (_native_connect_pending && (millis() - start) < timeout_ms) {
+        // DELAY RATIONALE: Reset wait polling - check connection completion per scheduler tick
         delay(10);
     }
 
@@ -1070,7 +1083,8 @@ bool NimBLEPlatform::connectNative(const BLEAddress& address, uint16_t timeout_m
                 DEBUG("NimBLEPlatform::connectNative: ble_gap_conn_cancel returned " + std::to_string(rc));
             }
         }
-        delay(10);  // Brief delay for stack to process (reduced from 50ms)
+        // DELAY RATIONALE: Stack stabilization after connection cancel
+        delay(10);
         _native_connect_pending = false;
         return false;
     }
@@ -1313,6 +1327,7 @@ void NimBLEPlatform::stopAdvertising() {
     // Wait for advertising to actually stop
     uint32_t start = millis();
     while (ble_gap_adv_active() && millis() - start < 1000) {
+        // DELAY RATIONALE: Loop iteration throttle - prevent tight loop CPU consumption
         delay(10);
     }
 
