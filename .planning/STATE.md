@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-24)
 
 **Core value:** Reliable firmware operation for extended periods without crashes or performance degradation.
-**Current focus:** Phase 8 - P3 Optimization & Hardening (COMPLETE)
+**Current focus:** Phase 8 - P3 Optimization & Hardening (COMPLETE + gap closure)
 
 ## Current Position
 
 Phase: 8 of 8 (P3 Optimization & Hardening)
-Plan: 5 of 5 complete (including 08-04 and 08-05)
-Status: Phase complete
-Last activity: 2026-01-24 — Completed 08-04-PLAN.md (ObjectPool and inline buffers)
+Plan: 6 of 6 complete (including 08-06 gap closure)
+Status: Phase complete with BytesPool integration
+Last activity: 2026-01-24 — Completed 08-06-PLAN.md (BytesPool integration)
 
-Progress: [========================] 27/27 plans (100% through v1.0-v1.2)
+Progress: [========================] 28/28 plans (100% through v1.0-v1.2 + gap closure)
 
 ## Milestones
 
@@ -68,7 +68,10 @@ Key decisions from Phase 8:
 - Soft reset performs full shutdown/reinit cycle (CONC-M4)
 - ObjectPool spinlock on ESP32, mutex on native (MEM-H2)
 - Inline buffers return Bytes by value for reduced fragmentation (MEM-H3)
-- Bytes pool integration deferred - inline buffers provide majority of savings (MEM-H1)
+- BytesPool integrated into Bytes allocation paths (MEM-H1 COMPLETE)
+- Pool Data objects not raw buffers - eliminates control block + vector fragmentation
+- Three tiers: 256/512/1024 bytes, 16 slots each = 48 pooled buffers
+- Custom deleter returns Data to pool on refcount=0
 
 ### Pending Todos
 
@@ -81,8 +84,8 @@ None. All phases complete.
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 08-04-PLAN.md - all phases complete
+Stopped at: Completed 08-06-PLAN.md - BytesPool integration complete
 Resume file: None
 
 ---
-*Last updated: 2026-01-24 after 08-04 complete*
+*Last updated: 2026-01-24 after 08-06 complete*
