@@ -25,10 +25,10 @@ This backlog consolidates **30 issues** identified during Phases 3-4 stability a
 
 | Priority | Count | WSJF Range | Effort Range | Sprint Recommendation |
 |----------|-------|------------|--------------|----------------------|
-| P1 | 5 | >= 3.0 | Low | Sprint 1 (immediate) |
-| P2 | 8 | 1.5 - 2.99 | Low-Medium | Sprint 1-2 |
-| P3 | 11 | 0.5 - 1.49 | Low-High | Sprint 2-3 (opportunistic) |
-| P4 | 6 | < 0.5 | Low-High | Backlog (defer) |
+| P1 | 5 | >= 3.0 | Trivial-Low | Sprint 1 (immediate) |
+| P2 | 11 | 2.0 | Low | Sprint 1-2 |
+| P3 | 9 | 0.8 - 1.4 | Trivial-High | Sprint 2-3 (opportunistic) |
+| P4 | 5 | < 0.5 | Low-Medium | Backlog (defer) |
 
 ---
 
@@ -38,11 +38,11 @@ Sorted by WSJF score descending (highest priority first).
 
 | ID | Source | Severity | Effort | WSJF | Title | Priority |
 |----|--------|----------|--------|------|-------|----------|
+| MEM-M4 | Phase 3 | Medium (4) | Trivial (1) | 4.00 | Duplicate static definition | P1 |
 | CONC-H1 | Phase 4 | High (7) | Low (2) | 3.50 | TWDT not configured for application tasks | P1 |
 | CONC-H2 | Phase 4 | High (7) | Low (2) | 3.50 | LXStamper CPU hogging | P1 |
 | CONC-H3 | Phase 4 | High (7) | Low (2) | 3.50 | Pending queues not thread-safe | P1 |
 | MEM-H5 | Phase 3 | High (7) | Low (2) | 3.50 | Resource vectors resize during transfers | P1 |
-| MEM-M4 | Phase 3 | Medium (4) | Trivial (1) | 4.00 | Duplicate static definition | P1 |
 | MEM-M1 | Phase 3 | Medium (4) | Low (2) | 2.00 | Bytes newData make_shared pattern | P2 |
 | MEM-M2 | Phase 3 | Medium (4) | Low (2) | 2.00 | PacketReceipt default constructor allocates | P2 |
 | MEM-M3 | Phase 3 | Medium (4) | Low (2) | 2.00 | DynamicJsonDocument in Persistence | P2 |
@@ -51,22 +51,22 @@ Sorted by WSJF score descending (highest priority first).
 | CONC-M3 | Phase 4 | Medium (4) | Low (2) | 2.00 | AnnounceListScreen missing LVGL_LOCK | P2 |
 | CONC-M5 | Phase 4 | Medium (4) | Low (2) | 2.00 | Mutex timeout may lose cache updates | P2 |
 | CONC-M6 | Phase 4 | Medium (4) | Low (2) | 2.00 | Discovered devices cache unbounded | P2 |
+| CONC-M7 | Phase 4 | Medium (4) | Low (2) | 2.00 | LVGL mutex uses portMAX_DELAY | P2 |
+| CONC-M8 | Phase 4 | Medium (4) | Low (2) | 2.00 | Audio I2S blocking write | P2 |
+| CONC-M9 | Phase 4 | Medium (4) | Low (2) | 2.00 | No formal mutex ordering enforcement | P2 |
 | MEM-H1 | Phase 3 | High (7) | Medium (5) | 1.40 | Bytes COW copy allocation | P3 |
 | MEM-H3 | Phase 3 | High (7) | Medium (5) | 1.40 | Packet 9 Bytes members overhead | P3 |
+| MEM-H4 | Phase 3 | High (7) | Medium (5) | 1.40 | PacketReceipt allocation | P3 |
 | CONC-H4 | Phase 4 | High (7) | Medium (5) | 1.40 | Shutdown during active operations | P3 |
 | MEM-L1 | Phase 3 | Low (1) | Trivial (1) | 1.00 | toHex string reallocation | P3 |
 | CONC-L1 | Phase 4 | Low (1) | Trivial (1) | 1.00 | Native GAP handler volatile usage | P3 |
 | CONC-L2 | Phase 4 | Low (1) | Trivial (1) | 1.00 | Undocumented 50ms delay | P3 |
-| MEM-H4 | Phase 3 | High (7) | Medium (5) | 1.40 | PacketReceipt allocation | P3 |
-| CONC-M7 | Phase 4 | Medium (4) | Low (2) | 2.00 | LVGL mutex uses portMAX_DELAY | P2 |
-| CONC-M8 | Phase 4 | Medium (4) | Low (2) | 2.00 | Audio I2S blocking write | P2 |
-| CONC-M9 | Phase 4 | Medium (4) | Low (2) | 2.00 | No formal mutex ordering enforcement | P2 |
 | MEM-H2 | Phase 3 | High (7) | High (8) | 0.88 | Packet Object allocation | P3 |
 | CONC-M4 | Phase 4 | Medium (4) | Medium (5) | 0.80 | Soft reset does not release NimBLE state | P3 |
-| MEM-L2 | Phase 3 | Low (1) | Low (2) | 0.50 | BLEFragmenter temporary vector | P3 |
-| MEM-L3 | Phase 3 | Low (1) | Low (2) | 0.50 | Fixed document size may be suboptimal | P3 |
-| MEM-L4 | Phase 3 | Low (1) | Low (2) | 0.50 | std::map in ChannelData | P3 |
-| CONC-L4 | Phase 4 | Low (1) | Low (2) | 0.50 | portMAX_DELAY masks deadlock detection | P3 |
+| MEM-L2 | Phase 3 | Low (1) | Low (2) | 0.50 | BLEFragmenter temporary vector | P4 |
+| MEM-L3 | Phase 3 | Low (1) | Low (2) | 0.50 | Fixed document size may be suboptimal | P4 |
+| MEM-L4 | Phase 3 | Low (1) | Low (2) | 0.50 | std::map in ChannelData | P4 |
+| CONC-L4 | Phase 4 | Low (1) | Low (2) | 0.50 | portMAX_DELAY masks deadlock detection | P4 |
 | CONC-L3 | Phase 4 | Low (1) | Medium (5) | 0.20 | Link watchdog TODO not implemented | P4 |
 
 ---
