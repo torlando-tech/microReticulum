@@ -17,7 +17,14 @@ namespace RNS {
 
 	class ResourceData {
 	public:
-		ResourceData(const Link& link) : _link(link) {}
+		// Maximum parts = MAX_EFFICIENT_SIZE / minimum SDU
+		// MAX_EFFICIENT_SIZE = 16384, minimum SDU ~64 = ~256 parts max
+		static constexpr size_t MAX_PARTS = 256;
+
+		ResourceData(const Link& link) : _link(link) {
+			_parts.reserve(MAX_PARTS);
+			_hashmap.reserve(MAX_PARTS);
+		}
 		virtual ~ResourceData() {}
 
 	private:
