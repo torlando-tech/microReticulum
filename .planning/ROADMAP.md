@@ -29,10 +29,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Fragmentation percentage is calculated and logged (100 - largest_block/total_free)
   3. Stack high water marks are logged for all FreeRTOS tasks
   4. Instrumentation code is isolated and can be disabled via build flag
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 01-01: TBD
+- [ ] 01-01-PLAN.md - Core Memory Monitor Module (heap/stack monitoring, FreeRTOS timer)
+- [ ] 01-02-PLAN.md - Application Integration (build flag, init in main.cpp, task registration)
 
 ### Phase 2: Boot Profiling
 **Goal**: Boot sequence is profiled and reduced to under 5 seconds through configuration changes
@@ -100,7 +101,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Memory Instrumentation | 0/TBD | Not started | - |
+| 1. Memory Instrumentation | 0/2 | Ready to execute | - |
 | 2. Boot Profiling | 0/TBD | Not started | - |
 | 3. Memory Allocation Audit | 0/TBD | Not started | - |
 | 4. Concurrency Audit | 0/TBD | Not started | - |
