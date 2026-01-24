@@ -58,6 +58,11 @@
 // Logging
 #include <Log.h>
 
+// Memory instrumentation
+#ifdef MEMORY_INSTRUMENTATION_ENABLED
+#include <Instrumentation/MemoryMonitor.h>
+#endif
+
 // Firmware version for web flasher detection
 #define FIRMWARE_VERSION "1.0.0"
 #define FIRMWARE_NAME "microReticulum"
@@ -497,6 +502,23 @@ void setup_lvgl_and_ui() {
     }
 
     INFO("LVGL task started on core 1");
+
+    // Initialize memory monitoring (if enabled)
+#ifdef MEMORY_INSTRUMENTATION_ENABLED
+    INFO("Initializing memory monitor...");
+    if (RNS::Instrumentation::MemoryMonitor::init(30000)) {
+        INFO("Memory monitor started (30s interval)");
+
+        // Register LVGL task for stack monitoring
+        TaskHandle_t lvgl_task = UI::LVGL::LVGLInit::get_task_handle();
+        if (lvgl_task != nullptr) {
+            RNS::Instrumentation::MemoryMonitor::registerTask(lvgl_task, "lvgl");
+            INFO("  Registered LVGL task");
+        }
+    } else {
+        WARNING("Failed to start memory monitor");
+    }
+#endif
 }
 
 void setup_reticulum() {
