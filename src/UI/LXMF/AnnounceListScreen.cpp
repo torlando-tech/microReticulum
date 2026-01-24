@@ -23,6 +23,7 @@ namespace LXMF {
 AnnounceListScreen::AnnounceListScreen(lv_obj_t* parent)
     : _screen(nullptr), _header(nullptr), _list(nullptr),
       _btn_back(nullptr), _btn_refresh(nullptr), _btn_announce(nullptr), _empty_label(nullptr) {
+    LVGL_LOCK();
 
     // Create screen object
     if (parent) {
@@ -50,6 +51,7 @@ AnnounceListScreen::AnnounceListScreen(lv_obj_t* parent)
 }
 
 AnnounceListScreen::~AnnounceListScreen() {
+    LVGL_LOCK();
     if (_screen) {
         lv_obj_del(_screen);
     }

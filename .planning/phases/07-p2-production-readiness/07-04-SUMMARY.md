@@ -61,7 +61,7 @@ Each task was committed atomically:
 
 1. **Task 1: Replace portMAX_DELAY with bounded timeout** - `17c97fe` (fix)
 
-**Plan metadata:** pending
+**Plan metadata:** `c28f548` (docs: complete plan)
 
 ## Files Created/Modified
 - `examples/lxmf_tdeck/lib/tone/Tone.cpp` - Added pdMS_TO_TICKS(2000) timeout to all i2s_write calls, error logging
