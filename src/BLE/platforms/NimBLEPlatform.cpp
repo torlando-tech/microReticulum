@@ -8,6 +8,7 @@
 #if defined(ESP32) && (defined(USE_NIMBLE) || defined(CONFIG_BT_NIMBLE_ENABLED))
 
 #include "../../Log.h"
+#include <algorithm>
 
 // WiFi coexistence: Check if WiFi is available and connected
 // This is used to add extra delays before BLE connection attempts
@@ -215,6 +216,7 @@ void NimBLEPlatform::shutdown() {
     _clients.clear();
     _connections.clear();
     _discovered_devices.clear();
+    _discovered_order.clear();
 
     // Deinit NimBLE
     if (_initialized) {
@@ -265,6 +267,7 @@ bool NimBLEPlatform::recoverBLEStack() {
         _scan->clearResults();
     }
     _discovered_devices.clear();
+    _discovered_order.clear();
 
     // Reconfigure scan - this can help recover from bad state
     if (_scan) {
@@ -837,9 +840,18 @@ bool NimBLEPlatform::connect(const BLEAddress& address, uint16_t timeout_ms) {
     if (xSemaphoreTake(_conn_mutex, pdMS_TO_TICKS(100))) {
         auto cachedIt = _discovered_devices.find(addrKey);
         if (cachedIt != _discovered_devices.end()) {
+            // Also remove from order tracking
+            auto orderIt = std::find(_discovered_order.begin(),
+                                      _discovered_order.end(), addrKey);
+            if (orderIt != _discovered_order.end()) {
+                _discovered_order.erase(orderIt);
+            }
             _discovered_devices.erase(cachedIt);
         }
         xSemaphoreGive(_conn_mutex);
+    } else {
+        // CONC-M5: Log timeout failures
+        WARNING("NimBLEPlatform: conn_mutex timeout (100ms) during cache update");
     }
 
     DEBUG("NimBLEPlatform: Connection established successfully");
@@ -1503,6 +1515,15 @@ bool NimBLEPlatform::isConnectedTo(const BLEAddress& address) const {
     return false;
 }
 
+bool NimBLEPlatform::isDeviceConnected(const std::string& addrKey) const {
+    for (const auto& [handle, conn] : _connections) {
+        if (conn.peer_address.toString() == addrKey) {
+            return true;
+        }
+    }
+    return false;
+}
+
 //=============================================================================
 // Callback Registration
 //=============================================================================
@@ -1748,14 +1769,32 @@ void NimBLEPlatform::onResult(const NimBLEAdvertisedDevice* advertisedDevice) {
         // Using string key since NimBLEAdvertisedDevice stores all connection metadata
         std::string addrKey = advertisedDevice->getAddress().toString().c_str();
 
-        // Limit discovered device cache size to prevent memory growth
-        // Remove oldest entry if at limit (simple FIFO approach)
+        // Bounded cache with connected device protection (CONC-M6)
         static constexpr size_t MAX_DISCOVERED_DEVICES = 16;
         while (_discovered_devices.size() >= MAX_DISCOVERED_DEVICES) {
-            auto oldest = _discovered_devices.begin();
-            _discovered_devices.erase(oldest);
+            bool evicted = false;
+            // Find oldest non-connected device using insertion order
+            for (auto it = _discovered_order.begin(); it != _discovered_order.end(); ++it) {
+                if (!isDeviceConnected(*it)) {
+                    _discovered_devices.erase(*it);
+                    _discovered_order.erase(it);
+                    evicted = true;
+                    break;
+                }
+            }
+            if (!evicted) {
+                // All cached devices are connected - don't cache new one
+                WARNING("NimBLEPlatform: Cannot cache device - all slots hold connected devices");
+                return;
+            }
         }
 
+        // Track insertion order for new devices
+        auto existing = _discovered_devices.find(addrKey);
+        if (existing == _discovered_devices.end()) {
+            // New device - add to order tracking
+            _discovered_order.push_back(addrKey);
+        }
         _discovered_devices[addrKey] = *advertisedDevice;
         TRACE("NimBLEPlatform: Cached device for connection: " + addrKey +
               " (cache size: " + std::to_string(_discovered_devices.size()) + ")");
