@@ -472,8 +472,10 @@ namespace RNS {
 
 namespace RNS { namespace Persistence {
 
-	static DynamicJsonDocument _document(Type::Persistence::DOCUMENT_MAXSIZE);
-	static Bytes _buffer(Type::Persistence::BUFFER_MAXSIZE);
+	// Single definition in Persistence.cpp - extern declarations here for ODR compliance
+	// Note: JsonDocument (v7 API) replaces deprecated DynamicJsonDocument
+	extern JsonDocument _document;
+	extern Bytes _buffer;
 
 	template <typename T> size_t crc(const T& obj) {
 		TRACE("Persistence::crc<T>");

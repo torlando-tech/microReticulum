@@ -639,6 +639,9 @@ void BLEInterface::onWriteReceived(const ConnectionHandle& conn, const Bytes& da
 //=============================================================================
 
 void BLEInterface::onHandshakeComplete(const Bytes& mac, const Bytes& identity, bool is_central) {
+    // Lock before modifying queue - protects against race with loop()
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+
     // Queue the handshake for processing in loop() to avoid stack overflow in NimBLE callback
     // The NimBLE task has limited stack space, so we defer heavy processing
     if (_pending_handshakes.size() >= MAX_PENDING_HANDSHAKES) {
