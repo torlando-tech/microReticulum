@@ -5,6 +5,8 @@
 
 #ifdef ARDUINO
 
+#include "esp_task_wdt.h"
+
 #include "../../Log.h"
 #include "../../Hardware/TDeck/Display.h"
 #include "../../Hardware/TDeck/Keyboard.h"
@@ -152,6 +154,9 @@ void LVGLInit::task_handler() {
 void LVGLInit::lvgl_task(void* param) {
     Serial.printf("LVGL task started on core %d\n", xPortGetCoreID());
 
+    // Subscribe this task to Task Watchdog Timer
+    esp_task_wdt_add(nullptr);  // nullptr = current task
+
     while (true) {
         // Acquire mutex before calling LVGL
         if (xSemaphoreTakeRecursive(_mutex, portMAX_DELAY) == pdTRUE) {
@@ -159,7 +164,8 @@ void LVGLInit::lvgl_task(void* param) {
             xSemaphoreGiveRecursive(_mutex);
         }
 
-        // Yield to other tasks - LVGL recommends 5-10ms between calls
+        // Feed watchdog and yield to other tasks
+        esp_task_wdt_reset();
         vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
