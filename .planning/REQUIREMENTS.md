@@ -32,7 +32,7 @@ Complete all P2 and P3 stability issues from the v1 audit. Each requirement maps
 
 ### Memory Optimization (P3)
 
-- [ ] **MEM-H1**: Bytes COW copy uses pool or arena allocator
+- [x] **MEM-H1**: Bytes COW copy uses pool or arena allocator
 - [ ] **MEM-H2**: Packet Object uses pool allocator (16-32 slots)
 - [ ] **MEM-H3**: Packet fixed-size members use inline buffers (save ~150 bytes/packet)
 - [ ] **MEM-H4**: PacketReceipt allocation is lazy (only for non-NONE types)
@@ -69,7 +69,7 @@ Complete all P2 and P3 stability issues from the v1 audit. Each requirement maps
 | CONC-M7 | Phase 7 | Complete |
 | CONC-M8 | Phase 7 | Complete |
 | CONC-M9 | Phase 7 | Complete |
-| MEM-H1 | Phase 8 | Pending |
+| MEM-H1 | Phase 8 | Complete |
 | MEM-H2 | Phase 8 | Pending |
 | MEM-H3 | Phase 8 | Pending |
 | MEM-H4 | Phase 8 | Pending |
@@ -87,4 +87,4 @@ Complete all P2 and P3 stability issues from the v1 audit. Each requirement maps
 
 ---
 *Requirements defined: 2026-01-24*
-*Last updated: 2026-01-24 after Phase 7 complete*
+*Last updated: 2026-01-24 - MEM-H1 complete (BytesPool tuning)*
