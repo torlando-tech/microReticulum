@@ -12,16 +12,16 @@ See: .planning/PROJECT.md (updated 2026-01-23)
 Phase: 3 of 5 IN PROGRESS (Memory Allocation Audit)
 Plan: 03 of 4 COMPLETE
 Status: Executing Phase 3 plans
-Last activity: 2026-01-24 — Completed 03-01, 03-02, 03-03 (core data path, shared_ptr, persistence audits)
+Last activity: 2026-01-24 — Completed 03-03 (ArduinoJson and persistence audit)
 
 Progress: [#######---] 70%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 7
+- Total plans completed: 8
 - Average duration: 4 min
-- Total execution time: 30 min
+- Total execution time: 33 min
 
 **By Phase:**
 
@@ -29,11 +29,11 @@ Progress: [#######---] 70%
 |-------|-------|-------|----------|
 | 01-memory-instrumentation | 2 | 4min | 2min |
 | 02-boot-profiling | 4 | 8min | 2min |
-| 03-memory-allocation-audit | 1 | 18min | 18min |
+| 03-memory-allocation-audit | 2 | 21min | 10min |
 
 **Recent Trend:**
-- Last 5 plans: 02-02 (2min), 02-03 (2min), 02-04 (3min), 03-01 (unknown), 03-02 (18min)
-- Trend: Audit plans slower (more reading/analysis)
+- Last 5 plans: 02-03 (2min), 02-04 (3min), 03-01 (unknown), 03-02 (18min), 03-03 (3min)
+- Trend: Audit plans vary (more reading/analysis)
 
 *Updated after each plan completion*
 
@@ -61,6 +61,7 @@ Recent decisions affecting current work:
 - [02-04]: 5s target not achievable via config - reticulum init is 2.5s
 - [03-02]: new/shared_ptr pattern acceptable for startup allocations
 - [03-02]: Resource vectors identified as fragmentation risk during transfers
+- [03-03]: DynamicJsonDocument in Persistence requires migration to JsonDocument
 
 ### Boot Profiling Findings
 
@@ -97,6 +98,14 @@ Recent decisions affecting current work:
 - Fixed pools in Link/Channel eliminate fragmentation
 - Resource vectors resize during transfers - fragmentation risk
 
+**03-03: ArduinoJson and Persistence**
+- ArduinoJson 7.4.2 configured in platformio.ini
+- 1 deprecated pattern: DynamicJsonDocument in Persistence.h/cpp (Medium)
+- MessageStore uses correct JsonDocument pattern with reuse
+- UI: 8 screen objects at startup (correct pattern)
+- BLE: All pool-based with fixed sizes
+- LVGL buffers correctly in PSRAM (307KB)
+
 **Fixed Pool Inventory:**
 | Pool | Size | Location |
 |------|------|----------|
@@ -121,12 +130,13 @@ None yet.
 **Identified for Phase 5:**
 - Resource vectors (`_parts`, `_hashmap`) resize during transfers
 - 14 sites could use `make_shared` for ~40 bytes savings each
+- DynamicJsonDocument in Persistence.h/cpp needs migration
 
 ## Session Continuity
 
 Last session: 2026-01-24
-Completed: 03-02-PLAN.md (shared_ptr and session object audit)
-Next: 03-03-PLAN.md (Interface and Packet allocation patterns)
+Completed: 03-03-PLAN.md (ArduinoJson and persistence audit)
+Next: 03-04-PLAN.md (if exists) or Phase 3 completion
 
 ---
-*Phase 3 Plan 2 complete. Continuing Phase 3.*
+*Phase 3 Plan 3 complete. Continuing Phase 3.*
