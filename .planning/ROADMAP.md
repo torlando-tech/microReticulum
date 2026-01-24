@@ -72,11 +72,11 @@ Plans:
   3. Task starvation and deadlocks are detected by watchdog timer
   4. UI remains responsive during stamp generation operations
   5. Concurrent BLE operations execute without race conditions or crashes
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 06-01: TBD
-- [ ] 06-02: TBD
+- [ ] 06-01: Fix memory issues (ODR violation in Persistence, pre-allocate ResourceData vectors)
+- [ ] 06-02: Fix concurrency issues (TWDT enablement, LXStamper yield, BLE mutex protection)
 
 ## Progress
 
@@ -90,7 +90,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Memory Allocation Audit | v1.0 | 4/4 | Complete | 2026-01-24 |
 | 4. Concurrency Audit | v1.0 | 3/3 | Complete | 2026-01-24 |
 | 5. Synthesis | v1.0 | 2/2 | Complete | 2026-01-24 |
-| 6. P1 Stability Fixes | v1.1 | 0/TBD | Not started | - |
+| 6. P1 Stability Fixes | v1.1 | 0/2 | Not started | - |
 
 ---
-*Last updated: 2026-01-24 after v1.1 roadmap creation*
+*Last updated: 2026-01-24 after Phase 6 planning*
