@@ -11,11 +11,11 @@ Requirements for comprehensive stability audit. Each maps to roadmap phases.
 
 - [x] **MEM-01**: Add heap monitoring (free heap, largest block, fragmentation %)
 - [x] **MEM-02**: Add stack high water mark monitoring for all FreeRTOS tasks
-- [ ] **MEM-03**: Audit shared_ptr allocation patterns (make_shared vs new/shared_ptr)
-- [ ] **MEM-04**: Audit Packet/Bytes allocation frequency and size patterns
-- [ ] **MEM-05**: Audit ArduinoJson usage (Dynamic vs Static documents)
-- [ ] **MEM-06**: Verify PSRAM allocation strategy (large buffers using SPIRAM)
-- [ ] **MEM-07**: Document memory pools and their overflow handling
+- [x] **MEM-03**: Audit shared_ptr allocation patterns (make_shared vs new/shared_ptr)
+- [x] **MEM-04**: Audit Packet/Bytes allocation frequency and size patterns
+- [x] **MEM-05**: Audit ArduinoJson usage (Dynamic vs Static documents)
+- [x] **MEM-06**: Verify PSRAM allocation strategy (large buffers using SPIRAM)
+- [x] **MEM-07**: Document memory pools and their overflow handling
 
 ### Boot Performance
 
@@ -75,11 +75,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | MEM-01 | Phase 1 | Complete |
 | MEM-02 | Phase 1 | Complete |
-| MEM-03 | Phase 3 | Pending |
-| MEM-04 | Phase 3 | Pending |
-| MEM-05 | Phase 3 | Pending |
-| MEM-06 | Phase 3 | Pending |
-| MEM-07 | Phase 3 | Pending |
+| MEM-03 | Phase 3 | Complete |
+| MEM-04 | Phase 3 | Complete |
+| MEM-05 | Phase 3 | Complete |
+| MEM-06 | Phase 3 | Complete |
+| MEM-07 | Phase 3 | Complete |
 | BOOT-01 | Phase 2 | Pending |
 | BOOT-02 | Phase 2 | Pending |
 | BOOT-03 | Phase 2 | Pending |
@@ -101,4 +101,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-23*
-*Last updated: 2026-01-23 — Phase 1 requirements complete*
+*Last updated: 2026-01-24 — Phase 3 requirements complete*
