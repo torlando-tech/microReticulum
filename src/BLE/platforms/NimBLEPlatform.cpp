@@ -216,20 +216,70 @@ void NimBLEPlatform::loop() {
 }
 
 void NimBLEPlatform::shutdown() {
+    INFO("NimBLEPlatform: Beginning graceful shutdown");
+
+    // CONC-H4: Graceful shutdown timeout for active write operations
+    const uint32_t SHUTDOWN_TIMEOUT_MS = 10000;
+    uint32_t start = millis();
+
+    // Stop accepting new operations by transitioning GAP state
+    // This prevents new connections/operations from starting
+    portENTER_CRITICAL(&_state_mux);
+    GAPState current_gap = _gap_state;
+    portEXIT_CRITICAL(&_state_mux);
+
+    if (current_gap == GAPState::READY) {
+        transitionGAPState(GAPState::READY, GAPState::TRANSITIONING);
+    }
+
+    // Wait for active write operations to complete
+    while (hasActiveWriteOperations() && (millis() - start) < SHUTDOWN_TIMEOUT_MS) {
+        DEBUG("NimBLEPlatform: Waiting for " + std::to_string(_active_write_count.load()) +
+              " active write operation(s)");
+        // DELAY RATIONALE: Shutdown wait polling - check every 100ms for write completion
+        delay(100);
+    }
+
+    // Check if we timed out
+    if (hasActiveWriteOperations()) {
+        WARNING("NimBLEPlatform: Shutdown timeout (" +
+                std::to_string(SHUTDOWN_TIMEOUT_MS) + "ms) with " +
+                std::to_string(_active_write_count.load()) + " active writes - forcing close");
+        _unclean_shutdown = true;
+    } else {
+        DEBUG("NimBLEPlatform: All operations complete, proceeding with clean shutdown");
+    }
+
+    // Stop advertising and scanning
     stop();
 
-    // Cleanup clients
-    for (auto& kv : _clients) {
-        if (kv.second) {
-            NimBLEDevice::deleteClient(kv.second);
+    // Disconnect and cleanup clients with mutex protection
+    if (xSemaphoreTake(_conn_mutex, pdMS_TO_TICKS(1000))) {
+        for (auto& kv : _clients) {
+            if (kv.second) {
+                NimBLEDevice::deleteClient(kv.second);
+            }
         }
+        _clients.clear();
+        _connections.clear();
+        _discovered_devices.clear();
+        _discovered_order.clear();
+        xSemaphoreGive(_conn_mutex);
+    } else {
+        WARNING("NimBLEPlatform: Could not acquire mutex for cleanup - forcing cleanup");
+        // Force cleanup anyway to prevent leaks
+        for (auto& kv : _clients) {
+            if (kv.second) {
+                NimBLEDevice::deleteClient(kv.second);
+            }
+        }
+        _clients.clear();
+        _connections.clear();
+        _discovered_devices.clear();
+        _discovered_order.clear();
     }
-    _clients.clear();
-    _connections.clear();
-    _discovered_devices.clear();
-    _discovered_order.clear();
 
-    // Deinit NimBLE
+    // Deinit NimBLE stack
     if (_initialized) {
         NimBLEDevice::deinit(true);
         _initialized = false;
@@ -243,7 +293,8 @@ void NimBLEPlatform::shutdown() {
     _scan = nullptr;
     _advertising_obj = nullptr;
 
-    INFO("NimBLEPlatform: Shutdown complete");
+    INFO("NimBLEPlatform: Shutdown complete" +
+         std::string(wasCleanShutdown() ? "" : " (unclean - verify on boot)"));
 }
 
 bool NimBLEPlatform::isRunning() const {
@@ -1417,7 +1468,11 @@ bool NimBLEPlatform::write(uint16_t conn_handle, const Bytes& data, bool respons
         NimBLERemoteCharacteristic* rxChar = service->getCharacteristic(UUID::RX_CHAR);
         if (!rxChar) return false;
 
-        return rxChar->writeValue(data.data(), data.size(), response);
+        // CONC-H4: Track active write for graceful shutdown
+        beginWriteOperation();
+        bool result = rxChar->writeValue(data.data(), data.size(), response);
+        endWriteOperation();
+        return result;
     } else {
         // We are peripheral - this shouldn't be used, use notify instead
         WARNING("NimBLEPlatform: write() called in peripheral mode, use notify()");
