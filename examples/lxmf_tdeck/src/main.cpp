@@ -63,6 +63,11 @@
 #include <Instrumentation/MemoryMonitor.h>
 #endif
 
+// Boot profiling
+#ifdef BOOT_PROFILING_ENABLED
+#include <Instrumentation/BootProfiler.h>
+#endif
+
 // Firmware version for web flasher detection
 #define FIRMWARE_VERSION "1.0.0"
 #define FIRMWARE_NAME "microReticulum"
@@ -404,12 +409,14 @@ void setup_wifi() {
     WiFi.mode(WIFI_STA);
     WiFi.begin(app_settings.wifi_ssid.c_str(), app_settings.wifi_password.c_str());
 
+    BOOT_PROFILE_WAIT_START("wifi_connect");
     uint32_t start = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - start < 30000) {
         delay(500);
         Serial.print(".");
     }
     Serial.println();
+    BOOT_PROFILE_WAIT_END("wifi_connect");
 
     if (WiFi.status() == WL_CONNECTED) {
         INFO("WiFi connected!");
@@ -716,7 +723,9 @@ void setup_lxmf() {
     if (tcp_interface) {
         // Wait for TCP connection to stabilize before announcing
         INFO("Waiting 3 seconds for TCP connection to stabilize...");
+        BOOT_PROFILE_WAIT_START("tcp_stabilize");
         delay(3000);
+        BOOT_PROFILE_WAIT_END("tcp_stabilize");
 
         // Check TCP status before announcing
         if (tcp_interface->online()) {
@@ -1026,39 +1035,59 @@ void setup() {
     INFO("");
 
     // Initialize hardware
+    BOOT_PROFILE_START("hardware");
     setup_hardware();
+    BOOT_PROFILE_END("hardware");
 
     // Initialize audio for notifications
+    BOOT_PROFILE_START("audio");
     Notification::tone_init();
+    BOOT_PROFILE_END("audio");
 
     // Load application settings from NVS (before WiFi/GPS)
+    BOOT_PROFILE_START("settings");
     load_app_settings();
+    BOOT_PROFILE_END("settings");
 
     // Initialize GPS and try to sync time (before WiFi)
+    BOOT_PROFILE_START("gps");
     setup_gps();
     if (app_settings.gps_time_sync) {
         INFO("\n=== Time Synchronization ===");
+        BOOT_PROFILE_WAIT_START("gps_sync");
         if (!sync_time_from_gps(15000)) {  // 15 second timeout for GPS
             INFO("GPS time sync not available, will try NTP after WiFi");
         }
+        BOOT_PROFILE_WAIT_END("gps_sync");
     } else {
         INFO("GPS time sync disabled in settings");
     }
+    BOOT_PROFILE_END("gps");
 
     // Initialize WiFi
+    BOOT_PROFILE_START("wifi");
     setup_wifi();
+    BOOT_PROFILE_END("wifi");
 
     // Initialize LVGL and hardware drivers
+    BOOT_PROFILE_START("lvgl");
     setup_lvgl_and_ui();
+    BOOT_PROFILE_END("lvgl");
 
     // Initialize Reticulum
+    BOOT_PROFILE_START("reticulum");
     setup_reticulum();
+    BOOT_PROFILE_END("reticulum");
 
     // Initialize LXMF
+    BOOT_PROFILE_START("lxmf");
     setup_lxmf();
+    BOOT_PROFILE_END("lxmf");
 
     // Initialize UI manager
+    BOOT_PROFILE_START("ui_manager");
     setup_ui_manager();
+    BOOT_PROFILE_END("ui_manager");
 
     // Register delivered callback to update message status in storage and UI
     router->register_delivered_callback([](LXMF::LXMessage& msg) {
@@ -1079,6 +1108,9 @@ void setup() {
             }
         }
     });
+
+    // Boot profiling complete
+    BOOT_PROFILE_COMPLETE();
 
     INFO("\n");
     INFO("╔══════════════════════════════════════╗");
