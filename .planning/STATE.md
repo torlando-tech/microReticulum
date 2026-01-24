@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-23)
 
 **Core value:** Identify and prioritize root causes of instability for reliable extended operation
-**Current focus:** Phase 3 - Memory Allocation Audit
+**Current focus:** Phase 3 COMPLETE - Ready for Phase 4 or Phase 5
 
 ## Current Position
 
-Phase: 3 of 5 IN PROGRESS (Memory Allocation Audit)
-Plan: 03 of 4 COMPLETE
-Status: Executing Phase 3 plans
-Last activity: 2026-01-24 — Completed 03-03 (ArduinoJson and persistence audit)
+Phase: 3 of 5 COMPLETE (Memory Allocation Audit)
+Plan: 04 of 4 COMPLETE
+Status: Phase 3 complete, ready for next phase
+Last activity: 2026-01-24 — Completed 03-04 (Memory pools and audit consolidation)
 
-Progress: [#######---] 70%
+Progress: [########--] 80%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 8
+- Total plans completed: 9
 - Average duration: 4 min
-- Total execution time: 33 min
+- Total execution time: 38 min
 
 **By Phase:**
 
@@ -29,10 +29,10 @@ Progress: [#######---] 70%
 |-------|-------|-------|----------|
 | 01-memory-instrumentation | 2 | 4min | 2min |
 | 02-boot-profiling | 4 | 8min | 2min |
-| 03-memory-allocation-audit | 2 | 21min | 10min |
+| 03-memory-allocation-audit | 4 | 26min | 6.5min |
 
 **Recent Trend:**
-- Last 5 plans: 02-03 (2min), 02-04 (3min), 03-01 (unknown), 03-02 (18min), 03-03 (3min)
+- Last 5 plans: 03-01 (unknown), 03-02 (18min), 03-03 (3min), 03-04 (5min)
 - Trend: Audit plans vary (more reading/analysis)
 
 *Updated after each plan completion*
@@ -62,6 +62,7 @@ Recent decisions affecting current work:
 - [03-02]: new/shared_ptr pattern acceptable for startup allocations
 - [03-02]: Resource vectors identified as fragmentation risk during transfers
 - [03-03]: DynamicJsonDocument in Persistence requires migration to JsonDocument
+- [03-04]: 40+ memory pools documented, all with overflow protection
 
 ### Boot Profiling Findings
 
@@ -82,14 +83,18 @@ Recent decisions affecting current work:
 - WiFi connect: ~1,000ms (30s timeout)
 - GPS sync: ~370-950ms variable
 
-### Memory Allocation Audit Findings
+### Memory Allocation Audit Findings (COMPLETE)
+
+**Final Summary:**
+- **Total Issues:** 13 (0 Critical, 5 High, 4 Medium, 4 Low)
+- **Memory Pools:** 40+ documented
+- **Total Pool Memory:** ~550KB (excluding LVGL)
+- **PSRAM Usage:** ~330KB (Identity + LVGL)
 
 **03-01: Core Data Path (Bytes, Packet, Transport)**
 - PSRAM verified: Bytes uses PSRAMAllocator for all vector storage
-- Transport well-optimized: 15+ fixed-size pools (~21KB static)
+- Transport well-optimized: 20+ fixed-size pools (~21KB static)
 - Packet is main concern: 10+ allocations per packet (Object + 9 Bytes)
-- 8 issues total: 0 Critical, 5 High, 2 Medium, 1 Low
-- Key recommendation: Packet Object pool for Phase 5
 
 **03-02: shared_ptr and Session Objects**
 - 14 sites use `new T()` + `shared_ptr` pattern (2 allocations)
@@ -106,20 +111,41 @@ Recent decisions affecting current work:
 - BLE: All pool-based with fixed sizes
 - LVGL buffers correctly in PSRAM (307KB)
 
-**Fixed Pool Inventory:**
-| Pool | Size | Location |
-|------|------|----------|
-| known_destinations | 192 | Identity (PSRAM) |
-| known_ratchets | 128 | Identity (static) |
-| incoming_resources | 8 | LinkData |
-| outgoing_resources | 8 | LinkData |
-| pending_requests | 8 | LinkData |
-| rx_ring_pool | 16 | ChannelData |
-| tx_ring_pool | 16 | ChannelData |
+**03-04: Memory Pools Documentation**
+- 40+ pools documented with sizes and overflow behaviors
+- Complete audit report: .planning/phases/03-memory-allocation-audit/03-AUDIT.md
+- Reference copy: docs/MEMORY_AUDIT.md
+- Phase 5 backlog created with prioritized fixes
+
+**Complete Pool Inventory:**
+| Category | Pools | Size | PSRAM |
+|----------|-------|------|-------|
+| Transport | 20+ | ~21KB | No |
+| Identity | 2 | ~30KB | Partial |
+| MessageStore | 2 | ~288KB | Should consider |
+| Link/Channel | 5 | ~5KB/link | No |
+| BLE | 8 | ~200KB | Should consider |
+| LXMF | 10+ | Variable | No |
+
+### Phase 5 Backlog (from 03-AUDIT.md)
+
+**Priority 2 (High):**
+- P2-1: Packet Object Pool (High impact)
+- P2-2: Inline Small Bytes Members (Medium-High impact)
+- P2-3: Resource Vector Pre-allocation (Medium impact)
+
+**Priority 3 (Medium):**
+- P3-1: Convert new/shared_ptr to make_shared
+- P3-2: ArduinoJson migration
+
+**Priority 4 (Low):**
+- P4-1: Bytes Arena Allocator
+- P4-2: BLEFragmenter Output Parameter
+- P4-3: String Reserve in toHex
 
 ### Pending Todos
 
-None yet.
+None - Phase 3 complete.
 
 ### Blockers/Concerns
 
@@ -135,8 +161,10 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-01-24
-Completed: 03-03-PLAN.md (ArduinoJson and persistence audit)
-Next: 03-04-PLAN.md (if exists) or Phase 3 completion
+Completed: 03-04-PLAN.md (Memory pools and audit consolidation)
+Next: Phase 4 (Watchdog Analysis) or Phase 5 (Memory Optimization)
 
 ---
-*Phase 3 Plan 3 complete. Continuing Phase 3.*
+*Phase 3 (Memory Allocation Audit) COMPLETE.*
+*Audit report: .planning/phases/03-memory-allocation-audit/03-AUDIT.md*
+*Reference copy: docs/MEMORY_AUDIT.md*
