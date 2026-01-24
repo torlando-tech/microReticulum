@@ -11,7 +11,7 @@ Complete all P2 and P3 stability issues from the v1 audit. Each requirement maps
 
 - [x] **MEM-M1**: Bytes newData uses make_shared pattern (single allocation)
 - [x] **MEM-M2**: PacketReceipt default constructor defers allocation until use
-- [ ] **MEM-M3**: Persistence uses JsonDocument (ArduinoJson 7 API fully migrated)
+- [x] **MEM-M3**: Persistence uses JsonDocument (ArduinoJson 7 API fully migrated)
 
 ### LVGL Thread-Safety (P2)
 
@@ -60,7 +60,7 @@ Complete all P2 and P3 stability issues from the v1 audit. Each requirement maps
 |-------------|-------|--------|
 | MEM-M1 | Phase 7 | Complete |
 | MEM-M2 | Phase 7 | Complete |
-| MEM-M3 | Phase 8 | Pending |
+| MEM-M3 | Phase 8 | Complete |
 | CONC-M1 | Phase 7 | Complete |
 | CONC-M2 | Phase 7 | Complete |
 | CONC-M3 | Phase 7 | Complete |

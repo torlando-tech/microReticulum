@@ -13,10 +13,11 @@
  * refcount hits 0, a custom deleter returns the Data to the pool instead
  * of destroying it.
  *
- * The pool has three tiers sized for Reticulum packet processing:
- *   - 256 bytes: hashes, keys, small announces
- *   - 512 bytes: standard packets (MTU=500 + margin)
- *   - 1024 bytes: resource advertisements, large packets
+ * The pool has four tiers sized for Reticulum packet processing:
+ *   - 64 bytes (48 slots): hashes (16-32 bytes), small fields - highest traffic
+ *   - 256 bytes (24 slots): keys, small announces
+ *   - 512 bytes (16 slots): standard packets (MTU=500 + margin)
+ *   - 1024 bytes (16 slots): resource advertisements, large packets
  *
  * Thread-safe via FreeRTOS spinlock (ESP32) or std::mutex (native).
  *
@@ -55,17 +56,24 @@ namespace RNS {
 // Pool configuration - sized for Reticulum packet processing
 // MTU=500, most packets fit in 512 bytes, large resources may need 1024
 namespace BytesPoolConfig {
-    static constexpr size_t TIER_SMALL = 256;     // Small packets, hashes, keys
+    static constexpr size_t TIER_TINY = 64;       // Hashes (16-32 bytes), small fields
+    static constexpr size_t TIER_SMALL = 256;     // Small packets, keys
     static constexpr size_t TIER_MEDIUM = 512;    // Standard packets
     static constexpr size_t TIER_LARGE = 1024;    // Large packets, resource ads
-    static constexpr size_t SLOTS_PER_TIER = 16;  // 16 buffers per tier
+
+    // Slot counts per tier - tiny gets more slots since most allocations are small
+    static constexpr size_t TINY_SLOTS = 48;      // High traffic tier
+    static constexpr size_t SMALL_SLOTS = 24;     // Medium traffic
+    static constexpr size_t MEDIUM_SLOTS = 16;    // Lower traffic
+    static constexpr size_t LARGE_SLOTS = 16;     // Lower traffic
 
     // Tier identifiers for deleter
     enum Tier : uint8_t {
         TIER_NONE = 0,    // Not from pool (fallback allocation)
-        TIER_256 = 1,
-        TIER_512 = 2,
-        TIER_1024 = 3
+        TIER_64 = 1,
+        TIER_256 = 2,
+        TIER_512 = 3,
+        TIER_1024 = 4
     };
 }
 
@@ -83,10 +91,12 @@ using PooledData = std::vector<uint8_t, PSRAMAllocator<uint8_t>>;
  *   - Repeated capacity reservation allocations
  *   - shared_ptr control block allocations (via make_shared replacement)
  *
- * Memory footprint per tier:
- *   - 16 slots x ~24 bytes (vector metadata) = ~384 bytes per tier
- *   - Plus backing storage: 16 x tier_size bytes
- *   - Total for 3 tiers: ~1.2KB metadata + ~28KB backing = ~30KB
+ * Memory footprint:
+ *   - Tiny: 48 slots x 64 bytes = 3KB backing + metadata
+ *   - Small: 24 slots x 256 bytes = 6KB backing + metadata
+ *   - Medium: 16 slots x 512 bytes = 8KB backing + metadata
+ *   - Large: 16 slots x 1024 bytes = 16KB backing + metadata
+ *   - Total: ~33KB backing + ~2.5KB metadata = ~36KB
  */
 class BytesPool {
 public:
@@ -116,7 +126,14 @@ public:
         BytesPoolConfig::Tier tier = BytesPoolConfig::TIER_NONE;
 
         // Try smallest tier that fits
-        if (requested_capacity <= BytesPoolConfig::TIER_SMALL) {
+        if (requested_capacity <= BytesPoolConfig::TIER_TINY) {
+            if (_tiny_count > 0) {
+                result = _tiny_stack[--_tiny_count];
+                tier = BytesPoolConfig::TIER_64;
+                _pool_hits++;
+            }
+        }
+        else if (requested_capacity <= BytesPoolConfig::TIER_SMALL) {
             if (_small_count > 0) {
                 result = _small_stack[--_small_count];
                 tier = BytesPoolConfig::TIER_256;
@@ -172,19 +189,24 @@ public:
 #endif
 
         switch (tier) {
-            case BytesPoolConfig::TIER_256:
-                if (_small_count < BytesPoolConfig::SLOTS_PER_TIER) {
-                    _small_stack[_small_count++] = data;
+            case BytesPoolConfig::TIER_64:
+                if (_tiny_count < BytesPoolConfig::TINY_SLOTS) {
+                    _tiny_stack[_tiny_count++] = data;
                 }
                 // else pool full - data leaks (shouldn't happen in normal operation)
                 break;
+            case BytesPoolConfig::TIER_256:
+                if (_small_count < BytesPoolConfig::SMALL_SLOTS) {
+                    _small_stack[_small_count++] = data;
+                }
+                break;
             case BytesPoolConfig::TIER_512:
-                if (_medium_count < BytesPoolConfig::SLOTS_PER_TIER) {
+                if (_medium_count < BytesPoolConfig::MEDIUM_SLOTS) {
                     _medium_stack[_medium_count++] = data;
                 }
                 break;
             case BytesPoolConfig::TIER_1024:
-                if (_large_count < BytesPoolConfig::SLOTS_PER_TIER) {
+                if (_large_count < BytesPoolConfig::LARGE_SLOTS) {
                     _large_stack[_large_count++] = data;
                 }
                 break;
@@ -213,30 +235,34 @@ public:
     void recordFallback(size_t requested_size) {
         _fallback_count++;
         WARNINGF("BytesPool: exhausted, falling back to heap (requested=%zu bytes, "
-                 "small=%zu/%zu med=%zu/%zu large=%zu/%zu)",
+                 "tiny=%zu/%zu small=%zu/%zu med=%zu/%zu large=%zu/%zu)",
                  requested_size,
-                 small_in_use(), BytesPoolConfig::SLOTS_PER_TIER,
-                 medium_in_use(), BytesPoolConfig::SLOTS_PER_TIER,
-                 large_in_use(), BytesPoolConfig::SLOTS_PER_TIER);
+                 tiny_in_use(), BytesPoolConfig::TINY_SLOTS,
+                 small_in_use(), BytesPoolConfig::SMALL_SLOTS,
+                 medium_in_use(), BytesPoolConfig::MEDIUM_SLOTS,
+                 large_in_use(), BytesPoolConfig::LARGE_SLOTS);
     }
 
     // Current pool state
+    size_t tiny_available() const { return _tiny_count; }
     size_t small_available() const { return _small_count; }
     size_t medium_available() const { return _medium_count; }
     size_t large_available() const { return _large_count; }
-    size_t small_in_use() const { return BytesPoolConfig::SLOTS_PER_TIER - _small_count; }
-    size_t medium_in_use() const { return BytesPoolConfig::SLOTS_PER_TIER - _medium_count; }
-    size_t large_in_use() const { return BytesPoolConfig::SLOTS_PER_TIER - _large_count; }
+    size_t tiny_in_use() const { return BytesPoolConfig::TINY_SLOTS - _tiny_count; }
+    size_t small_in_use() const { return BytesPoolConfig::SMALL_SLOTS - _small_count; }
+    size_t medium_in_use() const { return BytesPoolConfig::MEDIUM_SLOTS - _medium_count; }
+    size_t large_in_use() const { return BytesPoolConfig::LARGE_SLOTS - _large_count; }
 
     // Log statistics for tuning
     void logStats() const {
         INFOF("BytesPool: requests=%zu hits=%zu misses=%zu fallbacks=%zu hit_rate=%d%% "
-              "small=%zu/%zu med=%zu/%zu large=%zu/%zu",
+              "tiny=%zu/%zu small=%zu/%zu med=%zu/%zu large=%zu/%zu",
               _total_requests, _pool_hits, _pool_misses, _fallback_count,
               (int)(hit_rate() * 100),
-              small_in_use(), BytesPoolConfig::SLOTS_PER_TIER,
-              medium_in_use(), BytesPoolConfig::SLOTS_PER_TIER,
-              large_in_use(), BytesPoolConfig::SLOTS_PER_TIER);
+              tiny_in_use(), BytesPoolConfig::TINY_SLOTS,
+              small_in_use(), BytesPoolConfig::SMALL_SLOTS,
+              medium_in_use(), BytesPoolConfig::MEDIUM_SLOTS,
+              large_in_use(), BytesPoolConfig::LARGE_SLOTS);
     }
 
 private:
@@ -246,12 +272,14 @@ private:
 #endif
         // Pre-allocate all pool entries
         // This is done at construction (startup) to front-load allocations
+        initializeTier(_tiny_storage, _tiny_stack, _tiny_count,
+                       BytesPoolConfig::TIER_TINY, BytesPoolConfig::TINY_SLOTS);
         initializeTier(_small_storage, _small_stack, _small_count,
-                       BytesPoolConfig::TIER_SMALL, BytesPoolConfig::SLOTS_PER_TIER);
+                       BytesPoolConfig::TIER_SMALL, BytesPoolConfig::SMALL_SLOTS);
         initializeTier(_medium_storage, _medium_stack, _medium_count,
-                       BytesPoolConfig::TIER_MEDIUM, BytesPoolConfig::SLOTS_PER_TIER);
+                       BytesPoolConfig::TIER_MEDIUM, BytesPoolConfig::MEDIUM_SLOTS);
         initializeTier(_large_storage, _large_stack, _large_count,
-                       BytesPoolConfig::TIER_LARGE, BytesPoolConfig::SLOTS_PER_TIER);
+                       BytesPoolConfig::TIER_LARGE, BytesPoolConfig::LARGE_SLOTS);
     }
 
     // Non-copyable
@@ -271,16 +299,19 @@ private:
     }
 
     // Storage for pooled vectors (fixed arrays avoid dynamic allocation)
-    PooledData _small_storage[BytesPoolConfig::SLOTS_PER_TIER];
-    PooledData _medium_storage[BytesPoolConfig::SLOTS_PER_TIER];
-    PooledData _large_storage[BytesPoolConfig::SLOTS_PER_TIER];
+    PooledData _tiny_storage[BytesPoolConfig::TINY_SLOTS];
+    PooledData _small_storage[BytesPoolConfig::SMALL_SLOTS];
+    PooledData _medium_storage[BytesPoolConfig::MEDIUM_SLOTS];
+    PooledData _large_storage[BytesPoolConfig::LARGE_SLOTS];
 
     // Stacks of available vectors (indices into storage arrays)
-    PooledData* _small_stack[BytesPoolConfig::SLOTS_PER_TIER];
-    PooledData* _medium_stack[BytesPoolConfig::SLOTS_PER_TIER];
-    PooledData* _large_stack[BytesPoolConfig::SLOTS_PER_TIER];
+    PooledData* _tiny_stack[BytesPoolConfig::TINY_SLOTS];
+    PooledData* _small_stack[BytesPoolConfig::SMALL_SLOTS];
+    PooledData* _medium_stack[BytesPoolConfig::MEDIUM_SLOTS];
+    PooledData* _large_stack[BytesPoolConfig::LARGE_SLOTS];
 
     // Stack counts (how many available in each tier)
+    size_t _tiny_count = 0;
     size_t _small_count = 0;
     size_t _medium_count = 0;
     size_t _large_count = 0;
