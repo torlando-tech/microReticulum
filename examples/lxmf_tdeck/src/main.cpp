@@ -476,6 +476,9 @@ void setup_hardware() {
         INFO("FileSystem mounted");
         RNS::Utilities::OS::register_filesystem(fs);
         INFO("Filesystem registered");
+#ifdef BOOT_PROFILING_ENABLED
+        RNS::Instrumentation::BootProfiler::setFilesystemReady(true);
+#endif
     }
 
     // Initialize I2C for keyboard and touch
@@ -1111,6 +1114,9 @@ void setup() {
 
     // Boot profiling complete
     BOOT_PROFILE_COMPLETE();
+#ifdef BOOT_PROFILING_ENABLED
+    BOOT_PROFILE_SAVE();
+#endif
 
     INFO("\n");
     INFO("╔══════════════════════════════════════╗");
