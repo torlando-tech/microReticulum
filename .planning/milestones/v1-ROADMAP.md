@@ -1,26 +1,17 @@
-# Roadmap: microReticulum Stability Audit
+# Milestone v1: Stability Audit
+
+**Status:** SHIPPED 2026-01-24
+**Phases:** 1-5
+**Total Plans:** 15
 
 ## Overview
 
-This roadmap guides a systematic stability audit of the microReticulum firmware. Starting with instrumentation to capture baseline data, we progress through boot optimization, memory allocation analysis, concurrency auditing, and conclude with a prioritized backlog of findings. Each phase delivers measurable progress toward reliable extended operation.
+This roadmap guided a systematic stability audit of the microReticulum firmware. Starting with instrumentation to capture baseline data, we progressed through boot optimization, memory allocation analysis, concurrency auditing, and concluded with a prioritized backlog of findings. Each phase delivered measurable progress toward reliable extended operation.
 
 ## Phases
 
-**Phase Numbering:**
-- Integer phases (1, 2, 3): Planned milestone work
-- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
-
-Decimal phases appear between their surrounding integers in numeric order.
-
-- [x] **Phase 1: Memory Instrumentation** - Establish heap/stack monitoring and baseline measurements
-- [x] **Phase 2: Boot Profiling** - Profile boot sequence and apply configuration quick wins
-- [x] **Phase 3: Memory Allocation Audit** - Audit allocation patterns for fragmentation sources
-- [x] **Phase 4: Concurrency Audit** - Audit threading, mutex usage, and NimBLE lifecycle
-- [x] **Phase 5: Synthesis** - Consolidate findings into prioritized backlog
-
-## Phase Details
-
 ### Phase 1: Memory Instrumentation
+
 **Goal**: Runtime memory monitoring is operational and capturing baseline fragmentation data
 **Depends on**: Nothing (first phase)
 **Requirements**: MEM-01, MEM-02, DLVR-02
@@ -36,6 +27,7 @@ Plans:
 - [x] 01-02-PLAN.md - Application Integration (build flag, init in main.cpp, task registration)
 
 ### Phase 2: Boot Profiling
+
 **Goal**: Boot sequence is profiled and reduced to under 5 seconds through configuration changes
 **Depends on**: Phase 1 (instrumentation helps validate boot timing)
 **Requirements**: BOOT-01, BOOT-02, BOOT-03, BOOT-04, BOOT-05, DLVR-03
@@ -54,6 +46,7 @@ Plans:
 - [x] 02-04-PLAN.md - Validation and Persistence (SPIFFS storage, validate 5-second target)
 
 ### Phase 3: Memory Allocation Audit
+
 **Goal**: All significant memory allocation patterns are documented with fragmentation risk assessment
 **Depends on**: Phase 1 (baseline data informs audit priorities)
 **Requirements**: MEM-03, MEM-04, MEM-05, MEM-06, MEM-07
@@ -72,6 +65,7 @@ Plans:
 - [x] 03-04-PLAN.md - Memory Pools Documentation and Final Report (MEM-07, synthesis)
 
 ### Phase 4: Concurrency Audit
+
 **Goal**: All threading patterns are documented with risk assessment for deadlock, race conditions, and leaks
 **Depends on**: Phase 1 (stack monitoring helps identify overflow risks)
 **Requirements**: CONC-01, CONC-02, CONC-03, CONC-04, CONC-05
@@ -90,6 +84,7 @@ Plans:
 - [x] 04-04-PLAN.md - Mutex Ordering and Synthesis (deadlock analysis, consolidated summary - CONC-04)
 
 ### Phase 5: Synthesis
+
 **Goal**: Prioritized backlog of issues with severity ratings and fix recommendations
 **Depends on**: Phases 1-4 (all audit data collected)
 **Requirements**: DLVR-01
@@ -105,18 +100,43 @@ Plans:
 
 ## Progress
 
-**Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
-
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Memory Instrumentation | 2/2 | ✓ Complete | 2026-01-23 |
-| 2. Boot Profiling | 4/4 | ✓ Complete | 2026-01-24 |
-| 3. Memory Allocation Audit | 4/4 | ✓ Complete | 2026-01-24 |
-| 4. Concurrency Audit | 4/4 | ✓ Complete | 2026-01-24 |
-| 5. Synthesis | 1/1 | ✓ Complete | 2026-01-24 |
+| 1. Memory Instrumentation | 2/2 | Complete | 2026-01-23 |
+| 2. Boot Profiling | 4/4 | Complete | 2026-01-24 |
+| 3. Memory Allocation Audit | 4/4 | Complete | 2026-01-24 |
+| 4. Concurrency Audit | 4/4 | Complete | 2026-01-24 |
+| 5. Synthesis | 1/1 | Complete | 2026-01-24 |
 
 ---
+
+## Milestone Summary
+
+**Key Decisions:**
+- Data-driven approach: instrument first, then audit based on findings
+- Boot and memory audits run in parallel after instrumentation
+- WSJF scoring (Severity/Effort) for backlog prioritization
+- 30-second monitoring interval for heap/stack
+- 5s boot target not achievable via config alone (reticulum init is 2.5s)
+
+**Issues Resolved:**
+- Created PSRAMAllocator.h (missing from codebase)
+- Created partitions.csv (missing from codebase)
+- Documented 40+ memory pools with overflow behavior
+- Identified 30 stability issues with fix recommendations
+
+**Issues Deferred:**
+- 30 issues in BACKLOG.md awaiting implementation sprints
+- Boot time optimization requires code-level changes
+- Thread-safe BLE pending queues
+
+**Technical Debt Incurred:**
+- 7 FIXME(frag) comments mark fragmentation risk sites
+- Boot time 336ms over aspirational target
+
+---
+
 *Roadmap created: 2026-01-23*
+*Milestone shipped: 2026-01-24*
 *Depth: comprehensive*
 *Requirements coverage: 20/20*

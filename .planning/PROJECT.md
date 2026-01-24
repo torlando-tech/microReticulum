@@ -2,11 +2,30 @@
 
 ## What This Is
 
-A comprehensive audit of the microReticulum codebase — a C++ implementation of the Reticulum network stack and LXMF messaging protocol for the Lilygo T-Deck Plus and other ESP32-based devices. The firmware is functional (can exchange LXMF messages with Python clients) but exhibits stability issues including slow boot times (15+ seconds) and memory fragmentation leading to crashes during extended runtime.
+A comprehensive audit of the microReticulum codebase — a C++ implementation of the Reticulum network stack and LXMF messaging protocol for the Lilygo T-Deck Plus and other ESP32-based devices. The v1 stability audit is complete, delivering instrumentation modules and a prioritized backlog of 30 issues.
 
 ## Core Value
 
 Identify and prioritize the root causes of instability so the firmware can run reliably for extended periods without crashes or performance degradation.
+
+## Current State (v1 Shipped)
+
+**v1 Stability Audit delivered:**
+- MemoryMonitor module: 30s periodic heap/stack monitoring
+- BootProfiler module: millisecond timing with SPIFFS persistence
+- 40+ memory pools documented (~550KB static, ~330KB PSRAM)
+- 17 concurrency issues identified across LVGL, NimBLE, FreeRTOS
+- BACKLOG.md with 30 WSJF-prioritized issues
+
+**Boot timing baseline:**
+- Total: 9,704ms (init: 5,336ms, wait: 4,368ms)
+- Largest phase: reticulum init at 2.5s (cryptographic operations)
+
+**Key findings:**
+- No critical blocking issues
+- 9 High severity, 13 Medium, 8 Low issues documented
+- Threading architecture is sound (implicit mutex ordering)
+- Per-packet allocations are main fragmentation concern
 
 ## Requirements
 
@@ -19,13 +38,15 @@ Identify and prioritize the root causes of instability so the firmware can run r
 - FreeRTOS task-based concurrency — existing
 - Identity management and cryptography — existing
 - Message persistence and routing — existing
+- Heap/stack monitoring — v1
+- Boot sequence profiling — v1
+- Memory allocation audit — v1
+- Concurrency pattern audit — v1
+- Prioritized stability backlog — v1
 
 ### Active
 
-- [ ] Memory management audit: allocation patterns, fragmentation sources, potential leaks
-- [ ] Boot performance audit: identify blocking operations and initialization bottlenecks
-- [ ] Threading/concurrency audit: RTOS task issues, race conditions, mutex contention
-- [ ] Prioritized backlog of issues with fix recommendations
+(Defined for next milestone)
 
 ### Out of Scope
 
@@ -45,16 +66,7 @@ Identify and prioritize the root causes of instability so the firmware can run r
 - LXMF message routing and persistence
 - LVGL UI with FreeRTOS task scheduling
 - T-Deck hardware abstraction
-
-**Known Symptoms:**
-- Boot time exceeds 15 seconds
-- Extended runtime (hours/days) leads to crashes
-- Memory fragmentation suspected but not yet instrumented
-
-**Prior Investigation:**
-- No heap monitoring or stack traces captured yet
-- No systematic debugging performed
-- This audit is starting fresh
+- Instrumentation: MemoryMonitor, BootProfiler (new in v1)
 
 **Technical Environment:**
 - ESP32-S3 (T-Deck Plus) with 8MB flash, PSRAM
@@ -62,6 +74,12 @@ Identify and prioritize the root causes of instability so the firmware can run r
 - FreeRTOS for task scheduling
 - ArduinoJson 7.4.2+, MsgPack 0.4.2+
 - Custom Crypto fork for cryptographic operations
+
+**Audit Deliverables:**
+- src/Instrumentation/MemoryMonitor.{h,cpp} (388 lines)
+- src/Instrumentation/BootProfiler.{h,cpp} (408 lines)
+- docs/MEMORY_AUDIT.md (587 lines)
+- .planning/phases/05-synthesis/BACKLOG.md (892 lines)
 
 ## Constraints
 
@@ -74,9 +92,12 @@ Identify and prioritize the root causes of instability so the firmware can run r
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Full stack audit | Memory issues could originate anywhere | — Pending |
-| Prioritized backlog output | Allows tackling issues incrementally | — Pending |
-| Stability over features | Reliable foundation needed first | — Pending |
+| Full stack audit | Memory issues could originate anywhere | Good — found issues in all subsystems |
+| Prioritized backlog output | Allows tackling issues incrementally | Good — 30 issues with WSJF scores |
+| Stability over features | Reliable foundation needed first | Good — clear path forward |
+| Data-driven approach | Instrument first, then audit | Good — baseline established |
+| WSJF scoring | Prioritize high-impact low-effort | Good — P1 issues clearly identified |
+| 5s boot target | Aspirational, config-only | Partial — 5.3s achieved, code changes needed for <5s |
 
 ---
-*Last updated: 2026-01-23 after initialization*
+*Last updated: 2026-01-24 after v1 milestone*

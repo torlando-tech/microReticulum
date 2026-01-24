@@ -1,3 +1,13 @@
+# Requirements Archive: v1 Stability Audit
+
+**Archived:** 2026-01-24
+**Status:** SHIPPED
+
+This is the archived requirements specification for v1.
+For current requirements, see `.planning/REQUIREMENTS.md` (created for next milestone).
+
+---
+
 # Requirements: microReticulum Stability Audit
 
 **Defined:** 2026-01-23
@@ -100,5 +110,22 @@ Which phases cover which requirements. Updated during roadmap creation.
 - Unmapped: 0
 
 ---
+
+## Milestone Summary
+
+**Shipped:** 20 of 20 v1 requirements
+**Adjusted:** None - all requirements completed as specified
+**Dropped:** None
+
+**Key Outcomes:**
+- MEM-01/02: MemoryMonitor module created with heap/stack monitoring
+- MEM-03-07: 13 memory issues documented with severity ratings
+- BOOT-01-05: BootProfiler module created, boot time profiled (5,336ms init)
+- CONC-01-05: 17 concurrency issues documented with mutex ordering
+- DLVR-01: BACKLOG.md with 30 prioritized issues
+- DLVR-02: src/Instrumentation/ with MemoryMonitor and BootProfiler
+- DLVR-03: sdkconfig.defaults optimizations, platformio.ini flags
+
+---
 *Requirements defined: 2026-01-23*
-*Last updated: 2026-01-24 — Milestone 1 complete (20/20 requirements)*
+*Archived: 2026-01-24 as part of v1 milestone completion*
