@@ -45,10 +45,13 @@ Plans:
   3. Flash mode (QIO/QOUT, speed) is documented and verified optimal
   4. Log level during boot is reduced to WARNING or ERROR
   5. Blocking operations in setup() are identified and documented
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
-- [ ] 02-01: TBD
+- [ ] 02-01-PLAN.md - BootProfiler Core Module (timing API with build flag isolation)
+- [ ] 02-02-PLAN.md - Boot Sequence Instrumentation (instrument setup() with timing calls)
+- [ ] 02-03-PLAN.md - Configuration Optimizations (PSRAM test, log level, documentation)
+- [ ] 02-04-PLAN.md - Validation and Persistence (SPIFFS storage, validate 5-second target)
 
 ### Phase 3: Memory Allocation Audit
 **Goal**: All significant memory allocation patterns are documented with fragmentation risk assessment
@@ -102,7 +105,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Memory Instrumentation | 2/2 | ✓ Complete | 2026-01-23 |
-| 2. Boot Profiling | 0/TBD | Not started | - |
+| 2. Boot Profiling | 0/4 | Not started | - |
 | 3. Memory Allocation Audit | 0/TBD | Not started | - |
 | 4. Concurrency Audit | 0/TBD | Not started | - |
 | 5. Synthesis | 0/TBD | Not started | - |
