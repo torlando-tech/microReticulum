@@ -67,3 +67,12 @@ CONFIG_BOOTLOADER_LOG_LEVEL=2
 
 # Skip ROM bootloader output (saves serial time)
 CONFIG_BOOT_ROM_LOG_ALWAYS_OFF=y
+
+# ============================================================================
+# Task Watchdog Timer (TWDT)
+# Detects task starvation and deadlock conditions
+# ============================================================================
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=y
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=y
