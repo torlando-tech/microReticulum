@@ -98,10 +98,10 @@ Plans:
   2. Each issue has severity rating (Critical/High/Medium/Low)
   3. Each issue has fix recommendation with estimated complexity
   4. Backlog is ordered by severity and fix-effort ratio
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 05-01: TBD
+- [ ] 05-01-PLAN.md - Consolidate issues into BACKLOG.md with WSJF priority scoring
 
 ## Progress
 
