@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-23)
 ## Current Position
 
 Phase: 3 of 5 IN PROGRESS (Memory Allocation Audit)
-Plan: 02 of 4 COMPLETE
+Plan: 03 of 4 COMPLETE
 Status: Executing Phase 3 plans
-Last activity: 2026-01-24 — Completed 03-02 (shared_ptr and session object audit)
+Last activity: 2026-01-24 — Completed 03-01, 03-02, 03-03 (core data path, shared_ptr, persistence audits)
 
-Progress: [######----] 62%
+Progress: [#######---] 70%
 
 ## Performance Metrics
 
@@ -82,6 +82,13 @@ Recent decisions affecting current work:
 - GPS sync: ~370-950ms variable
 
 ### Memory Allocation Audit Findings
+
+**03-01: Core Data Path (Bytes, Packet, Transport)**
+- PSRAM verified: Bytes uses PSRAMAllocator for all vector storage
+- Transport well-optimized: 15+ fixed-size pools (~21KB static)
+- Packet is main concern: 10+ allocations per packet (Object + 9 Bytes)
+- 8 issues total: 0 Critical, 5 High, 2 Medium, 1 Low
+- Key recommendation: Packet Object pool for Phase 5
 
 **03-02: shared_ptr and Session Objects**
 - 14 sites use `new T()` + `shared_ptr` pattern (2 allocations)
