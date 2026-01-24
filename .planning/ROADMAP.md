@@ -63,10 +63,13 @@ Plans:
   3. ArduinoJson document types (Dynamic vs Static) are audited across codebase
   4. Large buffer allocations are verified to use PSRAM (MALLOC_CAP_SPIRAM)
   5. Memory pools are documented with capacity limits and overflow behavior
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
-- [ ] 03-01: TBD
+- [ ] 03-01-PLAN.md - Core Data Path Audit (Bytes, Packet, Transport - MEM-04, MEM-06 partial)
+- [ ] 03-02-PLAN.md - shared_ptr and Session Object Audit (Identity, Link, etc. - MEM-03)
+- [ ] 03-03-PLAN.md - ArduinoJson and Persistence Audit (MEM-05)
+- [ ] 03-04-PLAN.md - Memory Pools Documentation and Final Report (MEM-07, synthesis)
 
 ### Phase 4: Concurrency Audit
 **Goal**: All threading patterns are documented with risk assessment for deadlock, race conditions, and leaks
@@ -106,7 +109,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 |-------|----------------|--------|-----------|
 | 1. Memory Instrumentation | 2/2 | ✓ Complete | 2026-01-23 |
 | 2. Boot Profiling | 4/4 | ✓ Complete | 2026-01-24 |
-| 3. Memory Allocation Audit | 0/TBD | Not started | - |
+| 3. Memory Allocation Audit | 0/4 | Not started | - |
 | 4. Concurrency Audit | 0/TBD | Not started | - |
 | 5. Synthesis | 0/TBD | Not started | - |
 
