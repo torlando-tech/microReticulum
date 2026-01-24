@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 8 of 8 (P3 Optimization & Hardening)
-Plan: 3 of 4 complete
+Plan: 4 of 4 complete (plan 04 was deferred, plan 05 complete)
 Status: In progress
-Last activity: 2026-01-24 — Completed 08-03-PLAN.md (timing/volatile documentation)
+Last activity: 2026-01-24 — Completed 08-05-PLAN.md (graceful BLE shutdown)
 
-Progress: [======================.] 25/27 plans (~93% through v1.0-v1.2)
+Progress: [======================.] 26/27 plans (~96% through v1.0-v1.2)
 
 ## Milestones
 
@@ -25,9 +25,9 @@ Progress: [======================.] 25/27 plans (~93% through v1.0-v1.2)
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 25
-- Average duration: ~32 min
-- Total execution time: ~13.1 hours
+- Total plans completed: 26
+- Average duration: ~31 min
+- Total execution time: ~13.2 hours
 
 **By Milestone:**
 
@@ -35,7 +35,7 @@ Progress: [======================.] 25/27 plans (~93% through v1.0-v1.2)
 |-----------|--------|-------|----------|
 | v1.0 Stability Audit | 5 | 15 | ~11h |
 | v1.1 Quick Wins | 1 | 2 | ~13m |
-| v1.2 Stability Complete | 2 | 8 (5 phase 7, 3 phase 8) | ~1.6h |
+| v1.2 Stability Complete | 2 | 9 (5 phase 7, 4 phase 8) | ~1.7h |
 
 ## Accumulated Context
 
@@ -63,6 +63,9 @@ Key decisions from Phase 8:
 - VOLATILE RATIONALE comment pattern for callback/ISR synchronization (CONC-L1)
 - DELAY RATIONALE comment pattern for timing-sensitive code (CONC-L2)
 - 10ms = NimBLE scheduler tick as minimum polling interval
+- 10s graceful shutdown timeout for BLE write operations (CONC-H4)
+- RTC_NOINIT_ATTR for unclean shutdown flag persistence (CONC-H4)
+- Soft reset performs full shutdown/reinit cycle (CONC-M4)
 
 ### Pending Todos
 
@@ -70,13 +73,13 @@ None.
 
 ### Blockers/Concerns
 
-None. Phase 8 plans 01-03 complete, ready for 08-04.
+None. Phase 8 complete (plan 04 deferred pending further analysis).
 
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 08-03-PLAN.md
+Stopped at: Completed 08-05-PLAN.md
 Resume file: None
 
 ---
-*Last updated: 2026-01-24 after 08-03 complete*
+*Last updated: 2026-01-24 after 08-05 complete*
