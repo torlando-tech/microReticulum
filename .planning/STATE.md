@@ -10,27 +10,28 @@ See: .planning/PROJECT.md (updated 2026-01-23)
 ## Current Position
 
 Phase: 2 of 5 (Boot Profiling)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-01-23 — Phase 1 complete (verified)
+Plan: 1 of 3 in current phase
+Status: In progress
+Last activity: 2026-01-24 — Completed 02-01-PLAN.md
 
-Progress: [##--------] 20%
+Progress: [###-------] 30%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 2
+- Total plans completed: 3
 - Average duration: 2 min
-- Total execution time: 4 min
+- Total execution time: 5 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-memory-instrumentation | 2 | 4min | 2min |
+| 02-boot-profiling | 1 | 1min | 1min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (2min), 01-02 (2min)
+- Last 5 plans: 01-01 (2min), 01-02 (2min), 02-01 (1min)
 - Trend: Consistent
 
 *Updated after each plan completion*
@@ -49,6 +50,9 @@ Recent decisions affecting current work:
 - [01-01]: Warn at 50% fragmentation threshold, 256 bytes stack remaining
 - [01-02]: Initialize memory monitor after LVGL task starts (before Reticulum)
 - [01-02]: 30-second monitoring interval per CONTEXT.md
+- [02-01]: Use millis() for boot timing (sufficient precision, already in codebase)
+- [02-01]: First markStart() establishes boot start time (no explicit init)
+- [02-01]: Wait time tracked separately from init time
 
 ### Pending Todos
 
@@ -64,9 +68,9 @@ These block full build verification but do not affect the code changes made in t
 
 ## Session Continuity
 
-Last session: 2026-01-23
-Stopped at: Phase 1 complete, verified
+Last session: 2026-01-24
+Stopped at: Completed 02-01-PLAN.md
 Resume file: None
 
 ---
-*Next step: /gsd:discuss-phase 2 or /gsd:plan-phase 2*
+*Next step: Execute 02-02-PLAN.md (boot sequence integration)*
