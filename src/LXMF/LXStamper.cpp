@@ -11,6 +11,7 @@
 #ifdef ESP_PLATFORM
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include "esp_task_wdt.h"
 #endif
 
 using namespace LXMF;
@@ -191,9 +192,11 @@ std::pair<Bytes, uint8_t> LXStamper::generate_stamp(
 
 		// Yield to allow other tasks (LVGL, network) to run
 		// This prevents UI freeze during stamp generation
+		// Yield every 10 rounds (was 100) for better UI responsiveness
 #ifdef ESP_PLATFORM
-		if (rounds % 100 == 0) {
-			vTaskDelay(1);  // Yield for 1 tick
+		if (rounds % 10 == 0) {
+			vTaskDelay(1);        // Yield for 1 tick
+			esp_task_wdt_reset(); // Feed watchdog during long operations
 		}
 #endif
 	}
