@@ -34,8 +34,22 @@ public:
     LVGLLock() {
         SemaphoreHandle_t mutex = LVGLInit::get_mutex();
         if (mutex) {
+#ifndef NDEBUG
+            // Debug builds: Use 5-second timeout for deadlock detection
+            BaseType_t result = xSemaphoreTakeRecursive(mutex, pdMS_TO_TICKS(5000));
+            if (result != pdTRUE) {
+                // Log holder info if available
+                TaskHandle_t holder = xSemaphoreGetMutexHolder(mutex);
+                (void)holder;  // Suppress unused warning if logging disabled
+                // Crash with diagnostic info
+                assert(false && "LVGL mutex timeout (5s) - possible deadlock");
+            }
+            _acquired = true;
+#else
+            // Release builds: Wait indefinitely (production behavior)
             xSemaphoreTakeRecursive(mutex, portMAX_DELAY);
             _acquired = true;
+#endif
         }
     }
 
