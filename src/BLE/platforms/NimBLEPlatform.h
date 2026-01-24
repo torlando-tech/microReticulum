@@ -205,6 +205,9 @@ private:
     // Update connection info
     void updateConnectionMTU(uint16_t conn_handle, uint16_t mtu);
 
+    // Check if a device address is currently connected
+    bool isDeviceConnected(const std::string& addrKey) const;
+
     //=========================================================================
     // State Machine Infrastructure
     //=========================================================================
@@ -274,6 +277,9 @@ private:
     // Cached scan results for connection (stores full device info from scan)
     // Key: MAC address as string (e.g., "b8:27:eb:43:04:bc")
     std::map<std::string, NimBLEAdvertisedDevice> _discovered_devices;
+
+    // Insertion-order tracking for FIFO eviction of discovered devices
+    std::vector<std::string> _discovered_order;
 
     // Connection handle allocator (NimBLE uses its own, we wrap for consistency)
     uint16_t _next_conn_handle = 1;
