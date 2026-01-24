@@ -13,7 +13,7 @@ This roadmap guides a systematic stability audit of the microReticulum firmware.
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Memory Instrumentation** - Establish heap/stack monitoring and baseline measurements
-- [ ] **Phase 2: Boot Profiling** - Profile boot sequence and apply configuration quick wins
+- [x] **Phase 2: Boot Profiling** - Profile boot sequence and apply configuration quick wins
 - [ ] **Phase 3: Memory Allocation Audit** - Audit allocation patterns for fragmentation sources
 - [ ] **Phase 4: Concurrency Audit** - Audit threading, mutex usage, and NimBLE lifecycle
 - [ ] **Phase 5: Synthesis** - Consolidate findings into prioritized backlog
@@ -48,10 +48,10 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 02-01-PLAN.md - BootProfiler Core Module (timing API with build flag isolation)
-- [ ] 02-02-PLAN.md - Boot Sequence Instrumentation (instrument setup() with timing calls)
-- [ ] 02-03-PLAN.md - Configuration Optimizations (PSRAM test, log level, documentation)
-- [ ] 02-04-PLAN.md - Validation and Persistence (SPIFFS storage, validate 5-second target)
+- [x] 02-01-PLAN.md - BootProfiler Core Module (timing API with build flag isolation)
+- [x] 02-02-PLAN.md - Boot Sequence Instrumentation (instrument setup() with timing calls)
+- [x] 02-03-PLAN.md - Configuration Optimizations (PSRAM test, log level, documentation)
+- [x] 02-04-PLAN.md - Validation and Persistence (SPIFFS storage, validate 5-second target)
 
 ### Phase 3: Memory Allocation Audit
 **Goal**: All significant memory allocation patterns are documented with fragmentation risk assessment
@@ -105,7 +105,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Memory Instrumentation | 2/2 | ✓ Complete | 2026-01-23 |
-| 2. Boot Profiling | 0/4 | Not started | - |
+| 2. Boot Profiling | 4/4 | ✓ Complete | 2026-01-24 |
 | 3. Memory Allocation Audit | 0/TBD | Not started | - |
 | 4. Concurrency Audit | 0/TBD | Not started | - |
 | 5. Synthesis | 0/TBD | Not started | - |

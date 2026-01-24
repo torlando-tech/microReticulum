@@ -5,33 +5,33 @@
 See: .planning/PROJECT.md (updated 2026-01-23)
 
 **Core value:** Identify and prioritize root causes of instability for reliable extended operation
-**Current focus:** Phase 2 - Boot Profiling
+**Current focus:** Phase 3 - Memory Allocation Audit
 
 ## Current Position
 
-Phase: 2 of 5 (Boot Profiling)
-Plan: 4 of 4 in current phase (02-04)
-Status: Checkpoint - awaiting boot time verification
-Last activity: 2026-01-24 — Executing 02-04-PLAN.md (2/3 tasks complete)
+Phase: 2 of 5 COMPLETE (Boot Profiling)
+Plan: Ready to start Phase 3
+Status: Phase 2 verified, proceeding to Phase 3
+Last activity: 2026-01-24 — Phase 2 complete, all 4 plans executed
 
-Progress: [#####-----] 50%
+Progress: [######----] 60%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 5
+- Total plans completed: 6
 - Average duration: 2 min
-- Total execution time: 9 min
+- Total execution time: 12 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-memory-instrumentation | 2 | 4min | 2min |
-| 02-boot-profiling | 3 | 5min | 1.7min |
+| 02-boot-profiling | 4 | 8min | 2min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (2min), 01-02 (2min), 02-01 (1min), 02-02 (2min), 02-03 (2min)
+- Last 5 plans: 01-02 (2min), 02-01 (1min), 02-02 (2min), 02-03 (2min), 02-04 (3min)
 - Trend: Consistent
 
 *Updated after each plan completion*
@@ -56,7 +56,27 @@ Recent decisions affecting current work:
 - [02-02]: Wrap setup_*() calls in main setup() rather than inside each function
 - [02-02]: WAIT markers inside setup_wifi() and setup_lxmf() where waits occur
 - [02-03]: Disable PSRAM memory test for ~2s boot time savings
-- [02-03]: Keep app log level at INFO for development (production opt-in)
+- [02-04]: Enable BOOT_REDUCED_LOGGING with CORE_DEBUG_LEVEL=2
+- [02-04]: 5s target not achievable via config - reticulum init is 2.5s
+
+### Boot Profiling Findings
+
+**Final boot timing (with all optimizations):**
+- Total: 9,704ms
+- Init: 5,336ms (336ms over 5s target)
+- Wait: 4,368ms (45% of boot)
+
+**Longest phases (init time):**
+1. reticulum: 2,580ms (cryptographic operations)
+2. ui_manager: 957ms
+3. hardware: 509ms
+4. lvgl: 482ms
+5. gps: 553ms (excluding 368ms GPS sync wait)
+
+**Blocking operations identified:**
+- TCP stabilization: 3,000ms fixed delay
+- WiFi connect: ~1,000ms (30s timeout)
+- GPS sync: ~370-950ms variable
 
 ### Pending Todos
 
@@ -64,17 +84,15 @@ None yet.
 
 ### Blockers/Concerns
 
-**Repository build issues (pre-existing):**
-- `PSRAMAllocator.h` missing (required by src/Bytes.h)
-- `partitions.csv` missing from examples/lxmf_tdeck/
-
-These block full build verification but do not affect the code changes made in this phase.
+**Resolved:**
+- `PSRAMAllocator.h` - Created in src/
+- `partitions.csv` - Created in examples/lxmf_tdeck/
 
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: 02-04 checkpoint (boot time verification)
-Resume file: .planning/phases/02-boot-profiling/02-04-PLAN.md
+Completed: Phase 2 (Boot Profiling)
+Next: Phase 3 (Memory Allocation Audit)
 
 ---
-*Plan 02-04 at checkpoint. Awaiting boot time verification before completing phase.*
+*Phase 2 complete. Ready for Phase 3 planning.*
