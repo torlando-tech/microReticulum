@@ -201,8 +201,23 @@ public:
     size_t total_requests() const { return _total_requests; }
     size_t pool_hits() const { return _pool_hits; }
     size_t pool_misses() const { return _pool_misses; }
+    size_t fallback_count() const { return _fallback_count; }
     float hit_rate() const {
         return _total_requests > 0 ? (float)_pool_hits / _total_requests : 0.0f;
+    }
+
+    /**
+     * Record a fallback to heap allocation and log WARNING.
+     * Called by Bytes.cpp when pool is exhausted but fallback succeeds.
+     */
+    void recordFallback(size_t requested_size) {
+        _fallback_count++;
+        WARNINGF("BytesPool: exhausted, falling back to heap (requested=%zu bytes, "
+                 "small=%zu/%zu med=%zu/%zu large=%zu/%zu)",
+                 requested_size,
+                 small_in_use(), BytesPoolConfig::SLOTS_PER_TIER,
+                 medium_in_use(), BytesPoolConfig::SLOTS_PER_TIER,
+                 large_in_use(), BytesPoolConfig::SLOTS_PER_TIER);
     }
 
     // Current pool state
@@ -215,9 +230,9 @@ public:
 
     // Log statistics for tuning
     void logStats() const {
-        INFOF("BytesPool: requests=%zu hits=%zu misses=%zu hit_rate=%d%% "
+        INFOF("BytesPool: requests=%zu hits=%zu misses=%zu fallbacks=%zu hit_rate=%d%% "
               "small=%zu/%zu med=%zu/%zu large=%zu/%zu",
-              _total_requests, _pool_hits, _pool_misses,
+              _total_requests, _pool_hits, _pool_misses, _fallback_count,
               (int)(hit_rate() * 100),
               small_in_use(), BytesPoolConfig::SLOTS_PER_TIER,
               medium_in_use(), BytesPoolConfig::SLOTS_PER_TIER,
@@ -274,6 +289,7 @@ private:
     size_t _total_requests = 0;
     size_t _pool_hits = 0;
     size_t _pool_misses = 0;
+    size_t _fallback_count = 0;  // Heap fallbacks due to pool exhaustion
 
 #if BYTESPOOL_USE_SPINLOCK
     portMUX_TYPE _mux;
