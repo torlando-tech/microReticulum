@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 7 of 8 (P2 Production Readiness)
-Plan: 4 of 5 in phase complete
+Plan: 3 of 5 in phase complete (07-02, 07-03, 07-04)
 Status: In progress
-Last activity: 2026-01-24 - Completed 07-04-PLAN.md
+Last activity: 2026-01-24 - Completed 07-02-PLAN.md
 
-Progress: [==================..] 18/22 plans (~82% through v1.0-v1.2)
+Progress: [==================..] 20/22 plans (~91% through v1.0-v1.2)
 
 ## Milestones
 
@@ -52,6 +52,8 @@ Key decisions from v1.2 (Phase 7):
 - 16 device max for BLE discovered cache (CONC-M6)
 - Connected devices protected from cache eviction
 - 100ms mutex timeout with warning logging (CONC-M5)
+- make_shared for Bytes single allocation (MEM-M1)
+- Deferred PacketReceipt allocation (MEM-M2)
 
 ### Pending Todos
 
@@ -64,8 +66,8 @@ None. Phase 7 plans ready for execution.
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 07-03-PLAN.md (bounded BLE cache)
+Stopped at: Completed 07-02-PLAN.md (memory allocation optimization)
 Resume file: None
 
 ---
-*Last updated: 2026-01-24 after 07-03 complete*
+*Last updated: 2026-01-24 after 07-02 complete*
