@@ -22,14 +22,24 @@ void Bytes::newData(size_t capacity /*= 0*/) {
 //MEM("newData: Using pooled data");
 			return;
 		}
-		// Pool exhausted - fall through to make_shared
+		// Pool exhausted - log and fall through to make_shared
+		BytesPool::instance().recordFallback(capacity);
 	}
 
 	// Fallback: standard allocation for oversized or when pool exhausted
-	_data = std::make_shared<Data>();
+	try {
+		_data = std::make_shared<Data>();
+	} catch (const std::bad_alloc& e) {
+		ERROR("Bytes::newData heap allocation failed: " + std::string(e.what()));
+		_data = nullptr;
+		_exclusive = false;
+		return;  // Caller must check if _data is valid
+	}
 	if (!_data) {
 		ERROR("Bytes failed to allocate empty data buffer");
-		throw std::runtime_error("Failed to allocate empty data buffer");
+		_data = nullptr;
+		_exclusive = false;
+		return;  // Graceful failure instead of crash
 	}
 //MEM("newData: Created new data");
 	if (capacity > 0) {
@@ -72,14 +82,25 @@ void Bytes::exclusiveData(bool copy /*= true*/, size_t capacity /*= 0*/) {
 //MEM("exclusiveData: Using pooled data for COW copy");
 					return;
 				}
-				// Pool exhausted - fall through to make_shared
+				// Pool exhausted - log and fall through to make_shared
+				BytesPool::instance().recordFallback(required_capacity);
 			}
 
 			// Fallback: standard allocation
-			auto new_data = std::make_shared<Data>();
+			std::shared_ptr<Data> new_data;
+			try {
+				new_data = std::make_shared<Data>();
+			} catch (const std::bad_alloc& e) {
+				ERROR("Bytes::exclusiveData heap allocation failed: " + std::string(e.what()));
+				_data = nullptr;
+				_exclusive = false;
+				return;  // Caller must check if _data is valid
+			}
 			if (!new_data) {
 				ERROR("Bytes failed to duplicate data buffer");
-				throw std::runtime_error("Failed to duplicate data buffer");
+				_data = nullptr;
+				_exclusive = false;
+				return;  // Graceful failure instead of crash
 			}
 //MEM("exclusiveData: Created new data");
 			new_data->reserve(required_capacity);
