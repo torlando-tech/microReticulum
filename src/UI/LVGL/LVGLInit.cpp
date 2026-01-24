@@ -159,10 +159,19 @@ void LVGLInit::lvgl_task(void* param) {
 
     while (true) {
         // Acquire mutex before calling LVGL
-        if (xSemaphoreTakeRecursive(_mutex, portMAX_DELAY) == pdTRUE) {
-            lv_task_handler();
-            xSemaphoreGiveRecursive(_mutex);
+#ifndef NDEBUG
+        // Debug builds: 5-second timeout for stuck task detection
+        BaseType_t result = xSemaphoreTakeRecursive(_mutex, pdMS_TO_TICKS(5000));
+        if (result != pdTRUE) {
+            WARNING("LVGL task mutex timeout (5s) - possible deadlock or stuck task");
+            // Per Phase 8 context: log warning and continue waiting (don't break functionality)
+            xSemaphoreTakeRecursive(_mutex, portMAX_DELAY);
         }
+#else
+        xSemaphoreTakeRecursive(_mutex, portMAX_DELAY);
+#endif
+        lv_task_handler();
+        xSemaphoreGiveRecursive(_mutex);
 
         // Feed watchdog and yield to other tasks
         esp_task_wdt_reset();
