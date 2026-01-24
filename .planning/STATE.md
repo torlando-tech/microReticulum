@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-23)
 
 **Core value:** Identify and prioritize root causes of instability for reliable extended operation
-**Current focus:** Phase 3 COMPLETE - Ready for Phase 4 or Phase 5
+**Current focus:** Phase 4 (Concurrency Audit) - Plan 01 complete
 
 ## Current Position
 
-Phase: 3 of 5 COMPLETE (Memory Allocation Audit)
-Plan: 04 of 4 COMPLETE
-Status: Phase 3 complete, ready for next phase
-Last activity: 2026-01-24 — Completed 03-04 (Memory pools and audit consolidation)
+Phase: 4 of 5 IN PROGRESS (Concurrency Audit)
+Plan: 01 of 4 COMPLETE
+Status: LVGL audit complete, ready for NimBLE audit
+Last activity: 2026-01-24 — Completed 04-01 (LVGL Thread Safety Audit)
 
-Progress: [########--] 80%
+Progress: [########--] 82%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 9
-- Average duration: 4 min
-- Total execution time: 38 min
+- Total plans completed: 10
+- Average duration: 5 min
+- Total execution time: 50 min
 
 **By Phase:**
 
@@ -30,9 +30,10 @@ Progress: [########--] 80%
 | 01-memory-instrumentation | 2 | 4min | 2min |
 | 02-boot-profiling | 4 | 8min | 2min |
 | 03-memory-allocation-audit | 4 | 26min | 6.5min |
+| 04-concurrency-audit | 1 | 12min | 12min |
 
 **Recent Trend:**
-- Last 5 plans: 03-01 (unknown), 03-02 (18min), 03-03 (3min), 03-04 (5min)
+- Last 5 plans: 03-02 (18min), 03-03 (3min), 03-04 (5min), 04-01 (12min)
 - Trend: Audit plans vary (more reading/analysis)
 
 *Updated after each plan completion*
@@ -63,6 +64,9 @@ Recent decisions affecting current work:
 - [03-02]: Resource vectors identified as fragmentation risk during transfers
 - [03-03]: DynamicJsonDocument in Persistence requires migration to JsonDocument
 - [03-04]: 40+ memory pools documented, all with overflow protection
+- [04-01]: LVGL event callbacks run in LVGL task context (no explicit lock needed)
+- [04-01]: Screen constructors/destructors should have LVGL_LOCK() for defensive coding
+- [04-01]: Recursive mutex correctly handles nested LVGL calls
 
 ### Boot Profiling Findings
 
@@ -127,6 +131,18 @@ Recent decisions affecting current work:
 | BLE | 8 | ~200KB | Should consider |
 | LXMF | 10+ | Variable | No |
 
+### Concurrency Audit Findings (IN PROGRESS)
+
+**04-01: LVGL Thread Safety Audit (COMPLETE)**
+- 64 LVGL_LOCK() call sites across 10 UI files
+- 36 event callbacks - all run in LVGL task context (safe)
+- 3 Medium severity issues identified:
+  - SettingsScreen: Constructor/destructor missing LVGL_LOCK()
+  - ComposeScreen: Constructor/destructor missing LVGL_LOCK()
+  - AnnounceListScreen: Constructor/destructor missing LVGL_LOCK()
+- Threading model documented with ASCII diagrams
+- Audit report: .planning/phases/04-concurrency-audit/04-LVGL.md
+
 ### Phase 5 Backlog (from 03-AUDIT.md)
 
 **Priority 2 (High):**
@@ -143,9 +159,12 @@ Recent decisions affecting current work:
 - P4-2: BLEFragmenter Output Parameter
 - P4-3: String Reserve in toHex
 
+**From 04-LVGL.md:**
+- P3-3: Add LVGL_LOCK() to 3 screen constructors/destructors (Medium)
+
 ### Pending Todos
 
-None - Phase 3 complete.
+None - Phase 4 Plan 01 complete.
 
 ### Blockers/Concerns
 
@@ -157,14 +176,14 @@ None - Phase 3 complete.
 - Resource vectors (`_parts`, `_hashmap`) resize during transfers
 - 14 sites could use `make_shared` for ~40 bytes savings each
 - DynamicJsonDocument in Persistence.h/cpp needs migration
+- 3 screen classes need LVGL_LOCK() in constructors/destructors
 
 ## Session Continuity
 
 Last session: 2026-01-24
-Completed: 03-04-PLAN.md (Memory pools and audit consolidation)
-Next: Phase 4 (Watchdog Analysis) or Phase 5 (Memory Optimization)
+Completed: 04-01-PLAN.md (LVGL Thread Safety Audit)
+Next: 04-02-PLAN.md (NimBLE Lifecycle Audit)
 
 ---
-*Phase 3 (Memory Allocation Audit) COMPLETE.*
-*Audit report: .planning/phases/03-memory-allocation-audit/03-AUDIT.md*
-*Reference copy: docs/MEMORY_AUDIT.md*
+*Phase 4 (Concurrency Audit) Plan 01 COMPLETE.*
+*LVGL audit report: .planning/phases/04-concurrency-audit/04-LVGL.md*
