@@ -5,23 +5,22 @@ using namespace RNS;
 // Creates new shared data for instance
 // - If capacity is specified (>0) then create empty shared data with initial reserved capacity
 // - If capacity is not specified (<=0) then create empty shared data with no initial capacity
-// FIXME(frag): Could use make_shared<Data>() to combine control block and data allocation (Medium)
+// Single allocation via make_shared (combines control block + Data object)
 void Bytes::newData(size_t capacity /*= 0*/) {
 //MEMF("Bytes is creating own data with capacity %u", capacity);
 //MEM("newData: Creating new data...");
-	Data* data = new Data();
-	if (data == nullptr) {
+	_data = std::make_shared<Data>();
+	if (!_data) {
 		ERROR("Bytes failed to allocate empty data buffer");
 		throw std::runtime_error("Failed to allocate empty data buffer");
 	}
 //MEM("newData: Created new data");
 	if (capacity > 0) {
 //MEMF("newData: Reserving data capacity of %u...", capacity);
-		data->reserve(capacity);
+		_data->reserve(capacity);
 //MEM("newData: Reserved data capacity");
 	}
 //MEM("newData: Assigning data to shared data pointer...");
-	_data = SharedData(data);
 //MEM("newData: Assigned data to shared data pointer");
 	_exclusive = true;
 }
@@ -36,13 +35,13 @@ void Bytes::exclusiveData(bool copy /*= true*/, size_t capacity /*= 0*/) {
 		newData(capacity);
 	}
 	else if (!_exclusive) {
-		// FIXME(frag): COW copy creates new allocation per-write on shared Bytes (High for per-packet)
+		// COW copy creates new allocation per-write on shared Bytes
+		// Single allocation via make_shared (combines control block + Data object)
 		if (copy && !_data->empty()) {
 			//TRACE("Bytes is creating a writable copy of its shared data");
-			//Data* data = new Data(*_data.get());
 //MEM("exclusiveData: Creating new data...");
-			Data* data = new Data();
-			if (data == nullptr) {
+			auto new_data = std::make_shared<Data>();
+			if (!new_data) {
 				ERROR("Bytes failed to duplicate data buffer");
 				throw std::runtime_error("Failed to duplicate data buffer");
 			}
@@ -50,17 +49,17 @@ void Bytes::exclusiveData(bool copy /*= true*/, size_t capacity /*= 0*/) {
 			if (capacity > 0) {
 //MEMF("exclusiveData: Reserving data capacity of %u...", capacity);
 				// if requested capacity < existing size then reserve capacity for existing size instead
-				data->reserve((capacity > _data->size()) ? capacity : _data->size());
+				new_data->reserve((capacity > _data->size()) ? capacity : _data->size());
 //MEM("exclusiveData: Reserved data capacity");
 			}
 			else {
-				data->reserve(_data->size());
+				new_data->reserve(_data->size());
 			}
 //MEM("exclusiveData: Copying existing data...");
-			data->insert(data->begin(), _data->begin(), _data->end());
+			new_data->insert(new_data->begin(), _data->begin(), _data->end());
 //MEM("exclusiveData: Copied existing data");
 //MEM("exclusiveData: Assigning data to shared data pointer...");
-			_data = SharedData(data);
+			_data = new_data;
 //MEM("exclusiveData: Assigned data to shared data pointer");
 			_exclusive = true;
 		}
