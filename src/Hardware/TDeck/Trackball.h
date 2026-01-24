@@ -89,7 +89,18 @@ public:
 private:
     // LVGL input device
     static lv_indev_t* _indev;
-    // Pulse counters (incremented by ISRs)
+
+    // VOLATILE RATIONALE: ISR pulse counters
+    //
+    // These are modified by hardware interrupt handlers (IRAM_ATTR ISRs)
+    // and read by the main task for trackball input processing.
+    //
+    // Volatile required because:
+    // - ISR context modifies values asynchronously
+    // - Without volatile, compiler may cache values in registers
+    // - 16-bit/32-bit aligned values are atomic on ESP32
+    //
+    // Reference: ESP-IDF GPIO interrupt documentation
     static volatile int16_t _pulse_up;
     static volatile int16_t _pulse_down;
     static volatile int16_t _pulse_left;
