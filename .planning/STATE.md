@@ -49,6 +49,9 @@ Key decisions from v1.1:
 - 10-round yield frequency for LXStamper
 Key decisions from v1.2 (Phase 7):
 - 2000ms timeout for I2S writes (CONC-M8)
+- 16 device max for BLE discovered cache (CONC-M6)
+- Connected devices protected from cache eviction
+- 100ms mutex timeout with warning logging (CONC-M5)
 
 ### Pending Todos
 
@@ -61,8 +64,8 @@ None. Phase 7 plans ready for execution.
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 07-04-PLAN.md
+Stopped at: Completed 07-03-PLAN.md (bounded BLE cache)
 Resume file: None
 
 ---
-*Last updated: 2026-01-24 after 07-04 complete*
+*Last updated: 2026-01-24 after 07-03 complete*
