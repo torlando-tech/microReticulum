@@ -9,13 +9,13 @@ Requirements for stability quick wins. All items are P1 from BACKLOG.md (WSJF â‰
 
 ### Memory Fixes
 
-- [ ] **MEM-01**: Fix duplicate static definition in Persistence
+- [x] **MEM-01**: Fix duplicate static definition in Persistence
   - Problem: DynamicJsonDocument defined in both header and cpp file (ODR violation)
   - Location: `src/Utilities/Persistence.h:475`, `src/Utilities/Persistence.cpp:7`
   - Fix: Single definition in cpp file, extern declaration in header
   - Verification: Clean compile with no linker warnings, single definition in binary
 
-- [ ] **MEM-02**: Pre-allocate ResourceData vectors
+- [x] **MEM-02**: Pre-allocate ResourceData vectors
   - Problem: `_parts` and `_hashmap` vectors grow during large file transfers
   - Location: `src/ResourceData.h:59`, `src/ResourceData.h:68`
   - Fix: Reserve MAX_PARTS slots at construction
@@ -23,19 +23,19 @@ Requirements for stability quick wins. All items are P1 from BACKLOG.md (WSJF â‰
 
 ### Concurrency Fixes
 
-- [ ] **CONC-01**: Enable Task Watchdog Timer for application tasks
+- [x] **CONC-01**: Enable Task Watchdog Timer for application tasks
   - Problem: TWDT not configured, task starvation/deadlock undetected
   - Location: `sdkconfig.defaults`, task creation sites
   - Fix: Enable TWDT config, subscribe critical tasks with esp_task_wdt_add()
   - Verification: TWDT triggers on simulated deadlock, normal operation unaffected
 
-- [ ] **CONC-02**: Fix LXStamper yield frequency
+- [x] **CONC-02**: Fix LXStamper yield frequency
   - Problem: Yields only every 100 rounds, causing UI freeze during stamp generation
   - Location: LXStamper stamp generation loop
   - Fix: Yield every 10 rounds, reset watchdog in yield
   - Verification: UI responsive during stamp generation, stamps still generate correctly
 
-- [ ] **CONC-03**: Add mutex protection to BLE pending queues
+- [x] **CONC-03**: Add mutex protection to BLE pending queues
   - Problem: `_pending_handshakes` and `_pending_data` accessed without mutex
   - Location: BLEInterface callback handlers
   - Fix: Add lock_guard in callbacks
@@ -70,17 +70,17 @@ Deferred P2/P3 issues from backlog:
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MEM-01 | Phase 6 | Pending |
-| MEM-02 | Phase 6 | Pending |
-| CONC-01 | Phase 6 | Pending |
-| CONC-02 | Phase 6 | Pending |
-| CONC-03 | Phase 6 | Pending |
+| MEM-01 | Phase 6 | Complete |
+| MEM-02 | Phase 6 | Complete |
+| CONC-01 | Phase 6 | Complete |
+| CONC-02 | Phase 6 | Complete |
+| CONC-03 | Phase 6 | Complete |
 
 **Coverage:**
 - v1.1 requirements: 5 total
-- Mapped to phases: 5
-- Unmapped: 0 âœ“
+- Completed: 5 âœ“
+- Remaining: 0
 
 ---
 *Requirements defined: 2026-01-24*
-*Last updated: 2026-01-24 after initial definition*
+*Last updated: 2026-01-24 after v1.1 milestone completion*
