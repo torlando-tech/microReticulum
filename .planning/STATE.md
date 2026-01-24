@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-01-23)
 ## Current Position
 
 Phase: 2 of 5 (Boot Profiling)
-Plan: 1 of 3 in current phase
+Plan: 2 of 3 in current phase
 Status: In progress
-Last activity: 2026-01-24 — Completed 02-01-PLAN.md
+Last activity: 2026-01-24 — Completed 02-02-PLAN.md
 
-Progress: [###-------] 30%
+Progress: [####------] 40%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 3
+- Total plans completed: 4
 - Average duration: 2 min
-- Total execution time: 5 min
+- Total execution time: 7 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-memory-instrumentation | 2 | 4min | 2min |
-| 02-boot-profiling | 1 | 1min | 1min |
+| 02-boot-profiling | 2 | 3min | 1.5min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (2min), 01-02 (2min), 02-01 (1min)
+- Last 5 plans: 01-01 (2min), 01-02 (2min), 02-01 (1min), 02-02 (2min)
 - Trend: Consistent
 
 *Updated after each plan completion*
@@ -53,6 +53,8 @@ Recent decisions affecting current work:
 - [02-01]: Use millis() for boot timing (sufficient precision, already in codebase)
 - [02-01]: First markStart() establishes boot start time (no explicit init)
 - [02-01]: Wait time tracked separately from init time
+- [02-02]: Wrap setup_*() calls in main setup() rather than inside each function
+- [02-02]: WAIT markers inside setup_wifi() and setup_lxmf() where waits occur
 
 ### Pending Todos
 
@@ -69,8 +71,8 @@ These block full build verification but do not affect the code changes made in t
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 02-01-PLAN.md
+Stopped at: Completed 02-02-PLAN.md
 Resume file: None
 
 ---
-*Next step: Execute 02-02-PLAN.md (boot sequence integration)*
+*Next step: Execute 02-03-PLAN.md (boot time optimizations)*
