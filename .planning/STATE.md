@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 6 of 6 (P1 Stability Fixes)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-01-24 — v1.1 roadmap created
+Plan: 2 of TBD in current phase
+Status: In progress
+Last activity: 2026-01-24 — Completed 06-02-PLAN.md (Concurrency Fixes)
 
-Progress: [████████████████████░░░░░] 83% (15/18+ plans)
+Progress: [█████████████████████░░░░] 85% (17/20 plans estimated)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 15
-- Average duration: ~45 min (estimated from v1.0)
-- Total execution time: ~11.25 hours
+- Total plans completed: 17
+- Average duration: ~40 min
+- Total execution time: ~11.5 hours
 
 **By Phase:**
 
@@ -32,11 +32,11 @@ Progress: [████████████████████░░░
 | 3. Memory Allocation Audit | 4 | ~3.0h | ~45m |
 | 4. Concurrency Audit | 3 | ~2.25h | ~45m |
 | 5. Synthesis | 2 | ~1.5h | ~45m |
-| 6. P1 Stability Fixes | 0 | - | - |
+| 6. P1 Stability Fixes | 2 | ~6m | ~3m |
 
 **Recent Trend:**
-- Last 5 plans: Phase 5 synthesis work
-- Trend: Stable completion velocity
+- Last 2 plans: Phase 6 P1 fixes (fast execution, small targeted changes)
+- Trend: Accelerating - P1 fix plans execute in ~3 min each
 
 *Updated: 2026-01-24*
 
@@ -47,23 +47,25 @@ Progress: [████████████████████░░░
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- Phase 6 Plan 2: 10s TWDT timeout balances detection vs margin for legitimate ops
+- Phase 6 Plan 2: Yield every 10 rounds for 10x better UI responsiveness
 - Phase 5: WSJF scoring prioritized high-impact low-effort fixes — 5 P1 issues identified
 - Phase 5: 5s boot target achieved with config-only changes — code changes deferred to future
 - v1.0: Data-driven approach instrumented first, then audited — baseline established
 
 ### Pending Todos
 
-None yet.
+None.
 
 ### Blockers/Concerns
 
-None yet. v1.1 milestone ready to plan.
+None. P1 concurrency fixes (CONC-01, CONC-02, CONC-03) complete.
 
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: v1.1 roadmap created, Phase 6 ready for planning
+Stopped at: Completed 06-02-PLAN.md (Concurrency Fixes)
 Resume file: None
 
 ---
-*Last updated: 2026-01-24 after roadmap creation*
+*Last updated: 2026-01-24 after 06-02-PLAN completion*
