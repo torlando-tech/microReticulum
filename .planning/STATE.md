@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 8 of 8 (P3 Optimization & Hardening)
-Plan: 2 of 4 complete
+Plan: 3 of 4 complete
 Status: In progress
-Last activity: 2026-01-24 — Completed 08-01-PLAN.md and 08-02-PLAN.md
+Last activity: 2026-01-24 — Completed 08-03-PLAN.md (timing/volatile documentation)
 
-Progress: [=====================.] 24/27 plans (~89% through v1.0-v1.2)
+Progress: [======================.] 25/27 plans (~93% through v1.0-v1.2)
 
 ## Milestones
 
@@ -25,9 +25,9 @@ Progress: [=====================.] 24/27 plans (~89% through v1.0-v1.2)
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 24
-- Average duration: ~33 min
-- Total execution time: ~13 hours
+- Total plans completed: 25
+- Average duration: ~32 min
+- Total execution time: ~13.1 hours
 
 **By Milestone:**
 
@@ -35,7 +35,7 @@ Progress: [=====================.] 24/27 plans (~89% through v1.0-v1.2)
 |-----------|--------|-------|----------|
 | v1.0 Stability Audit | 5 | 15 | ~11h |
 | v1.1 Quick Wins | 1 | 2 | ~13m |
-| v1.2 Stability Complete | 2 | 7 (5 phase 7, 2 phase 8) | ~1.5h |
+| v1.2 Stability Complete | 2 | 8 (5 phase 7, 3 phase 8) | ~1.6h |
 
 ## Accumulated Context
 
@@ -60,6 +60,9 @@ Key decisions from v1.2 (Phase 7):
 Key decisions from Phase 8:
 - WARNING log + continue waiting (not assert crash) for lvgl_task timeout (CONC-L4)
 - Capacity reservation for Bytes::toHex (MEM-L1)
+- VOLATILE RATIONALE comment pattern for callback/ISR synchronization (CONC-L1)
+- DELAY RATIONALE comment pattern for timing-sensitive code (CONC-L2)
+- 10ms = NimBLE scheduler tick as minimum polling interval
 
 ### Pending Todos
 
@@ -67,13 +70,13 @@ None.
 
 ### Blockers/Concerns
 
-None. Phase 8 plans 01-02 complete, ready for 08-03.
+None. Phase 8 plans 01-03 complete, ready for 08-04.
 
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 08-01-PLAN.md and 08-02-PLAN.md
+Stopped at: Completed 08-03-PLAN.md
 Resume file: None
 
 ---
-*Last updated: 2026-01-24 after 08-01 and 08-02 complete*
+*Last updated: 2026-01-24 after 08-03 complete*
