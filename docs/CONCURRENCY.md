@@ -316,6 +316,48 @@ if (err != ESP_OK || bytes_written == 0) {
 }
 ```
 
+## Timing and Volatile Reference
+
+This table summarizes all timing-sensitive delays and volatile variables in the codebase.
+See individual code sites for detailed rationale comments (search for `DELAY RATIONALE` and `VOLATILE RATIONALE`).
+
+### Delay Sites
+
+| File | Line | Value | Purpose |
+|------|------|-------|---------|
+| NimBLEPlatform.cpp | 257 | 100ms | Stack init settling time (pre-reboot) |
+| NimBLEPlatform.cpp | 288 | 100ms | Advertising restart after recovery |
+| NimBLEPlatform.cpp | 408 | 10ms | Advertising stop polling interval |
+| NimBLEPlatform.cpp | 442 | 10ms | Slave state polling |
+| NimBLEPlatform.cpp | 506 | 50ms | Error recovery before retry |
+| NimBLEPlatform.cpp | 521 | 50ms | Connect attempt recovery |
+| NimBLEPlatform.cpp | 598 | 20ms | Stack settling before scan start |
+| NimBLEPlatform.cpp | 682 | 10ms | Scan stop polling |
+| NimBLEPlatform.cpp | 780 | 20ms | Service discovery settling |
+| NimBLEPlatform.cpp | 796 | 10ms | Service discovery polling |
+| NimBLEPlatform.cpp | 980 | 10ms | Host sync polling |
+| NimBLEPlatform.cpp | 1061 | 50ms | Soft reset processing |
+| NimBLEPlatform.cpp | 1072 | 10ms | Reset wait polling |
+| NimBLEPlatform.cpp | 1086 | 10ms | Stack stabilization after cancel |
+| NimBLEPlatform.cpp | 1330 | 10ms | Loop iteration throttle |
+| Display.cpp | 104 | 150ms | LCD reset pulse width (ST7789 spec) |
+| Display.cpp | 111,128,133,138 | 10ms | SPI command settling |
+
+### Volatile Variables
+
+| File | Lines | Type | Purpose |
+|------|-------|------|---------|
+| NimBLEPlatform.h | 299-301 | bool/int | Async connect callback flags (NimBLEClientCallbacks) |
+| NimBLEPlatform.h | 310-313 | bool/int/uint16 | Native GAP connect callback flags (nativeGapEventHandler) |
+| Trackball.h | 102-106 | int16/uint32 | ISR pulse counters (IRAM_ATTR handlers) |
+
+**Timing design principles:**
+- 10ms: NimBLE scheduler tick interval (minimum useful polling)
+- 20ms: Brief settling (2 scheduler ticks for internal state)
+- 50ms: Error recovery (5 scheduler ticks for stack processing)
+- 100ms: State transition settling (advertising, initialization)
+- 150ms+: Hardware specs (display reset per ST7789 datasheet)
+
 ## References
 
 - [FreeRTOS Mutex Documentation](https://www.freertos.org/Real-time-operating-system-tutorial.html)
