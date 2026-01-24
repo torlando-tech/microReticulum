@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 7 of 8 (P2 Production Readiness)
-Plan: 3 of 5 in phase complete (07-02, 07-03, 07-04)
+Plan: 4 of 5 in phase complete (07-01, 07-02, 07-03, 07-04)
 Status: In progress
-Last activity: 2026-01-24 - Completed 07-02-PLAN.md
+Last activity: 2026-01-24 - Completed 07-01-PLAN.md
 
-Progress: [==================..] 20/22 plans (~91% through v1.0-v1.2)
+Progress: [===================.] 21/22 plans (~95% through v1.0-v1.2)
 
 ## Milestones
 
@@ -48,6 +48,8 @@ Key decisions from v1.1:
 - 10s TWDT timeout
 - 10-round yield frequency for LXStamper
 Key decisions from v1.2 (Phase 7):
+- 5s debug timeout for LVGL mutex deadlock detection (CONC-M7)
+- LVGL_LOCK pattern in screen constructors/destructors (CONC-M1, M2, M3)
 - 2000ms timeout for I2S writes (CONC-M8)
 - 16 device max for BLE discovered cache (CONC-M6)
 - Connected devices protected from cache eviction
@@ -66,8 +68,8 @@ None. Phase 7 plans ready for execution.
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 07-02-PLAN.md (memory allocation optimization)
+Stopped at: Completed 07-01-PLAN.md (LVGL mutex protection)
 Resume file: None
 
 ---
-*Last updated: 2026-01-24 after 07-02 complete*
+*Last updated: 2026-01-24 after 07-01 complete*
