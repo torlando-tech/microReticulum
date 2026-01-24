@@ -81,10 +81,13 @@ Plans:
   3. All FreeRTOS tasks are verified to yield/feed watchdog regularly
   4. Mutex acquisition order is documented (deadlock potential assessment)
   5. Task stack sizes are documented with high water mark data from Phase 1
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
-- [ ] 04-01: TBD
+- [ ] 04-01-PLAN.md - LVGL Thread Safety Audit (mutex protection, event handlers - CONC-01)
+- [ ] 04-02-PLAN.md - NimBLE Lifecycle and Callback Audit (init/deinit, state machine - CONC-02)
+- [ ] 04-03-PLAN.md - FreeRTOS Tasks and Watchdog Audit (yield patterns, stack sizes - CONC-03, CONC-05)
+- [ ] 04-04-PLAN.md - Mutex Ordering and Synthesis (deadlock analysis, consolidated summary - CONC-04)
 
 ### Phase 5: Synthesis
 **Goal**: Prioritized backlog of issues with severity ratings and fix recommendations
@@ -110,7 +113,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 1. Memory Instrumentation | 2/2 | ✓ Complete | 2026-01-23 |
 | 2. Boot Profiling | 4/4 | ✓ Complete | 2026-01-24 |
 | 3. Memory Allocation Audit | 4/4 | ✓ Complete | 2026-01-24 |
-| 4. Concurrency Audit | 0/TBD | Not started | - |
+| 4. Concurrency Audit | 0/4 | Not started | - |
 | 5. Synthesis | 0/TBD | Not started | - |
 
 ---
