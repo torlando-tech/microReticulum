@@ -32,6 +32,17 @@ extern "C" {
 namespace RNS { namespace BLE {
 
 //=============================================================================
+// Static Member Initialization
+//=============================================================================
+
+// Unclean shutdown flag - persists across soft reboot on ESP32
+// RTC_NOINIT_ATTR places in RTC slow memory which survives soft reset
+#ifdef ESP32
+RTC_NOINIT_ATTR
+#endif
+bool NimBLEPlatform::_unclean_shutdown = false;
+
+//=============================================================================
 // State Name Helpers (for logging)
 //=============================================================================
 

@@ -21,6 +21,7 @@
 // Undefine NimBLE's backward compatibility macros to avoid conflict with our types
 #undef BLEAddress
 
+#include <atomic>
 #include <map>
 #include <vector>
 
@@ -332,6 +333,46 @@ private:
     Callbacks::OnCentralDisconnected _on_central_disconnected;
     Callbacks::OnWriteReceived _on_write_received;
     Callbacks::OnReadRequested _on_read_requested;
+
+    //=========================================================================
+    // BLE Shutdown Safety (CONC-H4, CONC-M4)
+    //=========================================================================
+
+    // Unclean shutdown flag - set if forced shutdown occurred with active operations
+    // Uses RTC_NOINIT_ATTR on ESP32 for persistence across soft reboot
+    static bool _unclean_shutdown;
+
+    // Active write operation tracking (atomic for callback safety)
+    std::atomic<int> _active_write_count{0};
+
+public:
+    /**
+     * Check if there are active write operations in progress.
+     * Write operations are critical - interrupting can corrupt peer state.
+     */
+    bool hasActiveWriteOperations() const { return _active_write_count.load() > 0; }
+
+    /**
+     * Check if last shutdown was clean.
+     * Returns false if BLE was force-closed with active operations.
+     */
+    static bool wasCleanShutdown() { return !_unclean_shutdown; }
+
+    /**
+     * Clear unclean shutdown flag (call after boot verification).
+     */
+    static void clearUncleanShutdownFlag() { _unclean_shutdown = false; }
+
+private:
+    /**
+     * Mark a write operation as starting (call before characteristic write).
+     */
+    void beginWriteOperation() { _active_write_count.fetch_add(1); }
+
+    /**
+     * Mark a write operation as complete (call after write callback).
+     */
+    void endWriteOperation() { _active_write_count.fetch_sub(1); }
 };
 
 }} // namespace RNS::BLE
