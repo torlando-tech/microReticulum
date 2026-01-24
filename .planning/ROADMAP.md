@@ -12,7 +12,7 @@ This roadmap guides a systematic stability audit of the microReticulum firmware.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Memory Instrumentation** - Establish heap/stack monitoring and baseline measurements
+- [x] **Phase 1: Memory Instrumentation** - Establish heap/stack monitoring and baseline measurements
 - [ ] **Phase 2: Boot Profiling** - Profile boot sequence and apply configuration quick wins
 - [ ] **Phase 3: Memory Allocation Audit** - Audit allocation patterns for fragmentation sources
 - [ ] **Phase 4: Concurrency Audit** - Audit threading, mutex usage, and NimBLE lifecycle
@@ -32,8 +32,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 2 plans
 
 Plans:
-- [ ] 01-01-PLAN.md - Core Memory Monitor Module (heap/stack monitoring, FreeRTOS timer)
-- [ ] 01-02-PLAN.md - Application Integration (build flag, init in main.cpp, task registration)
+- [x] 01-01-PLAN.md - Core Memory Monitor Module (heap/stack monitoring, FreeRTOS timer)
+- [x] 01-02-PLAN.md - Application Integration (build flag, init in main.cpp, task registration)
 
 ### Phase 2: Boot Profiling
 **Goal**: Boot sequence is profiled and reduced to under 5 seconds through configuration changes
@@ -101,7 +101,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Memory Instrumentation | 0/2 | Ready to execute | - |
+| 1. Memory Instrumentation | 2/2 | ✓ Complete | 2026-01-23 |
 | 2. Boot Profiling | 0/TBD | Not started | - |
 | 3. Memory Allocation Audit | 0/TBD | Not started | - |
 | 4. Concurrency Audit | 0/TBD | Not started | - |

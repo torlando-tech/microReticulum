@@ -9,8 +9,8 @@ Requirements for comprehensive stability audit. Each maps to roadmap phases.
 
 ### Memory Management
 
-- [ ] **MEM-01**: Add heap monitoring (free heap, largest block, fragmentation %)
-- [ ] **MEM-02**: Add stack high water mark monitoring for all FreeRTOS tasks
+- [x] **MEM-01**: Add heap monitoring (free heap, largest block, fragmentation %)
+- [x] **MEM-02**: Add stack high water mark monitoring for all FreeRTOS tasks
 - [ ] **MEM-03**: Audit shared_ptr allocation patterns (make_shared vs new/shared_ptr)
 - [ ] **MEM-04**: Audit Packet/Bytes allocation frequency and size patterns
 - [ ] **MEM-05**: Audit ArduinoJson usage (Dynamic vs Static documents)
@@ -36,7 +36,7 @@ Requirements for comprehensive stability audit. Each maps to roadmap phases.
 ### Deliverables
 
 - [ ] **DLVR-01**: Prioritized backlog with severity and fix recommendations
-- [ ] **DLVR-02**: Instrumentation code for ongoing monitoring
+- [x] **DLVR-02**: Instrumentation code for ongoing monitoring
 - [ ] **DLVR-03**: Configuration recommendations (platformio.ini changes)
 
 ## v2 Requirements
@@ -73,8 +73,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MEM-01 | Phase 1 | Pending |
-| MEM-02 | Phase 1 | Pending |
+| MEM-01 | Phase 1 | Complete |
+| MEM-02 | Phase 1 | Complete |
 | MEM-03 | Phase 3 | Pending |
 | MEM-04 | Phase 3 | Pending |
 | MEM-05 | Phase 3 | Pending |
@@ -91,7 +91,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CONC-04 | Phase 4 | Pending |
 | CONC-05 | Phase 4 | Pending |
 | DLVR-01 | Phase 5 | Pending |
-| DLVR-02 | Phase 1 | Pending |
+| DLVR-02 | Phase 1 | Complete |
 | DLVR-03 | Phase 2 | Pending |
 
 **Coverage:**
@@ -101,4 +101,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-23*
-*Last updated: 2026-01-23 after roadmap creation*
+*Last updated: 2026-01-23 — Phase 1 requirements complete*
