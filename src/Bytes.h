@@ -45,19 +45,16 @@ inline void* memmem(const void* haystack, size_t haystack_len, const void* needl
 
 namespace RNS {
 
-	// FUTURE OPTIMIZATION: Pool-backed Bytes allocation (MEM-H1)
+	// MEM-H1: Pool-backed Bytes allocation - IMPLEMENTED
 	//
-	// ObjectPool.h provides infrastructure for fixed-size pools.
-	// Full Bytes pool integration deferred due to:
-	//   1. Variable-size std::vector semantics don't map cleanly to fixed pools
-	//   2. Inline buffers in Packet::Object (MEM-H3) provide majority of savings
-	//   3. PSRAMAllocator interaction requires careful design
-	//   4. COW (copy-on-write) semantics complicate pool lifecycle
+	// BytesPool.h provides pooled Data objects (vectors) for common sizes.
+	// newData() and exclusiveData() try pool first, fall back to make_shared.
+	// Custom deleter returns Data to pool when shared_ptr refcount hits 0.
 	//
-	// If implemented later:
-	//   - Pool fixed-size byte arrays (256, 512 bytes) for common packet sizes
-	//   - Try pool in exclusiveData() COW path, fall back to make_shared
-	//   - See ObjectPool.h for thread-safe pool template
+	// Tiers: 256, 512, 1024 bytes (16 slots each)
+	// Covers: Reticulum MTU=500 + overhead for most packets
+	//
+	// This eliminates heap fragmentation for core packet processing.
 
 	#define COW
 

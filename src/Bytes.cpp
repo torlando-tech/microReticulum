@@ -1,14 +1,31 @@
 #include "Bytes.h"
+#include "BytesPool.h"
 
 using namespace RNS;
 
 // Creates new shared data for instance
 // - If capacity is specified (>0) then create empty shared data with initial reserved capacity
 // - If capacity is not specified (<=0) then create empty shared data with no initial capacity
-// Single allocation via make_shared (combines control block + Data object)
+// MEM-H1: Try BytesPool first for common sizes, fall back to make_shared for oversized
 void Bytes::newData(size_t capacity /*= 0*/) {
 //MEMF("Bytes is creating own data with capacity %u", capacity);
 //MEM("newData: Creating new data...");
+
+	// Try pool for common packet sizes (256, 512, 1024 bytes)
+	if (capacity > 0 && capacity <= BytesPoolConfig::TIER_LARGE) {
+		auto [pooled, tier] = BytesPool::instance().acquire(capacity);
+		if (pooled) {
+			// Got pooled Data - wrap in shared_ptr with custom deleter
+			// Note: pooled is already empty with capacity reserved
+			_data = SharedData(pooled, BytesPoolDeleter{tier});
+			_exclusive = true;
+//MEM("newData: Using pooled data");
+			return;
+		}
+		// Pool exhausted - fall through to make_shared
+	}
+
+	// Fallback: standard allocation for oversized or when pool exhausted
 	_data = std::make_shared<Data>();
 	if (!_data) {
 		ERROR("Bytes failed to allocate empty data buffer");
@@ -30,31 +47,42 @@ void Bytes::newData(size_t capacity /*= 0*/) {
 // - If instance does not have exclusive on shared data that is not empty then make a copy of shared data (if requests) and reserve capacity (if requested)
 // - If instance does not have exclusive on shared data that is empty then create new shared data
 // - If instance already has exclusive on shared data then do nothing except reserve capacity (if requested)
+// MEM-H1: Try BytesPool for COW copies to prevent fragmentation
 void Bytes::exclusiveData(bool copy /*= true*/, size_t capacity /*= 0*/) {
 	if (!_data) {
 		newData(capacity);
 	}
 	else if (!_exclusive) {
 		// COW copy creates new allocation per-write on shared Bytes
-		// Single allocation via make_shared (combines control block + Data object)
 		if (copy && !_data->empty()) {
 			//TRACE("Bytes is creating a writable copy of its shared data");
 //MEM("exclusiveData: Creating new data...");
+
+			// Calculate required capacity for COW copy
+			size_t required_capacity = (capacity > _data->size()) ? capacity : _data->size();
+
+			// Try pool for common sizes
+			if (required_capacity <= BytesPoolConfig::TIER_LARGE) {
+				auto [pooled, tier] = BytesPool::instance().acquire(required_capacity);
+				if (pooled) {
+					// Got pooled Data - copy existing content and wrap with custom deleter
+					pooled->insert(pooled->begin(), _data->begin(), _data->end());
+					_data = SharedData(pooled, BytesPoolDeleter{tier});
+					_exclusive = true;
+//MEM("exclusiveData: Using pooled data for COW copy");
+					return;
+				}
+				// Pool exhausted - fall through to make_shared
+			}
+
+			// Fallback: standard allocation
 			auto new_data = std::make_shared<Data>();
 			if (!new_data) {
 				ERROR("Bytes failed to duplicate data buffer");
 				throw std::runtime_error("Failed to duplicate data buffer");
 			}
 //MEM("exclusiveData: Created new data");
-			if (capacity > 0) {
-//MEMF("exclusiveData: Reserving data capacity of %u...", capacity);
-				// if requested capacity < existing size then reserve capacity for existing size instead
-				new_data->reserve((capacity > _data->size()) ? capacity : _data->size());
-//MEM("exclusiveData: Reserved data capacity");
-			}
-			else {
-				new_data->reserve(_data->size());
-			}
+			new_data->reserve(required_capacity);
 //MEM("exclusiveData: Copying existing data...");
 			new_data->insert(new_data->begin(), _data->begin(), _data->end());
 //MEM("exclusiveData: Copied existing data");
