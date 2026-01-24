@@ -5,6 +5,7 @@ using namespace RNS;
 // Creates new shared data for instance
 // - If capacity is specified (>0) then create empty shared data with initial reserved capacity
 // - If capacity is not specified (<=0) then create empty shared data with no initial capacity
+// FIXME(frag): Could use make_shared<Data>() to combine control block and data allocation (Medium)
 void Bytes::newData(size_t capacity /*= 0*/) {
 //MEMF("Bytes is creating own data with capacity %u", capacity);
 //MEM("newData: Creating new data...");
@@ -35,6 +36,7 @@ void Bytes::exclusiveData(bool copy /*= true*/, size_t capacity /*= 0*/) {
 		newData(capacity);
 	}
 	else if (!_exclusive) {
+		// FIXME(frag): COW copy creates new allocation per-write on shared Bytes (High for per-packet)
 		if (copy && !_data->empty()) {
 			//TRACE("Bytes is creating a writable copy of its shared data");
 			//Data* data = new Data(*_data.get());
@@ -163,11 +165,13 @@ std::string RNS::hexFromByte(uint8_t byte, bool upper /*= true*/) {
 	return hex;
 }
 
+// FIXME(frag): toHex creates temporary std::string that grows via +=, multiple reallocs (Low)
 std::string Bytes::toHex(bool upper /*= false*/) const {
 	if (!_data) {
 		return "";
 	}
 	std::string hex;
+	// Consider: hex.reserve(_data->size() * 2);
 	for (uint8_t byte : *_data) {
 		if (upper) {
 			hex += hex_upper_chars[ (byte&  0xF0) >> 4];
