@@ -4,56 +4,48 @@
 
 See: .planning/PROJECT.md (updated 2026-01-24)
 
-**Core value:** Identify and prioritize the root causes of instability so the firmware can run reliably for extended periods without crashes or performance degradation.
-**Current focus:** v1.1 Milestone complete
+**Core value:** Reliable firmware operation for extended periods without crashes or performance degradation.
+**Current focus:** Planning next milestone
 
 ## Current Position
 
-Phase: 6 of 6 (P1 Stability Fixes)
-Plan: 2 of 2 in current phase (complete)
-Status: Milestone v1.1 complete - verified
-Last activity: 2026-01-24 - Completed 06-01-PLAN.md and 06-02-PLAN.md
+Phase: 6 of 6 complete (v1.1 shipped)
+Plan: N/A — milestone complete
+Status: Ready for next milestone
+Last activity: 2026-01-24 — v1.1 milestone archived
 
-Progress: [█████████████████████████] 100% (18/18 plans)
+Progress: [█████████████████████████] 100% (17/17 plans across 6 phases)
+
+## Milestones
+
+- ✅ v1.0 Stability Audit — shipped 2026-01-24
+- ✅ v1.1 Stability Quick Wins — shipped 2026-01-24
+- 📋 v1.2+ — TBD
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 18
+- Total plans completed: 17
 - Average duration: ~38 min
 - Total execution time: ~11.5 hours
 
-**By Phase:**
+**By Milestone:**
 
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 1. Memory Monitoring | 3 | ~2.25h | ~45m |
-| 2. Boot Profiling | 3 | ~2.25h | ~45m |
-| 3. Memory Allocation Audit | 4 | ~3.0h | ~45m |
-| 4. Concurrency Audit | 3 | ~2.25h | ~45m |
-| 5. Synthesis | 2 | ~1.5h | ~45m |
-| 6. P1 Stability Fixes | 2 | ~11m | ~5m |
-
-**Recent Trend:**
-- Last 2 plans: Phase 6 P1 fixes (fast execution, small targeted changes)
-- Trend: P1 fix plans execute quickly due to well-defined scope from synthesis
-
-*Updated: 2026-01-24*
+| Milestone | Phases | Plans | Duration |
+|-----------|--------|-------|----------|
+| v1.0 Stability Audit | 5 | 15 | ~11h |
+| v1.1 Quick Wins | 1 | 2 | ~13m |
 
 ## Accumulated Context
 
 ### Decisions
 
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
-
-- Phase 6 Plan 1: Use ArduinoJson 7 JsonDocument (elastic allocation) for Persistence module
-- Phase 6 Plan 1: MAX_PARTS = 256 based on MAX_EFFICIENT_SIZE / minimum SDU
-- Phase 6 Plan 2: 10s TWDT timeout balances detection vs margin for legitimate ops
-- Phase 6 Plan 2: Yield every 10 rounds for 10x better UI responsiveness
-- Phase 5: WSJF scoring prioritized high-impact low-effort fixes - 5 P1 issues identified
-- Phase 5: 5s boot target achieved with config-only changes - code changes deferred to future
-- v1.0: Data-driven approach instrumented first, then audited - baseline established
+Decisions logged in PROJECT.md Key Decisions table.
+Key decisions from v1.1:
+- ArduinoJson 7 API for ODR compliance
+- MAX_PARTS = 256 for ResourceData
+- 10s TWDT timeout
+- 10-round yield frequency for LXStamper
 
 ### Pending Todos
 
@@ -61,18 +53,15 @@ None.
 
 ### Blockers/Concerns
 
-None. All P1 stability fixes complete:
-- MEM-01: ODR violation fixed
-- MEM-02: ResourceData vectors pre-allocated
-- CONC-01: TWDT enabled
-- CONC-02: LXStamper yield frequency improved
-- CONC-03: BLE callback mutex protection added
+None. All P1 stability fixes shipped.
+
+P2/P3 issues remain in BACKLOG.md for future consideration.
 
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: v1.1 milestone complete, all 5 P1 issues verified fixed
+Stopped at: v1.1 milestone complete and archived
 Resume file: None
 
 ---
-*Last updated: 2026-01-24 after v1.1 milestone completion*
+*Last updated: 2026-01-24 after v1.1 milestone complete*
