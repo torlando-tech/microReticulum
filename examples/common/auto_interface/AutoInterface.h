@@ -37,6 +37,7 @@ public:
     static constexpr double ANNOUNCE_INTERVAL = 1.6;     // seconds (matches Python RNS)
     static constexpr double MCAST_ECHO_TIMEOUT = 6.5;    // seconds (matches Python RNS)
     static constexpr double REVERSE_PEERING_INTERVAL = ANNOUNCE_INTERVAL * 3.25;  // ~5.2 seconds
+    static constexpr double PEER_JOB_INTERVAL = 4.0;  // seconds (matches Python RNS)
     static const size_t DEQUE_SIZE = 48;                 // packet dedup window
     static constexpr double DEQUE_TTL = 0.75;            // seconds
     static const uint32_t BITRATE_GUESS = 10 * 1000 * 1000;
@@ -102,6 +103,7 @@ private:
     void reverse_announce(AutoInterfacePeer& peer);
     void process_data();
     void check_echo_timeout();
+    void check_link_local_address();
 
     // Peer management
 #ifdef ARDUINO
@@ -152,6 +154,7 @@ private:
     // Peers and state
     std::vector<AutoInterfacePeer> _peers;
     double _last_announce = 0;
+    double _last_peer_job = 0;  // Timestamp of last peer job check
 
     // Echo tracking (matches Python RNS multicast_echoes / initial_echoes)
     double _last_multicast_echo = 0.0;       // Timestamp of last own echo received
