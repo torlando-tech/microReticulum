@@ -17,6 +17,11 @@
 
 **Goal:** Implement reverse peering so peers maintain connections even when multicast is unreliable.
 
+**Plans:** 1 plan
+
+Plans:
+- [ ] 01-01-PLAN.md - Implement unicast discovery socket, send/receive methods, loop integration
+
 **Requirements:**
 - DISC-01: Send unicast discovery tokens to known peers on port discovery_port+1
 - DISC-02: Send every reverse_peering_interval (5.2s)
@@ -92,9 +97,9 @@
 
 ```
 Phase 1 (Unicast Discovery)
-    ↓
+    |
 Phase 2 (Echo Tracking) - independent, can parallelize
-    ↓
+    |
 Phase 3 (Network Handling) - depends on stable discovery
 ```
 
