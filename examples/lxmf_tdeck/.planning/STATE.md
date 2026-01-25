@@ -2,10 +2,12 @@
 
 ## Current Position
 
-Phase: 2 (Echo Tracking) — COMPLETE
-Plan: 02-01 executed
-Status: Ready for Phase 3 (Network Handling)
-Last activity: 2025-01-25 — Phase 2 echo tracking implemented
+Phase: 3 (Network Handling) — IN PROGRESS
+Plan: 03-01 executed (1 of 1 in phase)
+Status: Phase 3 complete
+Last activity: 2026-01-25 — Completed 03-01-PLAN.md (Network Change Detection)
+
+Progress: ████░░░░░░ 40% (2 of 5 phases complete)
 
 ## Project Reference
 
@@ -26,12 +28,24 @@ Before milestone initialization, the following fixes were already applied:
 ## Accumulated Context
 
 ### Key Decisions
-- Using internal peer list instead of spawned interfaces (simpler for ESP32)
-- Constants aligned with Python RNS exactly
+
+| ID | Phase | Decision | Impact |
+|----|-------|----------|--------|
+| ARCH-01 | Pre-work | Using internal peer list instead of spawned interfaces | Simpler for ESP32 |
+| CONST-01 | Pre-work | Constants aligned with Python RNS exactly | Interoperability |
+| NET-01 | 03-01 | Periodic address checking every 4 seconds | Matches Python RNS |
+| NET-02 | 03-01 | Rebind data and unicast discovery sockets on address change | Recovery from network changes |
+| NET-03 | 03-01 | Do not rebind multicast discovery socket | Multicast address doesn't change |
 
 ### Known Issues
 - Firmware upload sometimes fails, may need bootloader mode (hold button while plugging USB)
 - Serial logger daemon running at /tmp/serial_logger.py on /dev/ttyACM2
 
+## Session Continuity
+
+Last session: 2026-01-25 06:14:39 UTC
+Stopped at: Completed 03-01-PLAN.md
+Resume file: None
+
 ---
-*State updated: 2025-01-25*
+*State updated: 2026-01-25*
