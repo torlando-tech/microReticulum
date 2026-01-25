@@ -33,8 +33,9 @@ public:
     static const uint16_t DEFAULT_DISCOVERY_PORT = 29716;
     static const uint16_t DEFAULT_DATA_PORT = 42671;
     static constexpr const char* DEFAULT_GROUP_ID = "reticulum";
-    static constexpr double PEERING_TIMEOUT = 10.0;      // seconds
-    static constexpr double ANNOUNCE_INTERVAL = 1.67;    // seconds (~10s/6)
+    static constexpr double PEERING_TIMEOUT = 22.0;      // seconds (matches Python RNS)
+    static constexpr double ANNOUNCE_INTERVAL = 1.6;     // seconds (matches Python RNS)
+    static constexpr double REVERSE_PEERING_INTERVAL = ANNOUNCE_INTERVAL * 3.25;  // ~5.2 seconds
     static const size_t DEQUE_SIZE = 48;                 // packet dedup window
     static constexpr double DEQUE_TTL = 0.75;            // seconds
     static const uint32_t BITRATE_GUESS = 10 * 1000 * 1000;
@@ -79,12 +80,16 @@ private:
 
     // Socket operations
     bool setup_discovery_socket();
+    bool setup_unicast_discovery_socket();
     bool setup_data_socket();
     bool join_multicast_group();
 
     // Main loop operations
     void send_announce();
     void process_discovery();
+    void process_unicast_discovery();
+    void send_reverse_peering();
+    void reverse_announce(AutoInterfacePeer& peer);
     void process_data();
 
     // Peer management
@@ -103,6 +108,7 @@ private:
     // Configuration
     std::string _group_id = DEFAULT_GROUP_ID;
     uint16_t _discovery_port = DEFAULT_DISCOVERY_PORT;
+    uint16_t _unicast_discovery_port = DEFAULT_DISCOVERY_PORT + 1;  // 29717
     uint16_t _data_port = DEFAULT_DATA_PORT;
     std::string _ifname;  // Network interface name (e.g., "eth0", "wlan0")
 
@@ -122,10 +128,12 @@ private:
     // Sockets
 #ifdef ARDUINO
     int _discovery_socket = -1;  // Raw socket for IPv6 multicast discovery
+    int _unicast_discovery_socket = -1;  // Raw socket for unicast discovery (reverse peering)
     int _data_socket = -1;       // Raw socket for IPv6 unicast data (WiFiUDP doesn't support IPv6)
     unsigned int _if_index = 0;  // Interface index for scope_id
 #else
     int _discovery_socket = -1;
+    int _unicast_discovery_socket = -1;  // Socket for unicast discovery (reverse peering)
     int _data_socket = -1;
     unsigned int _if_index = 0;  // Interface index for multicast
 #endif

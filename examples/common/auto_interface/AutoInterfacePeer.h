@@ -22,9 +22,10 @@ struct AutoInterfacePeer {
 #endif
     uint16_t data_port;
     double last_heard;      // Timestamp of last activity
+    double last_outbound;   // Timestamp of last reverse peering sent
     bool is_local;          // True if this is our own announcement (to ignore)
 
-    AutoInterfacePeer() : data_port(0), last_heard(0), is_local(false) {
+    AutoInterfacePeer() : data_port(0), last_heard(0), last_outbound(0), is_local(false) {
 #ifndef ARDUINO
         memset(&address, 0, sizeof(address));
 #endif
@@ -32,10 +33,10 @@ struct AutoInterfacePeer {
 
 #ifdef ARDUINO
     AutoInterfacePeer(const IPv6Address& addr, uint16_t port, double time, bool local = false)
-        : address(addr), data_port(port), last_heard(time), is_local(local) {}
+        : address(addr), data_port(port), last_heard(time), last_outbound(0), is_local(local) {}
 #else
     AutoInterfacePeer(const struct in6_addr& addr, uint16_t port, double time, bool local = false)
-        : address(addr), data_port(port), last_heard(time), is_local(local) {}
+        : address(addr), data_port(port), last_heard(time), last_outbound(0), is_local(local) {}
 #endif
 
     // Get string representation of address for logging
