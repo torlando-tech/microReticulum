@@ -77,7 +77,12 @@ Plans:
 
 ### Phase 3: Network Handling
 
-**Goal:** Handle network changes gracefully.
+**Goal:** Handle network changes gracefully with automatic socket rebinding.
+
+**Plans:** 1 plan
+
+Plans:
+- [ ] 03-01-PLAN.md - Implement check_link_local_address() and periodic address monitoring
 
 **Requirements:**
 - NET-01: Detect link-local address changes
@@ -94,7 +99,7 @@ Plans:
 - Add `check_link_local_address()` method
 - Call in `loop()` every PEER_JOB_INTERVAL (4s)
 - If changed: close data socket, rebind, update token
-- Add `_timed_out` flag for tracking
+- Add `_timed_out` flag for tracking (already done in Phase 2)
 
 ---
 
