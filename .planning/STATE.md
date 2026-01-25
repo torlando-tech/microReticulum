@@ -5,29 +5,30 @@
 See: .planning/PROJECT.md (updated 2026-01-24)
 
 **Core value:** Reliable firmware operation for extended periods without crashes or performance degradation.
-**Current focus:** v1.2 complete, awaiting next milestone definition
+**Current focus:** AutoInterface Parity milestone - Unicast Discovery
 
 ## Current Position
 
-Phase: 8 of 8 complete
-Plan: All plans complete
-Status: Milestone v1.2 shipped
-Last activity: 2026-01-24 -- v1.2 milestone archived
+Phase: 1 of 1 (01-unicast-discovery)
+Plan: 1 of 1 complete
+Status: Phase 01 Plan 01 complete
+Last activity: 2026-01-25 -- Completed 01-01 unicast discovery implementation
 
-Progress: [==========================] 30/30 plans (100% through v1.0-v1.2)
+Progress: [=] 1/1 plans (AutoInterface Parity v1.0)
 
 ## Milestones
 
 - v1.0 Stability Audit -- shipped 2026-01-24
 - v1.1 Stability Quick Wins -- shipped 2026-01-24
 - v1.2 Stability Complete -- shipped 2026-01-24
+- AutoInterface Parity v1.0 -- in progress
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 30
+- Total plans completed: 31
 - Average duration: ~27 min
-- Total execution time: ~13.6 hours
+- Total execution time: ~13.7 hours
 
 **By Milestone:**
 
@@ -36,17 +37,24 @@ Progress: [==========================] 30/30 plans (100% through v1.0-v1.2)
 | v1.0 Stability Audit | 5 | 15 | ~11h |
 | v1.1 Quick Wins | 1 | 2 | ~13m |
 | v1.2 Stability Complete | 2 | 13 | ~2h |
+| AutoInterface Parity | 1 | 1 | ~5m |
 
 ## Accumulated Context
 
-### Key Accomplishments (v1.2)
+### Key Accomplishments (AutoInterface Parity)
 
-- LVGL thread safety with 5s debug timeout
-- BytesPool (4-tier: 64/256/512/1024 bytes) eliminating fragmentation
-- ObjectPool for Packet and PacketReceipt
-- Packet inline buffers saving ~150 bytes/packet
-- BLE graceful shutdown with 10s timeout
-- CONCURRENCY.md documentation
+- Unicast discovery socket on port 29717 (discovery_port + 1)
+- Reverse peering mechanism sending discovery tokens directly to peers
+- last_outbound tracking per peer with 5.2s interval
+- Full ESP32 and POSIX implementations
+
+### Decisions Made
+
+| Decision | Phase | Rationale |
+|----------|-------|-----------|
+| Unicast port = discovery_port + 1 | 01-01 | Avoids conflicts with multicast |
+| Reverse peering interval = 5.2s | 01-01 | Balance traffic vs connection maintenance |
+| Temporary socket per announce | 01-01 | Minimize persistent resource usage |
 
 ### Pending Todos
 
@@ -59,9 +67,9 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-01-24
-Stopped at: v1.2 milestone complete
+Last session: 2026-01-25
+Stopped at: Completed 01-01-PLAN.md
 Resume file: None
 
 ---
-*Last updated: 2026-01-24 after v1.2 milestone complete*
+*Last updated: 2026-01-25 after 01-01 unicast discovery complete*
