@@ -117,15 +117,24 @@ bool AutoInterface::start() {
         return false;
     }
 
+    // Set up unicast discovery socket (reverse peering receive)
+    if (!setup_unicast_discovery_socket()) {
+        // Non-fatal - reverse peering won't work but multicast discovery will
+        WARNING("AutoInterface: Could not set up unicast discovery socket (reverse peering disabled)");
+    }
+
     // Set up data socket (unicast send/receive)
     if (!setup_data_socket()) {
         // Data socket failure is non-fatal - we can still discover peers
         WARNING("AutoInterface: Could not set up data socket (discovery-only mode)");
+        _data_socket_ok = false;
+    } else {
+        _data_socket_ok = true;
     }
 
     _online = true;
-    _data_socket_ok = true;  // Track if data socket initialized
-    INFO("AutoInterface: Started successfully (data_socket=yes)");
+    INFO("AutoInterface: Started successfully (data_socket=" + std::string(_data_socket_ok ? "yes" : "no") +
+         ", unicast_discovery=" + std::string(_unicast_discovery_socket >= 0 ? "yes" : "no") + ")");
     INFO("AutoInterface: Multicast address: " + _multicast_address_str);
     INFO("AutoInterface: Link-local address: " + _link_local_address_str);
     INFO("AutoInterface: Discovery token: " + _discovery_token.toHex());
@@ -172,10 +181,14 @@ bool AutoInterface::start() {
 
 void AutoInterface::stop() {
 #ifdef ARDUINO
-    // ESP32 cleanup - raw sockets for both discovery and data
+    // ESP32 cleanup - raw sockets for discovery, unicast discovery, and data
     if (_discovery_socket > -1) {
         close(_discovery_socket);
         _discovery_socket = -1;
+    }
+    if (_unicast_discovery_socket > -1) {
+        close(_unicast_discovery_socket);
+        _unicast_discovery_socket = -1;
     }
     if (_data_socket > -1) {
         close(_data_socket);
@@ -204,10 +217,11 @@ void AutoInterface::loop() {
     // Send periodic discovery announce
     if (now - _last_announce >= ANNOUNCE_INTERVAL) {
 #ifdef ARDUINO
-        // Skip announce if memory is too low - prevents fragmentation
+        // Skip announce if memory is critically low - prevents fragmentation
+        // Threshold lowered to 8KB since announces are small (32 byte token)
         uint32_t max_block = ESP.getMaxAllocHeap();
-        if (max_block < 15000) {
-            Serial.printf("[AUTO] Skipping announce - low memory (max_block=%u)\n", max_block);
+        if (max_block < 8000) {
+            WARNING("AutoInterface: Skipping announce - low memory (max_block=" + std::to_string(max_block) + ")");
             _last_announce = now;  // Still update timer to avoid tight loop
         } else {
             send_announce();
@@ -219,8 +233,14 @@ void AutoInterface::loop() {
 #endif
     }
 
-    // Process incoming discovery packets
+    // Process incoming discovery packets (multicast)
     process_discovery();
+
+    // Process incoming unicast discovery packets (reverse peering)
+    process_unicast_discovery();
+
+    // Send reverse peering to known peers
+    send_reverse_peering();
 
     // Process incoming data packets
     process_data();
@@ -644,6 +664,48 @@ bool AutoInterface::setup_data_socket() {
     return true;
 }
 
+bool AutoInterface::setup_unicast_discovery_socket() {
+    // ESP32: Create socket for receiving unicast discovery (reverse peering)
+    _unicast_discovery_socket = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+    if (_unicast_discovery_socket < 0) {
+        ERROR("AutoInterface: Failed to create unicast discovery socket (errno=" + std::to_string(errno) + ")");
+        return false;
+    }
+
+    // Allow address reuse
+    int reuse = 1;
+    setsockopt(_unicast_discovery_socket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    // Bind to our link-local address and unicast discovery port
+    struct sockaddr_in6 bind_addr;
+    memset(&bind_addr, 0, sizeof(bind_addr));
+    bind_addr.sin6_family = AF_INET6;
+    bind_addr.sin6_port = htons(_unicast_discovery_port);
+    memcpy(&bind_addr.sin6_addr, &_link_local_address, sizeof(_link_local_address));
+    bind_addr.sin6_scope_id = _if_index;
+
+    if (bind(_unicast_discovery_socket, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0) {
+        WARNING("AutoInterface: Failed to bind unicast discovery to link-local (errno=" + std::to_string(errno) +
+                "), trying any address");
+        // Fallback to any address
+        bind_addr.sin6_addr = in6addr_any;
+        bind_addr.sin6_scope_id = 0;
+        if (bind(_unicast_discovery_socket, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0) {
+            ERROR("AutoInterface: Failed to bind unicast discovery socket (errno=" + std::to_string(errno) + ")");
+            close(_unicast_discovery_socket);
+            _unicast_discovery_socket = -1;
+            return false;
+        }
+    }
+
+    // Set non-blocking
+    int flags = fcntl(_unicast_discovery_socket, F_GETFL, 0);
+    fcntl(_unicast_discovery_socket, F_SETFL, flags | O_NONBLOCK);
+
+    INFO("AutoInterface: Unicast discovery socket listening on port " + std::to_string(_unicast_discovery_port));
+    return true;
+}
+
 bool AutoInterface::join_multicast_group() {
     // ESP32: Multicast join handled by beginMulticast()
     INFO("AutoInterface: Joined multicast group " + _multicast_address_str);
@@ -756,6 +818,96 @@ void AutoInterface::process_data() {
         src_len = sizeof(src_addr);
         len = recvfrom(_data_socket, recv_buffer, sizeof(recv_buffer), 0,
                        (struct sockaddr*)&src_addr, &src_len);
+    }
+}
+
+void AutoInterface::process_unicast_discovery() {
+    // ESP32: Process incoming unicast discovery packets (reverse peering)
+    if (_unicast_discovery_socket < 0) return;
+
+    uint8_t recv_buffer[128];
+    struct sockaddr_in6 src_addr;
+    socklen_t src_len = sizeof(src_addr);
+
+    ssize_t len = recvfrom(_unicast_discovery_socket, recv_buffer, sizeof(recv_buffer), 0,
+                           (struct sockaddr*)&src_addr, &src_len);
+
+    while (len > 0) {
+        // Convert source address to COMPRESSED string format (match Python)
+        std::string src_str = ipv6_to_compressed_string((const uint8_t*)&src_addr.sin6_addr);
+
+        // Verify the peering hash (full TOKEN_SIZE = 32 bytes)
+        Bytes combined;
+        combined.append((const uint8_t*)_group_id.c_str(), _group_id.length());
+        combined.append((const uint8_t*)src_str.c_str(), src_str.length());
+        Bytes expected_hash = Identity::full_hash(combined);
+
+        // Compare received token with expected (full TOKEN_SIZE = 32 bytes)
+        if (len >= (ssize_t)TOKEN_SIZE && memcmp(recv_buffer, expected_hash.data(), TOKEN_SIZE) == 0) {
+            // Valid peer via unicast discovery (reverse peering)
+            IPv6Address remoteIP((const uint8_t*)&src_addr.sin6_addr);
+            DEBUG("AutoInterface: Received unicast discovery from " + src_str);
+            add_or_refresh_peer(remoteIP, RNS::Utilities::OS::time());
+        }
+
+        // Try to receive more
+        src_len = sizeof(src_addr);
+        len = recvfrom(_unicast_discovery_socket, recv_buffer, sizeof(recv_buffer), 0,
+                       (struct sockaddr*)&src_addr, &src_len);
+    }
+}
+
+void AutoInterface::reverse_announce(AutoInterfacePeer& peer) {
+    // ESP32: Send our discovery token directly to a peer's unicast discovery port
+    // This allows peer to discover us even if multicast is not working
+
+    // Create temporary socket for sending
+    int sock = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock < 0) {
+        WARNING("AutoInterface: Failed to create reverse announce socket (errno=" + std::to_string(errno) + ")");
+        return;
+    }
+
+    // Build destination address
+    struct sockaddr_in6 dest_addr;
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    dest_addr.sin6_family = AF_INET6;
+    dest_addr.sin6_port = htons(_unicast_discovery_port);
+    dest_addr.sin6_scope_id = _if_index;
+
+    // Copy peer's IPv6 address
+    for (int i = 0; i < 16; i++) {
+        ((uint8_t*)&dest_addr.sin6_addr)[i] = peer.address[i];
+    }
+
+    // Send discovery token
+    ssize_t sent = sendto(sock, _discovery_token.data(), _discovery_token.size(), 0,
+                          (struct sockaddr*)&dest_addr, sizeof(dest_addr));
+
+    close(sock);
+
+    if (sent > 0) {
+        TRACE("AutoInterface: Sent reverse announce to " + peer.address_string());
+    } else {
+        WARNING("AutoInterface: Failed to send reverse announce to " + peer.address_string() +
+                " (errno=" + std::to_string(errno) + ")");
+    }
+}
+
+void AutoInterface::send_reverse_peering() {
+    // ESP32: Periodically send reverse peering to known peers
+    // This maintains peer connections even when multicast is unreliable
+    double now = RNS::Utilities::OS::time();
+
+    for (auto& peer : _peers) {
+        // Skip local peers (our own announcements)
+        if (peer.is_local) continue;
+
+        // Check if it's time to send reverse peering to this peer
+        if (now > peer.last_outbound + REVERSE_PEERING_INTERVAL) {
+            reverse_announce(peer);
+            peer.last_outbound = now;
+        }
     }
 }
 
