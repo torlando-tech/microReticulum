@@ -1080,15 +1080,8 @@ void setup() {
     setup_lvgl_and_ui();
     BOOT_PROFILE_END("lvgl");
 
-    // Initialize SD card logging for crash debugging
-    // Must be after LVGL (shares SPI bus with display)
-    BOOT_PROFILE_START("sdlog");
-    if (Hardware::TDeck::SDLogger::init()) {
-        INFO("SD card logging enabled - logs written to /crash_log_current.txt");
-    } else {
-        WARNING("SD card logging not available - insert SD card for crash logs");
-    }
-    BOOT_PROFILE_END("sdlog");
+    // NOTE: SD card logging disabled - shares SPI with display and causes blank screen
+    // TODO: Need to reinitialize display SPI after SD.begin() or use separate bus
 
     // Initialize Reticulum
     BOOT_PROFILE_START("reticulum");

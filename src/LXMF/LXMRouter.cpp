@@ -285,20 +285,46 @@ static void static_outbound_resource_concluded(const Resource& resource) {
 
 // Static proof callback - called when delivery proof is received
 void LXMRouter::static_proof_callback(const PacketReceipt& receipt) {
+	DEBUG(">>> PROOF CALLBACK ENTRY");
+#ifdef ARDUINO
+	Serial.flush();
+#endif
+
 	// Get packet hash from receipt
+	DEBUG(">>> Getting packet hash from receipt");
+#ifdef ARDUINO
+	Serial.flush();
+#endif
 	Bytes packet_hash = receipt.hash();
 	char buf[128];
+
+	DEBUG(">>> Looking up pending proof slot");
+#ifdef ARDUINO
+	Serial.flush();
+#endif
 
 	// Look up message hash for this packet
 	PendingProofSlot* slot = find_pending_proof_slot(packet_hash);
 	if (slot) {
+		DEBUG(">>> Found slot, getting message hash");
+#ifdef ARDUINO
+		Serial.flush();
+#endif
 		Bytes message_hash = slot->message_hash_bytes();
 		snprintf(buf, sizeof(buf), "Delivery proof received for message %.16s...", message_hash.toHex().c_str());
 		INFO(buf);
+#ifdef ARDUINO
+		Serial.flush();
+#endif
 
 		// Track notified routers to avoid duplicates (max ROUTER_REGISTRY_SIZE)
 		LXMRouter* notified_routers[ROUTER_REGISTRY_SIZE];
 		size_t notified_count = 0;
+
+		DEBUG(">>> Iterating router registry");
+#ifdef ARDUINO
+		Serial.flush();
+#endif
 
 		// Find the router that sent this message and call its delivered callback
 		for (size_t i = 0; i < ROUTER_REGISTRY_SIZE; i++) {
@@ -313,6 +339,10 @@ void LXMRouter::static_proof_callback(const PacketReceipt& receipt) {
 					}
 				}
 				if (!already_notified && router && router->_delivered_callback) {
+					DEBUGF(">>> Calling delivered callback for router %zu", i);
+#ifdef ARDUINO
+					Serial.flush();
+#endif
 					notified_routers[notified_count++] = router;
 					// Create a minimal message with just the hash for the callback
 					// The callback can look up full message from storage if needed
@@ -320,17 +350,37 @@ void LXMRouter::static_proof_callback(const PacketReceipt& receipt) {
 					LXMessage msg(empty_hash, empty_hash);
 					msg.hash(message_hash);
 					msg.state(Type::Message::DELIVERED);
+					DEBUG(">>> About to invoke callback");
+#ifdef ARDUINO
+					Serial.flush();
+#endif
 					router->_delivered_callback(msg);
+					DEBUG(">>> Callback returned");
+#ifdef ARDUINO
+					Serial.flush();
+#endif
 				}
 			}
 		}
 
 		// Remove from pending proofs
+		DEBUG(">>> Clearing slot");
+#ifdef ARDUINO
+		Serial.flush();
+#endif
 		slot->clear();
+		DEBUG(">>> Slot cleared");
+#ifdef ARDUINO
+		Serial.flush();
+#endif
 	} else {
 		snprintf(buf, sizeof(buf), "Received proof for unknown packet: %.16s...", packet_hash.toHex().c_str());
 		DEBUG(buf);
 	}
+	DEBUG(">>> PROOF CALLBACK EXIT");
+#ifdef ARDUINO
+	Serial.flush();
+#endif
 }
 
 // Constructor
