@@ -256,6 +256,9 @@ void AutoInterface::loop() {
     // Process incoming data packets
     process_data();
 
+    // Check multicast echo timeout
+    check_echo_timeout();
+
     // Expire stale peers
     expire_stale_peers();
 
@@ -1247,6 +1250,15 @@ void AutoInterface::send_reverse_peering() {
 void AutoInterface::add_or_refresh_peer(const IPv6Address& addr, double timestamp) {
     // Check if this is our own address (IPv6Address == properly compares all 16 bytes)
     if (addr == _link_local_ip) {
+        // Update echo timestamp
+        _last_multicast_echo = timestamp;
+
+        // Track initial echo received
+        if (!_initial_echo_received) {
+            _initial_echo_received = true;
+            INFO("AutoInterface: Initial multicast echo received - multicast is working");
+        }
+
         DEBUG("AutoInterface: Received own multicast echo - ignoring");
         return;
     }
@@ -1272,6 +1284,15 @@ void AutoInterface::add_or_refresh_peer(const IPv6Address& addr, double timestam
 void AutoInterface::add_or_refresh_peer(const struct in6_addr& addr, double timestamp) {
     // Check if this is our own address
     if (memcmp(&addr, &_link_local_address, sizeof(addr)) == 0) {
+        // Update echo timestamp
+        _last_multicast_echo = timestamp;
+
+        // Track initial echo received
+        if (!_initial_echo_received) {
+            _initial_echo_received = true;
+            INFO("AutoInterface: Initial multicast echo received - multicast is working");
+        }
+
         DEBUG("AutoInterface: Received own multicast echo - ignoring");
         return;
     }
@@ -1293,6 +1314,46 @@ void AutoInterface::add_or_refresh_peer(const struct in6_addr& addr, double time
 }
 
 #endif  // ARDUINO
+
+// ============================================================================
+// Platform-independent: Echo Timeout Checking
+// ============================================================================
+
+void AutoInterface::check_echo_timeout() {
+    double now = RNS::Utilities::OS::time();
+
+    // Only check if we've started announcing
+    if (_last_announce == 0) {
+        return;  // Haven't sent first announce yet
+    }
+
+    // Calculate time since last echo
+    double echo_age = now - _last_multicast_echo;
+    bool timed_out = (echo_age > MCAST_ECHO_TIMEOUT);
+
+    // Detect timeout state transitions
+    if (timed_out != _timed_out) {
+        _timed_out = timed_out;
+        _carrier_changed = true;
+
+        if (!timed_out) {
+            WARNING("AutoInterface: Carrier recovered on interface");
+        } else {
+            WARNING("AutoInterface: Multicast echo timeout for interface. Carrier lost.");
+        }
+    }
+
+    // One-time firewall diagnostic (after grace period)
+    double startup_grace = ANNOUNCE_INTERVAL * 3.0;  // ~5 seconds
+
+    if (!_initial_echo_received &&
+        (now - _last_announce) > startup_grace &&
+        !_firewall_warning_logged) {
+        ERROR("AutoInterface: No multicast echoes received. "
+              "The networking hardware or a firewall may be blocking multicast traffic.");
+        _firewall_warning_logged = true;
+    }
+}
 
 // ============================================================================
 // Platform-independent: Deduplication
