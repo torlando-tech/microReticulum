@@ -159,6 +159,12 @@ namespace Audio {
     // Note: Pin::POWER_EN (10) must be HIGH to enable speaker power
 }
 
+namespace SDCard {
+    // SD Card pins (shares SPI bus with display and LoRa)
+    constexpr uint8_t CS = 39;            // SD card chip select
+    // SPI bus shared: SCK=40, MOSI=41, MISO=38
+}
+
 } // namespace TDeck
 } // namespace Hardware
 

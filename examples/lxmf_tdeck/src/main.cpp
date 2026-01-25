@@ -58,6 +58,9 @@
 // Logging
 #include <Log.h>
 
+// SD Card logging for crash debugging
+#include <Hardware/TDeck/SDLogger.h>
+
 // Memory instrumentation
 #ifdef MEMORY_INSTRUMENTATION_ENABLED
 #include <Instrumentation/MemoryMonitor.h>
@@ -1076,6 +1079,16 @@ void setup() {
     BOOT_PROFILE_START("lvgl");
     setup_lvgl_and_ui();
     BOOT_PROFILE_END("lvgl");
+
+    // Initialize SD card logging for crash debugging
+    // Must be after LVGL (shares SPI bus with display)
+    BOOT_PROFILE_START("sdlog");
+    if (Hardware::TDeck::SDLogger::init()) {
+        INFO("SD card logging enabled - logs written to /crash_log_current.txt");
+    } else {
+        WARNING("SD card logging not available - insert SD card for crash logs");
+    }
+    BOOT_PROFILE_END("sdlog");
 
     // Initialize Reticulum
     BOOT_PROFILE_START("reticulum");
