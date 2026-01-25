@@ -20,7 +20,7 @@
 **Plans:** 1 plan
 
 Plans:
-- [ ] 01-01-PLAN.md - Implement unicast discovery socket, send/receive methods, loop integration
+- [x] 01-01-PLAN.md - Implement unicast discovery socket, send/receive methods, loop integration
 
 **Requirements:**
 - DISC-01: Send unicast discovery tokens to known peers on port discovery_port+1
@@ -47,6 +47,11 @@ Plans:
 ### Phase 2: Echo Tracking
 
 **Goal:** Detect carrier loss and provide diagnostics when multicast isn't working.
+
+**Plans:** 1 plan
+
+Plans:
+- [ ] 02-01-PLAN.md - Add echo tracking infrastructure and implement carrier detection logic
 
 **Requirements:**
 - ECHO-01: Track multicast echo timestamps
