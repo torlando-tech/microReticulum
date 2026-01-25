@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 
 ## Current Position
 
-Phase: 1 of 1 (01-unicast-discovery)
+Phase: 2 of 2 (02-echo-tracking)
 Plan: 1 of 1 complete
-Status: Phase 01 Plan 01 complete
-Last activity: 2026-01-25 -- Completed 01-01 unicast discovery implementation
+Status: Phase 02 Plan 01 complete
+Last activity: 2026-01-25 -- Completed 02-01 echo tracking implementation
 
-Progress: [=] 1/1 plans (AutoInterface Parity v1.0)
+Progress: [==] 2/2 plans (AutoInterface Parity v1.0)
 
 ## Milestones
 
@@ -26,9 +26,9 @@ Progress: [=] 1/1 plans (AutoInterface Parity v1.0)
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 31
-- Average duration: ~27 min
-- Total execution time: ~13.7 hours
+- Total plans completed: 32
+- Average duration: ~26 min
+- Total execution time: ~13.8 hours
 
 **By Milestone:**
 
@@ -37,7 +37,7 @@ Progress: [=] 1/1 plans (AutoInterface Parity v1.0)
 | v1.0 Stability Audit | 5 | 15 | ~11h |
 | v1.1 Quick Wins | 1 | 2 | ~13m |
 | v1.2 Stability Complete | 2 | 13 | ~2h |
-| AutoInterface Parity | 1 | 1 | ~5m |
+| AutoInterface Parity | 2 | 2 | ~7m |
 
 ## Accumulated Context
 
@@ -47,6 +47,9 @@ Progress: [=] 1/1 plans (AutoInterface Parity v1.0)
 - Reverse peering mechanism sending discovery tokens directly to peers
 - last_outbound tracking per peer with 5.2s interval
 - Full ESP32 and POSIX implementations
+- Multicast echo tracking with 6.5s carrier timeout
+- Carrier loss detection and firewall diagnostics
+- Transport layer notification via carrier_changed flag
 
 ### Decisions Made
 
@@ -55,6 +58,9 @@ Progress: [=] 1/1 plans (AutoInterface Parity v1.0)
 | Unicast port = discovery_port + 1 | 01-01 | Avoids conflicts with multicast |
 | Reverse peering interval = 5.2s | 01-01 | Balance traffic vs connection maintenance |
 | Temporary socket per announce | 01-01 | Minimize persistent resource usage |
+| Echo timeout = 6.5s | 02-01 | Matches Python RNS implementation |
+| Firewall grace period = 3x announce interval | 02-01 | Allow several cycles before warning |
+| carrier_changed auto-reset accessor | 02-01 | Matches Python RNS pattern for Transport |
 
 ### Pending Todos
 
@@ -68,8 +74,8 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-25
-Stopped at: Completed 01-01-PLAN.md
+Stopped at: Completed 02-01-PLAN.md
 Resume file: None
 
 ---
-*Last updated: 2026-01-25 after 01-01 unicast discovery complete*
+*Last updated: 2026-01-25 after 02-01 echo tracking complete*
