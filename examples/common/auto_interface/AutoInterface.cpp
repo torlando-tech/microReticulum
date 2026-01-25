@@ -159,6 +159,12 @@ bool AutoInterface::start() {
         return false;
     }
 
+    // Set up unicast discovery socket (reverse peering receive)
+    if (!setup_unicast_discovery_socket()) {
+        // Non-fatal - reverse peering won't work but multicast discovery will
+        WARNING("AutoInterface: Could not set up unicast discovery socket (reverse peering disabled)");
+    }
+
     // Set up data socket (unicast send/receive)
     if (!setup_data_socket()) {
         // Data socket failure is non-fatal - we can still discover peers
@@ -169,7 +175,8 @@ bool AutoInterface::start() {
 
     _online = true;
     INFO("AutoInterface: Started successfully (data_socket=" +
-         std::string(_data_socket >= 0 ? "yes" : "no") + ")");
+         std::string(_data_socket >= 0 ? "yes" : "no") +
+         ", unicast_discovery=" + std::string(_unicast_discovery_socket >= 0 ? "yes" : "no") + ")");
     INFO("AutoInterface: Multicast address: " + std::string(inet_ntop(AF_INET6, &_multicast_address,
         (char*)_buffer.writable(INET6_ADDRSTRLEN), INET6_ADDRSTRLEN)));
     INFO("AutoInterface: Link-local address: " + _link_local_address_str);
@@ -199,6 +206,10 @@ void AutoInterface::stop() {
     if (_discovery_socket > -1) {
         close(_discovery_socket);
         _discovery_socket = -1;
+    }
+    if (_unicast_discovery_socket > -1) {
+        close(_unicast_discovery_socket);
+        _unicast_discovery_socket = -1;
     }
     if (_data_socket > -1) {
         close(_data_socket);
@@ -1098,6 +1109,130 @@ void AutoInterface::process_data() {
 
         // Pass to transport
         InterfaceImpl::handle_incoming(_buffer);
+    }
+}
+
+bool AutoInterface::setup_unicast_discovery_socket() {
+    // POSIX: Create socket for receiving unicast discovery (reverse peering)
+    _unicast_discovery_socket = socket(AF_INET6, SOCK_DGRAM, 0);
+    if (_unicast_discovery_socket < 0) {
+        ERROR("AutoInterface: Could not create unicast discovery socket: " + std::string(strerror(errno)));
+        return false;
+    }
+
+    // Enable address reuse
+    int reuse = 1;
+    setsockopt(_unicast_discovery_socket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+#ifdef SO_REUSEPORT
+    setsockopt(_unicast_discovery_socket, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
+#endif
+
+    // Bind to unicast discovery port on link-local address
+    struct sockaddr_in6 bind_addr;
+    memset(&bind_addr, 0, sizeof(bind_addr));
+    bind_addr.sin6_family = AF_INET6;
+    bind_addr.sin6_port = htons(_unicast_discovery_port);
+    bind_addr.sin6_addr = _link_local_address;
+    bind_addr.sin6_scope_id = _if_index;
+
+    if (bind(_unicast_discovery_socket, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0) {
+        ERROR("AutoInterface: Could not bind unicast discovery socket: " + std::string(strerror(errno)));
+        close(_unicast_discovery_socket);
+        _unicast_discovery_socket = -1;
+        return false;
+    }
+
+    // Make socket non-blocking
+    int flags = 1;
+    ioctl(_unicast_discovery_socket, FIONBIO, &flags);
+
+    INFO("AutoInterface: Unicast discovery socket bound to port " + std::to_string(_unicast_discovery_port));
+    return true;
+}
+
+void AutoInterface::process_unicast_discovery() {
+    // POSIX: Process incoming unicast discovery packets (reverse peering)
+    if (_unicast_discovery_socket < 0) return;
+
+    uint8_t recv_buffer[128];
+    struct sockaddr_in6 src_addr;
+    socklen_t addr_len = sizeof(src_addr);
+
+    while (true) {
+        ssize_t len = recvfrom(_unicast_discovery_socket, recv_buffer, sizeof(recv_buffer), 0,
+                               (struct sockaddr*)&src_addr, &addr_len);
+        if (len <= 0) break;
+
+        // Get source address string
+        char src_str[INET6_ADDRSTRLEN];
+        inet_ntop(AF_INET6, &src_addr.sin6_addr, src_str, sizeof(src_str));
+
+        DEBUG("AutoInterface: Received unicast discovery from " + std::string(src_str) +
+              " (" + std::to_string(len) + " bytes)");
+
+        // Verify the peering hash
+        Bytes combined;
+        combined.append((const uint8_t*)_group_id.c_str(), _group_id.length());
+        combined.append((const uint8_t*)src_str, strlen(src_str));
+        Bytes expected_hash = Identity::full_hash(combined);
+
+        // Compare received hash with expected
+        if (len >= 32 && memcmp(recv_buffer, expected_hash.data(), 32) == 0) {
+            // Valid peer via unicast discovery (reverse peering)
+            add_or_refresh_peer(src_addr.sin6_addr, RNS::Utilities::OS::time());
+        } else {
+            DEBUG("AutoInterface: Invalid unicast discovery hash from " + std::string(src_str));
+        }
+    }
+}
+
+void AutoInterface::reverse_announce(AutoInterfacePeer& peer) {
+    // POSIX: Send our discovery token directly to a peer's unicast discovery port
+    // This allows peer to discover us even if multicast is not working
+
+    // Create temporary socket for sending
+    int sock = socket(AF_INET6, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        WARNING("AutoInterface: Failed to create reverse announce socket: " + std::string(strerror(errno)));
+        return;
+    }
+
+    // Build destination address
+    struct sockaddr_in6 dest_addr;
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    dest_addr.sin6_family = AF_INET6;
+    dest_addr.sin6_port = htons(_unicast_discovery_port);
+    dest_addr.sin6_addr = peer.address;
+    dest_addr.sin6_scope_id = _if_index;
+
+    // Send discovery token
+    ssize_t sent = sendto(sock, _discovery_token.data(), _discovery_token.size(), 0,
+                          (struct sockaddr*)&dest_addr, sizeof(dest_addr));
+
+    close(sock);
+
+    if (sent > 0) {
+        TRACE("AutoInterface: Sent reverse announce to " + peer.address_string());
+    } else {
+        WARNING("AutoInterface: Failed to send reverse announce to " + peer.address_string() +
+                ": " + std::string(strerror(errno)));
+    }
+}
+
+void AutoInterface::send_reverse_peering() {
+    // POSIX: Periodically send reverse peering to known peers
+    // This maintains peer connections even when multicast is unreliable
+    double now = RNS::Utilities::OS::time();
+
+    for (auto& peer : _peers) {
+        // Skip local peers (our own announcements)
+        if (peer.is_local) continue;
+
+        // Check if it's time to send reverse peering to this peer
+        if (now > peer.last_outbound + REVERSE_PEERING_INTERVAL) {
+            reverse_announce(peer);
+            peer.last_outbound = now;
+        }
     }
 }
 
