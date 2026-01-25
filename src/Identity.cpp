@@ -27,7 +27,7 @@ using namespace RNS::Utilities;
 // Pool for known destinations - allocated in PSRAM to free ~29KB internal RAM
 /*static*/ Identity::KnownDestinationSlot* Identity::_known_destinations_pool = nullptr;
 /*static*/ bool Identity::_saving_known_destinations = false;
-/*static*/ uint16_t Identity::_known_destinations_maxsize = 512;  // Matches KNOWN_DESTINATIONS_SIZE
+/*static*/ uint16_t Identity::_known_destinations_maxsize = 192;  // Matches KNOWN_DESTINATIONS_SIZE
 
 // Initialize known destinations pool in PSRAM
 /*static*/ bool Identity::init_known_destinations_pool() {

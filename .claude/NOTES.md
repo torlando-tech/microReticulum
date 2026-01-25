@@ -37,7 +37,7 @@ Total: ~46KB PSRAM + ~8.5KB internal RAM
 - Increased to 768 slots - caused device crashes (internal RAM exhaustion)
 - Reverted to 512 slots - balanced for memory pressure
 
-**Known destinations pool:** Increased from 192 to 512 slots (~72KB in PSRAM).
+**Known destinations pool:** 192 slots (~27KB in PSRAM). Attempted 512 slots but caused stability issues.
 
 ---
 *Last updated: 2026-01-24*

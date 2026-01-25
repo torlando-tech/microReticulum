@@ -62,9 +62,9 @@ namespace RNS {
 		};
 
 		// Fixed pool for known destinations (replaces std::map<Bytes, IdentityEntry>)
-		// Memory: 512 slots × ~140 bytes = ~72KB in PSRAM
-		// Increased from 192 to handle busy networks with many announces
-		static constexpr size_t KNOWN_DESTINATIONS_SIZE = 512;
+		// Memory: 192 slots × ~140 bytes = ~27KB in PSRAM
+		// Note: 512 slots caused stability issues - keep conservative for now
+		static constexpr size_t KNOWN_DESTINATIONS_SIZE = 192;
 		struct KnownDestinationSlot {
 			bool in_use = false;
 			uint8_t destination_hash[DEST_HASH_SIZE];  // Fixed array - no heap alloc
