@@ -62,8 +62,9 @@ namespace BytesPoolConfig {
     static constexpr size_t TIER_LARGE = 1024;    // Large packets, resource ads
 
     // Slot counts per tier - tuned from runtime observation (2026-01-24)
-    // Peak usage varies with network traffic - 384 insufficient for busy networks
-    static constexpr size_t TINY_SLOTS = 768;     // High traffic tier (increased for busy networks)
+    // NOTE: Each slot uses ~16 bytes internal RAM for vector metadata + stack pointer
+    // 512 slots = ~8KB internal RAM overhead (conservative for busy networks)
+    static constexpr size_t TINY_SLOTS = 512;     // High traffic tier (balanced for memory)
     static constexpr size_t SMALL_SLOTS = 8;      // Low traffic (peak 1)
     static constexpr size_t MEDIUM_SLOTS = 8;     // Rare (packets, keep headroom)
     static constexpr size_t LARGE_SLOTS = 8;      // Rare (resource ads, keep headroom)
@@ -93,11 +94,11 @@ using PooledData = std::vector<uint8_t, PSRAMAllocator<uint8_t>>;
  *   - shared_ptr control block allocations (via make_shared replacement)
  *
  * Memory footprint (tuned 2026-01-24):
- *   - Tiny: 768 slots x 64 bytes = 48KB backing + metadata
- *   - Small: 8 slots x 256 bytes = 2KB backing + metadata
- *   - Medium: 8 slots x 512 bytes = 4KB backing + metadata
- *   - Large: 8 slots x 1024 bytes = 8KB backing + metadata
- *   - Total: ~62KB backing + ~24KB metadata = ~86KB
+ *   - Tiny: 512 slots x 64 bytes = 32KB backing + ~8KB metadata (internal RAM)
+ *   - Small: 8 slots x 256 bytes = 2KB backing + ~128B metadata
+ *   - Medium: 8 slots x 512 bytes = 4KB backing + ~128B metadata
+ *   - Large: 8 slots x 1024 bytes = 8KB backing + ~128B metadata
+ *   - Total: ~46KB PSRAM backing + ~8.5KB internal RAM metadata
  */
 class BytesPool {
 public:

@@ -18,18 +18,26 @@ This command works but leaves the terminal in a bad state for Claude Code.
 
 ## Pool Tuning
 
-BytesPool tier sizing was adjusted based on real-world traffic observation:
-- Most allocations are 1-64 bytes (hash fields, small Bytes objects)
-- Added TIER_TINY (64 bytes, 512 slots) - high traffic tier for burst handling
-- Other tiers: SMALL (256B, 24 slots), MEDIUM (512B, 16 slots), LARGE (1024B, 16 slots)
-- Total memory footprint: ~78KB (32KB tiny + 6KB small + 8KB medium + 16KB large + metadata)
+BytesPool tier sizing tuned from runtime observation (2026-01-24):
 
-**Observations after tuning:**
-- No pool exhaustion warnings with 512 tiny slots
-- Heap stable at ~61-62KB free
-- Fragmentation steady at ~19-20%
+| Tier | Size | Slots | PSRAM | Internal RAM |
+|------|------|-------|-------|--------------|
+| Tiny | 64B | 512 | 32KB | ~8KB metadata |
+| Small | 256B | 8 | 2KB | ~128B |
+| Medium | 512B | 8 | 4KB | ~128B |
+| Large | 1024B | 8 | 8KB | ~128B |
 
-**Known issue:** "Known destinations pool" (separate from BytesPool) fills at 192 entries on busy networks.
+Total: ~46KB PSRAM + ~8.5KB internal RAM
+
+**Critical constraint:** Each tiny slot uses ~16 bytes internal RAM for vector metadata + stack pointer. Internal RAM is precious on ESP32-S3.
+
+**History:**
+- Started at 512 slots (quiet network showed 281 peak)
+- Reduced to 384 slots - caused 100% exhaustion on busy networks
+- Increased to 768 slots - caused device crashes (internal RAM exhaustion)
+- Reverted to 512 slots - balanced for memory pressure
+
+**Known destinations pool:** Increased from 192 to 512 slots (~72KB in PSRAM).
 
 ---
 *Last updated: 2026-01-24*
