@@ -264,6 +264,12 @@ void AutoInterface::loop() {
 
     // Expire old deque entries
     expire_deque_entries();
+
+    // Periodic peer job (every 4 seconds) - check for address changes
+    if (now - _last_peer_job >= PEER_JOB_INTERVAL) {
+        check_link_local_address();
+        _last_peer_job = now;
+    }
 }
 
 void AutoInterface::send_outgoing(const Bytes& data) {
@@ -397,6 +403,76 @@ bool AutoInterface::get_link_local_address() {
     return false;
 }
 
+void AutoInterface::check_link_local_address() {
+    // ESP32: Check if link-local address changed
+    if (WiFi.status() != WL_CONNECTED) {
+        WARNING("AutoInterface: WiFi disconnected during address check");
+        return;
+    }
+
+    IPv6Address current_ip = WiFi.localIPv6();
+
+    // Check for valid address (not all zeros)
+    if (current_ip[0] == 0 && current_ip[1] == 0) {
+        WARNING("AutoInterface: Lost IPv6 address");
+        return;
+    }
+
+    // Compare with stored address
+    if (current_ip == _link_local_ip) {
+        return;  // No change
+    }
+
+    // Address changed!
+    std::string old_addr_str = _link_local_address_str;
+
+    // Update stored addresses
+    _link_local_ip = current_ip;
+    for (int i = 0; i < 16; i++) {
+        ((uint8_t*)&_link_local_address)[i] = current_ip[i];
+    }
+
+    // Get new address string in compressed format
+    uint8_t addr_bytes[16];
+    for (int i = 0; i < 16; i++) {
+        addr_bytes[i] = current_ip[i];
+    }
+    _link_local_address_str = ipv6_to_compressed_string(addr_bytes);
+
+    WARNING("AutoInterface: Link-local address changed from " + old_addr_str + " to " + _link_local_address_str);
+
+    // Close and rebind data socket
+    if (_data_socket > -1) {
+        close(_data_socket);
+        _data_socket = -1;
+    }
+    if (!setup_data_socket()) {
+        WARNING("AutoInterface: Failed to rebind data socket after address change");
+        _data_socket_ok = false;
+    } else {
+        _data_socket_ok = true;
+        INFO("AutoInterface: Data socket rebound to new address");
+    }
+
+    // Close and rebind unicast discovery socket
+    if (_unicast_discovery_socket > -1) {
+        close(_unicast_discovery_socket);
+        _unicast_discovery_socket = -1;
+    }
+    if (!setup_unicast_discovery_socket()) {
+        WARNING("AutoInterface: Failed to rebind unicast discovery socket after address change");
+    } else {
+        INFO("AutoInterface: Unicast discovery socket rebound to new address");
+    }
+
+    // Recalculate discovery token (critical - token includes address)
+    calculate_discovery_token();
+    INFO("AutoInterface: Discovery token recalculated: " + _discovery_token.toHex());
+
+    // Signal change to Transport layer
+    _carrier_changed = true;
+}
+
 #else  // POSIX/Linux
 
 bool AutoInterface::get_link_local_address() {
@@ -439,6 +515,60 @@ bool AutoInterface::get_link_local_address() {
 
     freeifaddrs(ifaddr);
     return found;
+}
+
+void AutoInterface::check_link_local_address() {
+    // POSIX: Check if link-local address changed
+    struct in6_addr old_addr = _link_local_address;
+    std::string old_addr_str = _link_local_address_str;
+
+    // Temporarily clear to force refresh
+    memset(&_link_local_address, 0, sizeof(_link_local_address));
+
+    if (!get_link_local_address()) {
+        // Lost address entirely - restore old address
+        WARNING("AutoInterface: Lost link-local address during check");
+        _link_local_address = old_addr;
+        _link_local_address_str = old_addr_str;
+        return;
+    }
+
+    // Check if address changed
+    if (memcmp(&old_addr, &_link_local_address, sizeof(old_addr)) == 0) {
+        return;  // No change
+    }
+
+    // Address changed!
+    WARNING("AutoInterface: Link-local address changed from " + old_addr_str + " to " + _link_local_address_str);
+
+    // Close and rebind data socket
+    if (_data_socket > -1) {
+        close(_data_socket);
+        _data_socket = -1;
+    }
+    if (!setup_data_socket()) {
+        WARNING("AutoInterface: Failed to rebind data socket after address change");
+    } else {
+        INFO("AutoInterface: Data socket rebound to new address");
+    }
+
+    // Close and rebind unicast discovery socket
+    if (_unicast_discovery_socket > -1) {
+        close(_unicast_discovery_socket);
+        _unicast_discovery_socket = -1;
+    }
+    if (!setup_unicast_discovery_socket()) {
+        WARNING("AutoInterface: Failed to rebind unicast discovery socket after address change");
+    } else {
+        INFO("AutoInterface: Unicast discovery socket rebound to new address");
+    }
+
+    // Recalculate discovery token (critical - token includes address)
+    calculate_discovery_token();
+    INFO("AutoInterface: Discovery token recalculated: " + _discovery_token.toHex());
+
+    // Signal change to Transport layer
+    _carrier_changed = true;
 }
 
 #endif  // ARDUINO
