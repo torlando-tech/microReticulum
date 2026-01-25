@@ -35,6 +35,7 @@ public:
     static constexpr const char* DEFAULT_GROUP_ID = "reticulum";
     static constexpr double PEERING_TIMEOUT = 22.0;      // seconds (matches Python RNS)
     static constexpr double ANNOUNCE_INTERVAL = 1.6;     // seconds (matches Python RNS)
+    static constexpr double MCAST_ECHO_TIMEOUT = 6.5;    // seconds (matches Python RNS)
     static constexpr double REVERSE_PEERING_INTERVAL = ANNOUNCE_INTERVAL * 3.25;  // ~5.2 seconds
     static const size_t DEQUE_SIZE = 48;                 // packet dedup window
     static constexpr double DEQUE_TTL = 0.75;            // seconds
@@ -69,6 +70,15 @@ public:
     const RNS::Bytes& get_multicast_address() const { return _multicast_address_bytes; }
     size_t peer_count() const { return _peers.size(); }
 
+    // Carrier state tracking (matches Python RNS)
+    bool carrier_changed() {
+        bool changed = _carrier_changed;
+        _carrier_changed = false;  // Clear flag on read
+        return changed;
+    }
+    void clear_carrier_changed() { _carrier_changed = false; }
+    bool is_timed_out() const { return _timed_out; }
+
 protected:
     virtual void send_outgoing(const RNS::Bytes& data) override;
 
@@ -91,6 +101,7 @@ private:
     void send_reverse_peering();
     void reverse_announce(AutoInterfacePeer& peer);
     void process_data();
+    void check_echo_timeout();
 
     // Peer management
 #ifdef ARDUINO
@@ -141,6 +152,13 @@ private:
     // Peers and state
     std::vector<AutoInterfacePeer> _peers;
     double _last_announce = 0;
+
+    // Echo tracking (matches Python RNS multicast_echoes / initial_echoes)
+    double _last_multicast_echo = 0.0;       // Timestamp of last own echo received
+    bool _initial_echo_received = false;      // True once first echo received
+    bool _timed_out = false;                  // Current timeout state
+    bool _carrier_changed = false;            // Flag for Transport layer notification
+    bool _firewall_warning_logged = false;    // Track firewall warning (log once)
 
     // Deduplication: pairs of (packet_hash, timestamp)
     struct DequeEntry {
