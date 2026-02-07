@@ -15,6 +15,13 @@
 #include <sstream>
 #include <iomanip>
 
+#if defined(ESP_PLATFORM) || defined(ARDUINO)
+#include <esp_heap_caps.h>
+// Minimum internal RAM to allow resource retries (16KB)
+// Below this threshold, WiFi/TCP buffers can't allocate, causing a death spiral
+static constexpr size_t RESOURCE_MIN_INTERNAL_HEAP = 16384;
+#endif
+
 using namespace RNS;
 using namespace RNS::Type::Resource;
 using namespace RNS::Utilities;
@@ -603,6 +610,19 @@ void Resource::timeout_advertised() {
 
 	if (now > _object->_adv_sent + timeout) {
 		if (_object->_retries_left > 0) {
+#if defined(ESP_PLATFORM) || defined(ARDUINO)
+			size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+			if (free_internal < RESOURCE_MIN_INTERNAL_HEAP) {
+				WARNING("Resource::timeout_advertised: Failing resource - internal RAM critically low ("
+					+ std::to_string(free_internal) + " bytes free)");
+				_object->_status = Type::Resource::FAILED;
+				if (_object->_callbacks._concluded != nullptr) {
+					_object->_callbacks._concluded(*this);
+				}
+				_object->_link.cancel_outgoing_resource(*this);
+				return;
+			}
+#endif
 			_object->_retries_left--;
 			DEBUGF("Resource::timeout_advertised: Retrying advertisement (%zu retries left)",
 				   _object->_retries_left);
@@ -673,6 +693,23 @@ void Resource::timeout_transferring() {
 
 		if (now > timeout) {
 			if (_object->_retries_left > 0) {
+#if defined(ESP_PLATFORM) || defined(ARDUINO)
+				// Check internal RAM before retrying - each retry creates packets
+				// that consume internal heap for shared_ptr control blocks.
+				// If internal RAM is critically low, fail gracefully instead of
+				// entering a death spiral where retries exhaust remaining memory.
+				size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+				if (free_internal < RESOURCE_MIN_INTERNAL_HEAP) {
+					WARNING("Resource::timeout_transferring: Failing resource - internal RAM critically low ("
+						+ std::to_string(free_internal) + " bytes free)");
+					_object->_status = Type::Resource::FAILED;
+					if (_object->_callbacks._concluded != nullptr) {
+						_object->_callbacks._concluded(*this);
+					}
+					_object->_link.cancel_incoming_resource(*this);
+					return;
+				}
+#endif
 				_object->_retries_left--;
 
 				// Reduce window (backoff)
