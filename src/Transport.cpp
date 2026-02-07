@@ -3559,10 +3559,13 @@ using namespace RNS::Utilities;
 		if (link.status() != Type::Link::ACTIVE) {
 			throw std::runtime_error("Invalid link state for link activation: " + std::to_string(link.status()));
 		}
+		// Copy before removing - pending_links_remove invalidates references
+		// to pool entries by shifting elements and clearing the last slot
+		Link activated(link);
 		pending_links_remove(link);
 		// CBA ACCUMULATES
-		active_links_add(link);
-		link.status(Type::Link::ACTIVE);
+		active_links_add(activated);
+		activated.status(Type::Link::ACTIVE);
 	}
 	else {
 		ERROR("Attempted to activate a link that was not in the pending table");
