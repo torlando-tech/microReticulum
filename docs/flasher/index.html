@@ -497,10 +497,7 @@
 
                 // Reset device to run new firmware
                 log('Resetting device...');
-                await transport.setDTR(false);
-                await transport.setRTS(true);
-                await new Promise(r => setTimeout(r, 100));
-                await transport.setRTS(false);
+                await esploader.hardReset();
 
                 setProgress(100, 'Done!');
                 updateStatus('<span class="status-detected">Flash complete! Device is restarting...</span>');
