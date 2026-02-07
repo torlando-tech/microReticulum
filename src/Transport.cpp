@@ -3555,6 +3555,10 @@ using namespace RNS::Utilities;
 
 /*static*/ void Transport::activate_link(Link& link) {
 	TRACE("Transport: Activating link " + link.toString());
+	if (!link) {
+		ERROR("Attempted to activate a null link");
+		return;
+	}
 	if (pending_links_contains(link)) {
 		if (link.status() != Type::Link::ACTIVE) {
 			throw std::runtime_error("Invalid link state for link activation: " + std::to_string(link.status()));

@@ -163,6 +163,12 @@ namespace RNS {
 		operator bool() const {
 			return _object.get() != nullptr;
 		}
+		bool operator == (const Link& link) const {
+			return _object.get() == link._object.get();
+		}
+		bool operator != (const Link& link) const {
+			return _object.get() != link._object.get();
+		}
 		bool operator < (const Link& link) const {
 			return _object.get() < link._object.get();
 		}
