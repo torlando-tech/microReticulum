@@ -428,12 +428,19 @@
                 try { await port.close(); } catch (e) {}
 
                 log('Entering bootloader mode...');
-                transport = new Transport(port, true);
+                transport = new Transport(port, false);
 
                 const flashOptions = {
                     transport,
                     baudrate: 921600,
                     romBaudrate: 115200,
+                    debugLogging: false,
+                    enableTracing: false,
+                    terminal: {
+                        clean() {},
+                        writeLine(data) { log(data); },
+                        write(data) { log(data); },
+                    },
                 };
 
                 esploader = new ESPLoader(flashOptions);
@@ -470,10 +477,10 @@
                 log('Starting flash write...');
                 await esploader.writeFlash({
                     fileArray,
-                    flashSize: 'keep',
-                    flashMode: 'keep',
-                    flashFreq: 'keep',
-                    eraseAll: false,
+                    flashSize: '8MB',
+                    flashMode: 'DIO',
+                    flashFreq: '80MHz',
+                    eraseAll: useFullInstall,
                     compress: true,
                     reportProgress: (fileIndex, written, total) => {
                         const fileName = files[fileIndex]?.name || 'file';
