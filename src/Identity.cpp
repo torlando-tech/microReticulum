@@ -27,7 +27,7 @@ using namespace RNS::Utilities;
 // Pool for known destinations - allocated in PSRAM to free ~29KB internal RAM
 /*static*/ Identity::KnownDestinationSlot* Identity::_known_destinations_pool = nullptr;
 /*static*/ bool Identity::_saving_known_destinations = false;
-/*static*/ uint16_t Identity::_known_destinations_maxsize = 192;  // Matches KNOWN_DESTINATIONS_SIZE
+/*static*/ uint16_t Identity::_known_destinations_maxsize = 512;  // Matches KNOWN_DESTINATIONS_SIZE
 
 // Initialize known destinations pool in PSRAM
 /*static*/ bool Identity::init_known_destinations_pool() {
@@ -298,6 +298,9 @@ Can be used to load previously created and saved identities into Reticulum.
 		throw std::invalid_argument("Can't remember " + destination_hash.toHex() + ", the public key size of " + std::to_string(public_key.size()) + " is not valid.");
 	}
 	else {
+		// Proactively cull before pool gets too full (creates buffer room)
+		cull_known_destinations();
+
 		// Check if this is a new destination or updated app_data
 		bool should_save = false;
 		KnownDestinationSlot* slot = find_known_destination_slot(destination_hash);
@@ -305,13 +308,9 @@ Can be used to load previously created and saved identities into Reticulum.
 			// New destination - find empty slot
 			slot = find_empty_known_destination_slot();
 			if (slot == nullptr) {
-				// Pool is full - cull old entries first
-				cull_known_destinations();
-				slot = find_empty_known_destination_slot();
-				if (slot == nullptr) {
-					WARNING("Known destinations pool is full, cannot remember " + destination_hash.toHex());
-					return;
-				}
+				// Pool still full after cull - shouldn't happen but handle it
+				WARNING("Known destinations pool is full, cannot remember " + destination_hash.toHex());
+				return;
 			}
 			slot->in_use = true;
 			slot->set_hash(destination_hash);
@@ -584,34 +583,34 @@ Recall last heard app_data for a destination hash.
 
 /*static*/ void Identity::cull_known_destinations() {
 	if (!_known_destinations_pool) return;
-	TRACE("Identity::cull_known_destinations()");
 	size_t current_count = known_destinations_count();
-	if (current_count > _known_destinations_maxsize) {
-		// prune by age
-		uint16_t count = 0;
-		// Build vector of pointers to in-use slots for sorting
-		std::vector<KnownDestinationSlot*> sorted_slots;
-		sorted_slots.reserve(current_count);
+	// Cull when pool is 90% full to create buffer room for new entries
+	size_t cull_threshold = (KNOWN_DESTINATIONS_SIZE * 9) / 10;  // 90%
+	size_t target_count = (KNOWN_DESTINATIONS_SIZE * 8) / 10;    // 80%
+
+	if (current_count < cull_threshold) {
+		return;  // Not at threshold yet
+	}
+
+	DEBUG("Culling known destinations: " + std::to_string(current_count) + " -> " + std::to_string(target_count));
+
+	// Remove oldest entries one at a time (no temporary allocations)
+	uint16_t removed = 0;
+	while (known_destinations_count() > target_count) {
+		// Find oldest entry
+		KnownDestinationSlot* oldest = nullptr;
 		for (size_t i = 0; i < KNOWN_DESTINATIONS_SIZE; ++i) {
 			if (_known_destinations_pool[i].in_use) {
-				sorted_slots.push_back(&_known_destinations_pool[i]);
+				if (oldest == nullptr || _known_destinations_pool[i].entry._timestamp < oldest->entry._timestamp) {
+					oldest = &_known_destinations_pool[i];
+				}
 			}
 		}
-		// Sort by timestamp (oldest first)
-		std::sort(sorted_slots.begin(), sorted_slots.end(), [](const KnownDestinationSlot* left, const KnownDestinationSlot* right) {
-			return left->entry._timestamp < right->entry._timestamp;
-		});
-		// Remove oldest entries until we're under the limit
-		for (KnownDestinationSlot* slot : sorted_slots) {
-			TRACE("Identity::cull_known_destinations: Removing destination " + slot->hash_bytes().toHex() + " from known destinations");
-			slot->clear();
-			++count;
-			if (known_destinations_count() <= _known_destinations_maxsize) {
-				break;
-			}
-		}
-		DEBUG("Removed " + std::to_string(count) + " destination(s) from known destinations");
+		if (oldest == nullptr) break;
+		oldest->clear();
+		++removed;
 	}
+	DEBUG("Removed " + std::to_string(removed) + " destination(s), now " + std::to_string(known_destinations_count()));
 }
 
 /*static*/ bool Identity::validate_announce(const Packet& packet) {
@@ -942,6 +941,9 @@ void Identity::prove(const Packet& packet) const {
 		return;
 	}
 
+	// Proactively cull before pool gets too full
+	cull_known_ratchets();
+
 	DEBUG("Remembering ratchet for destination " + destination_hash.toHex());
 	DEBUG("  Ratchet public key: " + ratchet_public_key.toHex());
 
@@ -957,13 +959,9 @@ void Identity::prove(const Packet& packet) const {
 	// Find empty slot
 	slot = find_empty_known_ratchet_slot();
 	if (slot == nullptr) {
-		// Pool full - cull oldest
-		cull_known_ratchets();
-		slot = find_empty_known_ratchet_slot();
-		if (slot == nullptr) {
-			WARNING("Known ratchets pool is full, cannot remember ratchet");
-			return;
-		}
+		// Pool still full after cull - shouldn't happen
+		WARNING("Known ratchets pool is full, cannot remember ratchet");
+		return;
 	}
 
 	slot->in_use = true;
@@ -1007,26 +1005,32 @@ Recall ratchet public key for a destination hash.
 }
 
 /*static*/ void Identity::cull_known_ratchets() {
-	// Remove oldest entries (by timestamp) until we have space
+	// Cull when pool is 90% full to create buffer room for new entries
 	size_t current_count = known_ratchets_count();
-	if (current_count < KNOWN_RATCHETS_SIZE) {
-		return;  // Not full
+	size_t cull_threshold = (KNOWN_RATCHETS_SIZE * 9) / 10;  // 90%
+	size_t target_count = (KNOWN_RATCHETS_SIZE * 8) / 10;    // 80%
+
+	if (current_count < cull_threshold) {
+		return;  // Not at threshold yet
 	}
 
-	DEBUG("Culling known ratchets, current count: " + std::to_string(current_count));
+	DEBUG("Culling known ratchets: " + std::to_string(current_count) + " -> " + std::to_string(target_count));
 
-	// Find and remove oldest entry
-	KnownRatchetSlot* oldest = nullptr;
-	for (size_t i = 0; i < KNOWN_RATCHETS_SIZE; ++i) {
-		if (_known_ratchets_pool[i].in_use) {
-			if (oldest == nullptr || _known_ratchets_pool[i].timestamp < oldest->timestamp) {
-				oldest = &_known_ratchets_pool[i];
+	// Remove oldest entries one at a time (no temporary allocations)
+	uint16_t removed = 0;
+	while (known_ratchets_count() > target_count) {
+		// Find oldest entry
+		KnownRatchetSlot* oldest = nullptr;
+		for (size_t i = 0; i < KNOWN_RATCHETS_SIZE; ++i) {
+			if (_known_ratchets_pool[i].in_use) {
+				if (oldest == nullptr || _known_ratchets_pool[i].timestamp < oldest->timestamp) {
+					oldest = &_known_ratchets_pool[i];
+				}
 			}
 		}
-	}
-
-	if (oldest != nullptr) {
+		if (oldest == nullptr) break;
 		oldest->clear();
-		DEBUG("Removed oldest ratchet entry");
+		++removed;
 	}
+	DEBUG("Removed " + std::to_string(removed) + " ratchet entries, now " + std::to_string(known_ratchets_count()));
 }
