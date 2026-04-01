@@ -13,6 +13,11 @@
 #include <algorithm>
 #include <unistd.h>
 #include <time.h>
+#include <new>  // For placement new
+
+#ifdef ARDUINO
+#include <esp_heap_caps.h>
+#endif
 
 using namespace RNS;
 using namespace RNS::Type::Transport;
@@ -26,71 +31,71 @@ using namespace RNS::Utilities;
 #elif defined(INTERFACES_MAP)
 /*static*/ std::map<Bytes, Interface&> Transport::_interfaces;
 #elif defined(INTERFACES_POOL)
-/*static*/ Transport::InterfaceSlot Transport::_interfaces_pool[Transport::INTERFACES_POOL_SIZE];
+/*static*/ Transport::InterfaceSlot* Transport::_interfaces_pool = nullptr;
 #endif
 #if defined(DESTINATIONS_SET)
 /*static*/ std::set<Destination> Transport::_destinations;
 #elif defined(DESTINATIONS_MAP)
 /*static*/ std::map<Bytes, Destination> Transport::_destinations;
 #elif defined(DESTINATIONS_POOL)
-/*static*/ Transport::DestinationSlot Transport::_destinations_pool[Transport::DESTINATIONS_POOL_SIZE];
+/*static*/ Transport::DestinationSlot* Transport::_destinations_pool = nullptr;
 #endif
 ///*static*/ std::set<Link> Transport::_pending_links;  // Replaced by fixed array
 ///*static*/ std::set<Link> Transport::_active_links;  // Replaced by fixed array
-/*static*/ Link Transport::_pending_links_pool[Transport::PENDING_LINKS_SIZE];
+/*static*/ Link* Transport::_pending_links_pool = nullptr;
 /*static*/ size_t Transport::_pending_links_count = 0;
-/*static*/ Link Transport::_active_links_pool[Transport::ACTIVE_LINKS_SIZE];
+/*static*/ Link* Transport::_active_links_pool = nullptr;
 /*static*/ size_t Transport::_active_links_count = 0;
 ///*static*/ std::set<Bytes> Transport::_packet_hashlist;  // Replaced by circular buffer
-/*static*/ Bytes Transport::_packet_hashlist_buffer[Transport::PACKET_HASHLIST_SIZE];
+/*static*/ Bytes* Transport::_packet_hashlist_buffer = nullptr;
 /*static*/ size_t Transport::_packet_hashlist_head = 0;
 /*static*/ size_t Transport::_packet_hashlist_count = 0;
 ///*static*/ std::set<Bytes> Transport::_discovery_pr_tags;  // Replaced by circular buffer
-/*static*/ Bytes Transport::_discovery_pr_tags_buffer[Transport::DISCOVERY_PR_TAGS_SIZE];
+/*static*/ Bytes* Transport::_discovery_pr_tags_buffer = nullptr;
 /*static*/ size_t Transport::_discovery_pr_tags_head = 0;
 /*static*/ size_t Transport::_discovery_pr_tags_count = 0;
 ///*static*/ std::list<PacketReceipt> Transport::_receipts;  // Replaced by fixed array
-/*static*/ PacketReceipt Transport::_receipts_pool[Transport::RECEIPTS_SIZE];
+/*static*/ PacketReceipt* Transport::_receipts_pool = nullptr;
 /*static*/ size_t Transport::_receipts_count = 0;
 
 // Announce table pool (replaces std::map<Bytes, AnnounceEntry>)
-/*static*/ Transport::AnnounceTableSlot Transport::_announce_table_pool[Transport::ANNOUNCE_TABLE_SIZE];
+/*static*/ Transport::AnnounceTableSlot* Transport::_announce_table_pool = nullptr;
 // Destination table pool (replaces std::map<Bytes, DestinationEntry>)
-/*static*/ Transport::DestinationTableSlot Transport::_destination_table_pool[Transport::DESTINATION_TABLE_SIZE];
+/*static*/ Transport::DestinationTableSlot* Transport::_destination_table_pool = nullptr;
 ///*static*/ std::map<Bytes, Transport::ReverseEntry> Transport::_reverse_table;  // Replaced by fixed pool
-/*static*/ Transport::ReverseTableSlot Transport::_reverse_table_pool[Transport::REVERSE_TABLE_SIZE];
+/*static*/ Transport::ReverseTableSlot* Transport::_reverse_table_pool = nullptr;
 ///*static*/ std::map<Bytes, Transport::LinkEntry> Transport::_link_table;  // Replaced by fixed pool
-/*static*/ Transport::LinkTableSlot Transport::_link_table_pool[Transport::LINK_TABLE_SIZE];
+/*static*/ Transport::LinkTableSlot* Transport::_link_table_pool = nullptr;
 ///*static*/ std::map<Bytes, Transport::AnnounceEntry> Transport::_held_announces;  // Replaced by pool
-/*static*/ Transport::HeldAnnounceSlot Transport::_held_announces_pool[Transport::HELD_ANNOUNCES_SIZE];
+/*static*/ Transport::HeldAnnounceSlot* Transport::_held_announces_pool = nullptr;
 ///*static*/ std::set<HAnnounceHandler> Transport::_announce_handlers;  // Replaced by fixed array
-/*static*/ HAnnounceHandler Transport::_announce_handlers_pool[Transport::ANNOUNCE_HANDLERS_SIZE];
+/*static*/ HAnnounceHandler* Transport::_announce_handlers_pool = nullptr;
 /*static*/ size_t Transport::_announce_handlers_count = 0;
 ///*static*/ std::map<Bytes, Transport::TunnelEntry> Transport::_tunnels;  // Replaced by fixed pool
-/*static*/ Transport::TunnelSlot Transport::_tunnels_pool[Transport::TUNNELS_SIZE];
+/*static*/ Transport::TunnelSlot* Transport::_tunnels_pool = nullptr;
 ///*static*/ std::map<Bytes, Transport::RateEntry> Transport::_announce_rate_table;  // Replaced by fixed pool
-/*static*/ Transport::RateTableSlot Transport::_announce_rate_table_pool[Transport::ANNOUNCE_RATE_TABLE_SIZE];
+/*static*/ Transport::RateTableSlot* Transport::_announce_rate_table_pool = nullptr;
 ///*static*/ std::map<Bytes, double> Transport::_path_requests;  // Replaced by fixed pool
-/*static*/ Transport::PathRequestSlot Transport::_path_requests_pool[Transport::PATH_REQUESTS_SIZE];
+/*static*/ Transport::PathRequestSlot* Transport::_path_requests_pool = nullptr;
 
 ///*static*/ std::map<Bytes, Transport::PathRequestEntry> Transport::_discovery_path_requests;  // Replaced by pool
-/*static*/ Transport::DiscoveryPathRequestSlot Transport::_discovery_path_requests_pool[Transport::DISCOVERY_PATH_REQUESTS_SIZE];
+/*static*/ Transport::DiscoveryPathRequestSlot* Transport::_discovery_path_requests_pool = nullptr;
 ///*static*/ std::set<Bytes> Transport::_discovery_pr_tags;  // Replaced by circular buffer
 
 ///*static*/ std::set<Destination> Transport::_control_destinations;  // Replaced by fixed array
-/*static*/ Destination Transport::_control_destinations_pool[Transport::CONTROL_DESTINATIONS_SIZE];
+/*static*/ Destination* Transport::_control_destinations_pool = nullptr;
 /*static*/ size_t Transport::_control_destinations_count = 0;
 ///*static*/ std::set<Bytes> Transport::_control_hashes;  // Replaced by fixed array
-/*static*/ Bytes Transport::_control_hashes_pool[Transport::CONTROL_HASHES_SIZE];
+/*static*/ Bytes* Transport::_control_hashes_pool = nullptr;
 /*static*/ size_t Transport::_control_hashes_count = 0;
 
 ///*static*/ std::set<Interface> Transport::_local_client_interfaces;
 ///*static*/ std::set<std::reference_wrapper<const Interface>, std::less<const Interface>> Transport::_local_client_interfaces;  // Replaced by fixed array
-/*static*/ const Interface* Transport::_local_client_interfaces_pool[Transport::LOCAL_CLIENT_INTERFACES_SIZE];
+/*static*/ const Interface** Transport::_local_client_interfaces_pool = nullptr;
 /*static*/ size_t Transport::_local_client_interfaces_count = 0;
 
 ///*static*/ std::map<Bytes, const Interface&> Transport::_pending_local_path_requests;  // Replaced by pool
-/*static*/ Transport::PendingLocalPathRequestSlot Transport::_pending_local_path_requests_pool[Transport::PENDING_LOCAL_PATH_REQUESTS_SIZE];
+/*static*/ Transport::PendingLocalPathRequestSlot* Transport::_pending_local_path_requests_pool = nullptr;
 
 // CBA - _packet_table not currently used, commented out to reduce STL container usage
 ///*static*/ std::map<Bytes, Transport::PacketEntry> Transport::_packet_table;
@@ -153,6 +158,89 @@ using namespace RNS::Utilities;
 /*static*/ uint32_t Transport::_destinations_added = 0;
 /*static*/ size_t Transport::_last_memory = 0;
 /*static*/ size_t Transport::_last_flash = 0;
+
+// Allocate all Transport pools in PSRAM (frees ~15-25KB internal RAM)
+// Follows same pattern as Identity::init_known_destinations_pool()
+/*static*/ bool Transport::init_pools() {
+	if (_announce_table_pool != nullptr) {
+		return true;  // Already initialized
+	}
+
+	size_t total_bytes = 0;
+
+#ifdef ARDUINO
+	// Helper: allocate in PSRAM with fallback to internal RAM, then placement-new each element
+	#define ALLOC_POOL(pool, type, count, name) do { \
+		size_t sz = (count) * sizeof(type); \
+		pool = (type*)heap_caps_aligned_alloc(8, sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); \
+		if (!pool) { \
+			pool = (type*)heap_caps_aligned_alloc(8, sz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT); \
+			if (pool) { WARNING("Transport: " name " allocated in internal RAM (PSRAM unavailable)"); } \
+		} \
+		if (!pool) { \
+			ERROR("Transport: Failed to allocate " name " (" + std::to_string(sz) + " bytes)"); \
+			return false; \
+		} \
+		for (size_t _i = 0; _i < (count); _i++) { new (&pool[_i]) type(); } \
+		total_bytes += sz; \
+	} while(0)
+#else
+	// Non-Arduino: use regular new[]
+	#define ALLOC_POOL(pool, type, count, name) do { \
+		pool = new type[count]; \
+		if (!pool) { return false; } \
+		total_bytes += (count) * sizeof(type); \
+	} while(0)
+#endif
+
+	ALLOC_POOL(_announce_table_pool,    AnnounceTableSlot,    ANNOUNCE_TABLE_SIZE,    "announce_table");
+	ALLOC_POOL(_destination_table_pool, DestinationTableSlot, DESTINATION_TABLE_SIZE, "destination_table");
+	ALLOC_POOL(_reverse_table_pool,     ReverseTableSlot,     REVERSE_TABLE_SIZE,     "reverse_table");
+	ALLOC_POOL(_link_table_pool,        LinkTableSlot,        LINK_TABLE_SIZE,        "link_table");
+	ALLOC_POOL(_held_announces_pool,    HeldAnnounceSlot,     HELD_ANNOUNCES_SIZE,    "held_announces");
+	ALLOC_POOL(_tunnels_pool,           TunnelSlot,           TUNNELS_SIZE,           "tunnels");
+	ALLOC_POOL(_announce_rate_table_pool, RateTableSlot,      ANNOUNCE_RATE_TABLE_SIZE, "announce_rate_table");
+	ALLOC_POOL(_path_requests_pool,     PathRequestSlot,      PATH_REQUESTS_SIZE,     "path_requests");
+	ALLOC_POOL(_receipts_pool,          PacketReceipt,        RECEIPTS_SIZE,          "receipts");
+	ALLOC_POOL(_packet_hashlist_buffer, Bytes,                PACKET_HASHLIST_SIZE,   "packet_hashlist");
+	ALLOC_POOL(_discovery_pr_tags_buffer, Bytes,              DISCOVERY_PR_TAGS_SIZE, "discovery_pr_tags");
+	ALLOC_POOL(_pending_links_pool,     Link,                 PENDING_LINKS_SIZE,     "pending_links");
+	ALLOC_POOL(_active_links_pool,      Link,                 ACTIVE_LINKS_SIZE,      "active_links");
+	ALLOC_POOL(_control_hashes_pool,    Bytes,                CONTROL_HASHES_SIZE,    "control_hashes");
+	ALLOC_POOL(_control_destinations_pool, Destination,       CONTROL_DESTINATIONS_SIZE, "control_destinations");
+	ALLOC_POOL(_announce_handlers_pool, HAnnounceHandler,     ANNOUNCE_HANDLERS_SIZE, "announce_handlers");
+
+	// local_client_interfaces is an array of pointers, not objects
+	{
+		size_t sz = LOCAL_CLIENT_INTERFACES_SIZE * sizeof(const Interface*);
+#ifdef ARDUINO
+		_local_client_interfaces_pool = (const Interface**)heap_caps_aligned_alloc(8, sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+		if (!_local_client_interfaces_pool) {
+			_local_client_interfaces_pool = (const Interface**)heap_caps_aligned_alloc(8, sz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+		}
+#else
+		_local_client_interfaces_pool = new const Interface*[LOCAL_CLIENT_INTERFACES_SIZE];
+#endif
+		if (!_local_client_interfaces_pool) {
+			ERROR("Transport: Failed to allocate local_client_interfaces");
+			return false;
+		}
+		for (size_t i = 0; i < LOCAL_CLIENT_INTERFACES_SIZE; i++) {
+			_local_client_interfaces_pool[i] = nullptr;
+		}
+		total_bytes += sz;
+	}
+
+	ALLOC_POOL(_interfaces_pool,        InterfaceSlot,        INTERFACES_POOL_SIZE,   "interfaces");
+	ALLOC_POOL(_destinations_pool,      DestinationSlot,      DESTINATIONS_POOL_SIZE, "destinations");
+	ALLOC_POOL(_discovery_path_requests_pool, DiscoveryPathRequestSlot, DISCOVERY_PATH_REQUESTS_SIZE, "discovery_path_requests");
+	ALLOC_POOL(_pending_local_path_requests_pool, PendingLocalPathRequestSlot, PENDING_LOCAL_PATH_REQUESTS_SIZE, "pending_local_path_requests");
+
+	#undef ALLOC_POOL
+
+	INFO("Transport pools initialized (" + std::to_string(total_bytes) + " bytes total)");
+	return true;
+}
 
 /*static*/ bool Transport::packet_hashlist_contains(const Bytes& hash) {
 	for (size_t i = 0; i < _packet_hashlist_count; i++) {
@@ -1114,7 +1202,12 @@ using namespace RNS::Utilities;
 					AnnounceEntry& announce_entry = slot.entry;
 //TRACE("[0] announce entry data size: " + std::to_string(announce_entry._packet.data().size()));
 					//p announce_entry = Transport.announce_table[destination_hash]
-					if (announce_entry._retries > Type::Transport::PATHFINDER_R) {
+					if (announce_entry._retries > 0 && announce_entry._retries >= Type::Transport::LOCAL_REBROADCASTS_MAX) {
+						TRACE("Completed announce processing for " + destination_hash.toHex() + ", local rebroadcast limit reached");
+						slot.clear();
+						break;
+					}
+					else if (announce_entry._retries > Type::Transport::PATHFINDER_R) {
 						TRACE("Completed announce processing for " + destination_hash.toHex() + ", retry limit reached");
 						// CBA OK to modify collection here since we're immediately exiting iteration
 						slot.clear();
@@ -1154,7 +1247,9 @@ using namespace RNS::Utilities;
 								announce_context,
 								Type::Transport::TRANSPORT,
 								Type::Packet::HEADER_2,
-								Transport::_identity.hash()
+								Transport::_identity.hash(),
+								true,
+								announce_entry._packet.context_flag()
 							);
 
 							new_packet.hops(announce_entry._hops);
@@ -1678,10 +1773,11 @@ using namespace RNS::Utilities;
 						TRACE("Transport::outbound: Pscket destination is link-closed, not transmitting");
 						should_transmit = false;
 					}
-					// CBA Bug? Destination has no member attached_interface
-					//z if (interface != packet.destination().attached_interface()) {
-					//z 	should_transmit = false;
-					//z }
+					// Route link packets only through the link's attached interface
+					if (packet.destination_link().attached_interface() && interface != packet.destination_link().attached_interface()) {
+						TRACE("Transport::outbound: Link packet not for this interface, skipping");
+						should_transmit = false;
+					}
 				}
 				
 				if (packet.attached_interface() && interface != packet.attached_interface()) {
@@ -2028,7 +2124,7 @@ using namespace RNS::Utilities;
 }
 
 /*static*/ void Transport::inbound(const Bytes& raw, const Interface& interface /*= {Type::NONE}*/) {
-	TRACE("Transport::inbound()");
+	TRACEF("Transport::inbound: received %zu bytes", raw.size());
 	++_packets_received;
 	// CBA
 	if (_callbacks._receive_packet) {
@@ -2809,7 +2905,9 @@ using namespace RNS::Utilities;
 											announce_context,
 											Type::Transport::TRANSPORT,
 											Type::Packet::HEADER_2,
-											_identity.hash()
+											_identity.hash(),
+											true,
+											packet.context_flag()
 										);
 
 										new_announce.hops(packet.hops());
@@ -2829,7 +2927,9 @@ using namespace RNS::Utilities;
 											announce_context,
 											Type::Transport::TRANSPORT,
 											Type::Packet::HEADER_2,
-											_identity.hash()
+											_identity.hash(),
+											true,
+											packet.context_flag()
 										);
 
 										new_announce.hops(packet.hops());
@@ -2863,7 +2963,9 @@ using namespace RNS::Utilities;
 								Type::Packet::PATH_RESPONSE,
 								Type::Transport::TRANSPORT,
 								Type::Packet::HEADER_2,
-								_identity.hash()
+								_identity.hash(),
+								true,
+								packet.context_flag()
 							);
 
 							new_announce.hops(packet.hops());

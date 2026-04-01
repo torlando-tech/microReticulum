@@ -267,7 +267,7 @@ void setup() {
 	}
 #endif
 
-#if defined(MEM_LOG)
+#if defined(RNS_MEM_LOG)
 		RNS::loglevel(RNS::LOG_MEM);
 #else
 		//RNS::loglevel(RNS::LOG_WARNING);

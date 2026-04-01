@@ -391,62 +391,62 @@ namespace RNS {
 		// Fixed-size pool structures for zero heap fragmentation
 		// Overflow behavior: find_empty_*_slot() returns nullptr when pool full
 		// Callers must check for nullptr and handle gracefully (drop/log/cull)
-		static constexpr size_t ANNOUNCE_TABLE_SIZE = 8;  // Reduced for testing
+		static constexpr size_t ANNOUNCE_TABLE_SIZE = 32;
 		struct AnnounceTableSlot {
 			bool in_use = false;
 			Bytes destination_hash;
 			AnnounceEntry entry;
 			void clear() { in_use = false; destination_hash.clear(); entry = AnnounceEntry(); }
 		};
-		static AnnounceTableSlot _announce_table_pool[ANNOUNCE_TABLE_SIZE];
+		static AnnounceTableSlot* _announce_table_pool;
 		static AnnounceTableSlot* find_announce_table_slot(const Bytes& hash);
 		static AnnounceTableSlot* find_empty_announce_table_slot();
 		static size_t announce_table_count();
 
-		static constexpr size_t DESTINATION_TABLE_SIZE = 16;  // Reduced for testing
+		static constexpr size_t DESTINATION_TABLE_SIZE = 64;
 		struct DestinationTableSlot {
 			bool in_use = false;
 			Bytes destination_hash;
 			DestinationEntry entry;
 			void clear() { in_use = false; destination_hash.clear(); entry = DestinationEntry(); }
 		};
-		static DestinationTableSlot _destination_table_pool[DESTINATION_TABLE_SIZE];
+		static DestinationTableSlot* _destination_table_pool;
 		static DestinationTableSlot* find_destination_table_slot(const Bytes& hash);
 		static DestinationTableSlot* find_empty_destination_table_slot();
 		static size_t destination_table_count();
 
-		static constexpr size_t REVERSE_TABLE_SIZE = 8;  // Reduced for testing
+		static constexpr size_t REVERSE_TABLE_SIZE = 16;
 		struct ReverseTableSlot {
 			bool in_use = false;
 			Bytes packet_hash;
 			ReverseEntry entry;
 			void clear() { in_use = false; packet_hash.clear(); entry = ReverseEntry(); }
 		};
-		static ReverseTableSlot _reverse_table_pool[REVERSE_TABLE_SIZE];
+		static ReverseTableSlot* _reverse_table_pool;
 		static ReverseTableSlot* find_reverse_table_slot(const Bytes& hash);
 		static ReverseTableSlot* find_empty_reverse_table_slot();
 		static size_t reverse_table_count();
 
-		static constexpr size_t LINK_TABLE_SIZE = 8;  // Reduced for testing
+		static constexpr size_t LINK_TABLE_SIZE = 16;
 		struct LinkTableSlot {
 			bool in_use = false;
 			Bytes link_id;
 			LinkEntry entry;
 			void clear() { in_use = false; link_id.clear(); entry = LinkEntry(); }
 		};
-		static LinkTableSlot _link_table_pool[LINK_TABLE_SIZE];
+		static LinkTableSlot* _link_table_pool;
 		static LinkTableSlot* find_link_table_slot(const Bytes& id);
 		static LinkTableSlot* find_empty_link_table_slot();
 		static size_t link_table_count();
 
-		static constexpr size_t HELD_ANNOUNCES_SIZE = 8;  // Reduced for testing
+		static constexpr size_t HELD_ANNOUNCES_SIZE = 16;
 		struct HeldAnnounceSlot {
 			bool in_use = false;
 			Bytes destination_hash;
 			AnnounceEntry entry;
 			void clear() { in_use = false; destination_hash.clear(); entry = AnnounceEntry(); }
 		};
-		static HeldAnnounceSlot _held_announces_pool[HELD_ANNOUNCES_SIZE];
+		static HeldAnnounceSlot* _held_announces_pool;
 		static HeldAnnounceSlot* find_held_announce_slot(const Bytes& hash);
 		static HeldAnnounceSlot* find_empty_held_announce_slot();
 		static size_t held_announces_count();
@@ -458,46 +458,46 @@ namespace RNS {
 			TunnelEntry entry;
 			void clear() { in_use = false; tunnel_id.clear(); entry.clear(); }
 		};
-		static TunnelSlot _tunnels_pool[TUNNELS_SIZE];
+		static TunnelSlot* _tunnels_pool;
 		static TunnelSlot* find_tunnel_slot(const Bytes& id);
 		static TunnelSlot* find_empty_tunnel_slot();
 		static size_t tunnels_count();
 
-		static constexpr size_t ANNOUNCE_RATE_TABLE_SIZE = 8;  // Reduced for testing
+		static constexpr size_t ANNOUNCE_RATE_TABLE_SIZE = 16;
 		struct RateTableSlot {
 			bool in_use = false;
 			Bytes destination_hash;
 			RateEntry entry;
 			void clear() { in_use = false; destination_hash.clear(); entry = RateEntry(); }
 		};
-		static RateTableSlot _announce_rate_table_pool[ANNOUNCE_RATE_TABLE_SIZE];
+		static RateTableSlot* _announce_rate_table_pool;
 		static RateTableSlot* find_rate_table_slot(const Bytes& hash);
 		static RateTableSlot* find_empty_rate_table_slot();
 		static size_t announce_rate_table_count();
 
-		static constexpr size_t PATH_REQUESTS_SIZE = 8;  // Reduced for testing
+		static constexpr size_t PATH_REQUESTS_SIZE = 32;
 		struct PathRequestSlot {
 			bool in_use = false;
 			Bytes destination_hash;
 			double timestamp = 0;
 			void clear() { in_use = false; destination_hash.clear(); timestamp = 0; }
 		};
-		static PathRequestSlot _path_requests_pool[PATH_REQUESTS_SIZE];
+		static PathRequestSlot* _path_requests_pool;
 		static PathRequestSlot* find_path_request_slot(const Bytes& hash);
 		static PathRequestSlot* find_empty_path_request_slot();
 		static size_t path_requests_count();
 
 		// Receipts fixed array
-		static constexpr size_t RECEIPTS_SIZE = 8;  // Reduced for testing
-		static PacketReceipt _receipts_pool[RECEIPTS_SIZE];
+		static constexpr size_t RECEIPTS_SIZE = 16;
+		static PacketReceipt* _receipts_pool;
 		static size_t _receipts_count;
 		static bool receipts_add(const PacketReceipt& receipt);
 		static bool receipts_remove(const PacketReceipt& receipt);
 		static inline size_t receipts_count() { return _receipts_count; }
 
 		// Packet hashlist circular buffer (replaces std::set<Bytes>)
-		static constexpr size_t PACKET_HASHLIST_SIZE = 64;  // Reduced for testing
-		static Bytes _packet_hashlist_buffer[PACKET_HASHLIST_SIZE];
+		static constexpr size_t PACKET_HASHLIST_SIZE = 128;
+		static Bytes* _packet_hashlist_buffer;
 		static size_t _packet_hashlist_head;
 		static size_t _packet_hashlist_count;
 		static bool packet_hashlist_contains(const Bytes& hash);
@@ -507,15 +507,15 @@ namespace RNS {
 
 		// Discovery PR tags circular buffer (replaces std::set<Bytes>)
 		static constexpr size_t DISCOVERY_PR_TAGS_SIZE = 32;
-		static Bytes _discovery_pr_tags_buffer[DISCOVERY_PR_TAGS_SIZE];
+		static Bytes* _discovery_pr_tags_buffer;
 		static size_t _discovery_pr_tags_head;
 		static size_t _discovery_pr_tags_count;
 		static bool discovery_pr_tags_contains(const Bytes& tag);
 		static void discovery_pr_tags_add(const Bytes& tag);
 
 		// Pending links fixed array (replaces std::set<Link>)
-		static constexpr size_t PENDING_LINKS_SIZE = 4;  // Reduced for testing
-		static Link _pending_links_pool[PENDING_LINKS_SIZE];
+		static constexpr size_t PENDING_LINKS_SIZE = 8;
+		static Link* _pending_links_pool;
 		static size_t _pending_links_count;
 		static bool pending_links_contains(const Link& link);
 		static bool pending_links_add(const Link& link);
@@ -524,7 +524,7 @@ namespace RNS {
 
 		// Active links fixed array (replaces std::set<Link>)
 		static constexpr size_t ACTIVE_LINKS_SIZE = 4;  // Reduced for testing
-		static Link _active_links_pool[ACTIVE_LINKS_SIZE];
+		static Link* _active_links_pool;
 		static size_t _active_links_count;
 		static bool active_links_contains(const Link& link);
 		static bool active_links_add(const Link& link);
@@ -533,7 +533,7 @@ namespace RNS {
 
 		// Control hashes fixed array (replaces std::set<Bytes>)
 		static constexpr size_t CONTROL_HASHES_SIZE = 8;
-		static Bytes _control_hashes_pool[CONTROL_HASHES_SIZE];
+		static Bytes* _control_hashes_pool;
 		static size_t _control_hashes_count;
 		static bool control_hashes_contains(const Bytes& hash);
 		static bool control_hashes_add(const Bytes& hash);
@@ -541,14 +541,14 @@ namespace RNS {
 
 		// Control destinations fixed array (replaces std::set<Destination>)
 		static constexpr size_t CONTROL_DESTINATIONS_SIZE = 8;
-		static Destination _control_destinations_pool[CONTROL_DESTINATIONS_SIZE];
+		static Destination* _control_destinations_pool;
 		static size_t _control_destinations_count;
 		static bool control_destinations_add(const Destination& dest);
 		static size_t control_destinations_size();
 
 		// Announce handlers fixed array (replaces std::set<HAnnounceHandler>)
 		static constexpr size_t ANNOUNCE_HANDLERS_SIZE = 8;
-		static HAnnounceHandler _announce_handlers_pool[ANNOUNCE_HANDLERS_SIZE];
+		static HAnnounceHandler* _announce_handlers_pool;
 		static size_t _announce_handlers_count;
 		static bool announce_handlers_add(HAnnounceHandler handler);
 		static bool announce_handlers_remove(HAnnounceHandler handler);
@@ -556,7 +556,7 @@ namespace RNS {
 
 		// Local client interfaces fixed array (replaces std::set<reference_wrapper<Interface>>)
 		static constexpr size_t LOCAL_CLIENT_INTERFACES_SIZE = 8;
-		static const Interface* _local_client_interfaces_pool[LOCAL_CLIENT_INTERFACES_SIZE];
+		static const Interface** _local_client_interfaces_pool;
 		static size_t _local_client_interfaces_count;
 		static bool local_client_interfaces_contains(const Interface& iface);
 		static bool local_client_interfaces_add(const Interface& iface);
@@ -571,7 +571,7 @@ namespace RNS {
 			void clear() { in_use = false; hash.clear(); interface_ptr = nullptr; }
 		};
 		static constexpr size_t INTERFACES_POOL_SIZE = 8;
-		static InterfaceSlot _interfaces_pool[INTERFACES_POOL_SIZE];
+		static InterfaceSlot* _interfaces_pool;
 		static InterfaceSlot* find_interface_slot(const Bytes& hash);
 		static InterfaceSlot* find_empty_interface_slot();
 		static size_t interfaces_count();
@@ -585,7 +585,7 @@ namespace RNS {
 			void clear() { in_use = false; hash.clear(); destination = Destination(); }
 		};
 		static constexpr size_t DESTINATIONS_POOL_SIZE = 32;
-		static DestinationSlot _destinations_pool[DESTINATIONS_POOL_SIZE];
+		static DestinationSlot* _destinations_pool;
 		static DestinationSlot* find_destination_slot(const Bytes& hash);
 		static DestinationSlot* find_empty_destination_slot();
 		static size_t destinations_count();
@@ -600,7 +600,7 @@ namespace RNS {
 			void clear() { in_use = false; destination_hash.clear(); timeout = 0; requesting_interface = Interface(Type::NONE); }
 		};
 		static constexpr size_t DISCOVERY_PATH_REQUESTS_SIZE = 32;
-		static DiscoveryPathRequestSlot _discovery_path_requests_pool[DISCOVERY_PATH_REQUESTS_SIZE];
+		static DiscoveryPathRequestSlot* _discovery_path_requests_pool;
 		static DiscoveryPathRequestSlot* find_discovery_path_request_slot(const Bytes& hash);
 		static DiscoveryPathRequestSlot* find_empty_discovery_path_request_slot();
 		static size_t discovery_path_requests_count();
@@ -613,12 +613,13 @@ namespace RNS {
 			void clear() { in_use = false; destination_hash.clear(); attached_interface = Interface(Type::NONE); }
 		};
 		static constexpr size_t PENDING_LOCAL_PATH_REQUESTS_SIZE = 32;
-		static PendingLocalPathRequestSlot _pending_local_path_requests_pool[PENDING_LOCAL_PATH_REQUESTS_SIZE];
+		static PendingLocalPathRequestSlot* _pending_local_path_requests_pool;
 		static PendingLocalPathRequestSlot* find_pending_local_path_request_slot(const Bytes& hash);
 		static PendingLocalPathRequestSlot* find_empty_pending_local_path_request_slot();
 		static size_t pending_local_path_requests_count();
 
 	public:
+		static bool init_pools();  // Call early in startup, allocates pools in PSRAM
 		static void start(const Reticulum& reticulum_instance);
 		static void loop();
 		static void jobs();

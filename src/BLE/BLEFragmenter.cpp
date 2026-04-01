@@ -45,8 +45,8 @@ std::vector<Bytes> BLEFragmenter::fragment(const Bytes& data, uint16_t sequence_
 
     // Handle empty data case
     if (data.size() == 0) {
-        // Single empty END fragment
-        fragments.push_back(createFragment(Fragment::END, sequence_base, 1, Bytes()));
+        // Single empty LONE fragment
+        fragments.push_back(createFragment(Fragment::LONE, sequence_base, 1, Bytes()));
         return fragments;
     }
 
@@ -69,8 +69,8 @@ std::vector<Bytes> BLEFragmenter::fragment(const Bytes& data, uint16_t sequence_
         // Determine fragment type
         Fragment::Type type;
         if (total_fragments == 1) {
-            // Single fragment - use END type
-            type = Fragment::END;
+            // Single fragment - use LONE type
+            type = Fragment::LONE;
         } else if (i == 0) {
             // First of multiple fragments
             type = Fragment::START;
@@ -133,7 +133,8 @@ bool BLEFragmenter::parseHeader(const Bytes& fragment, Fragment::Type& type,
 
     // Byte 0: Type
     uint8_t type_byte = ptr[0];
-    if (type_byte != Fragment::START &&
+    if (type_byte != Fragment::LONE &&
+        type_byte != Fragment::START &&
         type_byte != Fragment::CONTINUE &&
         type_byte != Fragment::END) {
         return false;

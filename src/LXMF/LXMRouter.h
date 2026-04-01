@@ -15,14 +15,11 @@
 
 namespace LXMF {
 
-	// Forward declarations
-	class PropagationNodeManager;
-
 	/**
 	 * @brief LXMF Router - Message delivery orchestration
 	 *
 	 * Manages message queues, link establishment, and delivery for LXMF messages.
-	 * Supports DIRECT delivery method (via established links) for Phase 1 MVP.
+	 * Supports DIRECT, OPPORTUNISTIC, and PROPAGATED delivery methods.
 	 *
 	 * Usage:
 	 *   LXMRouter router(identity, "/path/to/storage");
@@ -255,11 +252,19 @@ namespace LXMF {
 		// ============== Propagation Node Support ==============
 
 		/**
-		 * @brief Set the propagation node manager
+		 * @brief Set the stamp cost required by the outbound propagation node
 		 *
-		 * @param manager Pointer to PropagationNodeManager (not owned)
+		 * When set to a non-zero value, stamps will be generated before sending
+		 * messages through the propagation node.
+		 *
+		 * @param cost Required stamp cost (0 = no stamp needed)
 		 */
-		void set_propagation_node_manager(PropagationNodeManager* manager);
+		void set_outbound_propagation_stamp_cost(uint8_t cost) { _outbound_propagation_stamp_cost = cost; }
+
+		/**
+		 * @brief Get the stamp cost for the outbound propagation node
+		 */
+		uint8_t outbound_propagation_stamp_cost() const { return _outbound_propagation_stamp_cost; }
 
 		/**
 		 * @brief Set the outbound propagation node
@@ -316,6 +321,14 @@ namespace LXMF {
 		 * retrieve any pending messages.
 		 */
 		void request_messages_from_propagation_node();
+
+		/**
+		 * @brief Advance propagation sync state machine
+		 *
+		 * Call periodically (e.g., in main loop) to advance sync after
+		 * path arrival or link establishment.
+		 */
+		void process_sync();
 
 		/**
 		 * @brief Get the current sync state
@@ -469,16 +482,26 @@ namespace LXMF {
 		 */
 		bool send_propagated(LXMessage& message);
 
+	public:
 		/**
 		 * @brief Handle message list response from propagation node
+		 * NOTE: Public for static callback access, not intended for direct use.
 		 */
 		void on_message_list_response(const RNS::Bytes& response);
 
 		/**
 		 * @brief Handle message get response from propagation node
+		 * NOTE: Public for static callback access, not intended for direct use.
 		 */
 		void on_message_get_response(const RNS::Bytes& response);
 
+		/**
+		 * @brief Handle sync failure
+		 * NOTE: Public for static callback access, not intended for direct use.
+		 */
+		void on_sync_failed();
+
+	private:
 		/**
 		 * @brief Process received propagated LXMF data
 		 */
@@ -489,15 +512,76 @@ namespace LXMF {
 		 */
 		static void static_propagation_resource_concluded(const RNS::Resource& resource);
 
+		enum class OutboundStage : uint8_t {
+			NONE = 0,
+			WAITING_PATH,
+			WAITING_DIRECT_LINK,
+			DIRECT_TRANSFER,
+			WAITING_PROP_LINK,
+			WAITING_PROP_STAMP,
+			PROP_TRANSFER
+		};
+
 		// Circular buffer helpers for message queues
 		bool pending_outbound_push(const LXMessage& msg);
 		bool pending_outbound_pop(LXMessage& msg);
 		LXMessage* pending_outbound_front();
+		LXMessage* pending_outbound_find(const RNS::Bytes& hash);
 		bool pending_inbound_push(const LXMessage& msg);
 		bool pending_inbound_pop(LXMessage& msg);
 		LXMessage* pending_inbound_front();
 		bool failed_outbound_push(const LXMessage& msg);
 		bool failed_outbound_pop(LXMessage& msg);
+
+		struct OutboundContextSlot {
+			bool in_use = false;
+			static constexpr size_t MESSAGE_HASH_SIZE = 32;
+			uint8_t message_hash[MESSAGE_HASH_SIZE];
+			double next_attempt_time = 0.0;
+			OutboundStage stage = OutboundStage::NONE;
+			bool propagation_stamp_pending = false;
+			bool propagation_stamp_failed = false;
+			bool avoid_auto_interface_path = false;
+			bool using_propagated_retry_budget = false;
+			uint8_t propagation_attempts = 0;
+			void set_message_hash(const RNS::Bytes& b) {
+				size_t len = std::min(b.size(), MESSAGE_HASH_SIZE);
+				memcpy(message_hash, b.data(), len);
+				if (len < MESSAGE_HASH_SIZE) memset(message_hash + len, 0, MESSAGE_HASH_SIZE - len);
+			}
+			bool message_hash_equals(const RNS::Bytes& b) const {
+				if (b.size() != MESSAGE_HASH_SIZE) return false;
+				return memcmp(message_hash, b.data(), MESSAGE_HASH_SIZE) == 0;
+			}
+			void clear() {
+				in_use = false;
+				memset(message_hash, 0, MESSAGE_HASH_SIZE);
+				next_attempt_time = 0.0;
+				stage = OutboundStage::NONE;
+				propagation_stamp_pending = false;
+				propagation_stamp_failed = false;
+				avoid_auto_interface_path = false;
+				using_propagated_retry_budget = false;
+				propagation_attempts = 0;
+			}
+		};
+
+		OutboundContextSlot* find_outbound_context_slot(const RNS::Bytes& hash);
+		OutboundContextSlot* find_empty_outbound_context_slot();
+		OutboundContextSlot* get_or_create_outbound_context(const RNS::Bytes& hash);
+		void clear_outbound_context(const RNS::Bytes& hash);
+		void schedule_outbound_retry(LXMessage& message, double delay, OutboundStage stage, const std::string& reason);
+		void update_pending_message_state(const RNS::Bytes& message_hash, Type::Message::State state, const std::string& reason);
+		void notify_sent_for_message_hash(
+			const RNS::Bytes& message_hash,
+			Type::Message::Method method = Type::Message::DIRECT
+		);
+		void notify_delivered_for_message_hash(const RNS::Bytes& message_hash);
+		void notify_failed_for_message_hash(const RNS::Bytes& message_hash);
+		bool path_supports_opportunistic(const RNS::Bytes& destination_hash, bool avoid_auto_interface_path = false) const;
+		bool ensure_stamp_worker_started();
+		bool queue_propagation_stamp_job(LXMessage& message);
+		void nudge_propagation_sync(const std::string& reason);
 
 	private:
 		// Core components
@@ -523,6 +607,9 @@ namespace LXMF {
 		size_t _failed_outbound_head = 0;
 		size_t _failed_outbound_tail = 0;
 		size_t _failed_outbound_count = 0;
+
+		static constexpr size_t OUTBOUND_CONTEXTS_SIZE = PENDING_OUTBOUND_SIZE;
+		OutboundContextSlot _outbound_contexts_pool[OUTBOUND_CONTEXTS_SIZE];
 
 		// Link management for DIRECT delivery - fixed pool (zero heap fragmentation)
 		static constexpr size_t DIRECT_LINKS_SIZE = 8;
@@ -614,12 +701,17 @@ namespace LXMF {
 
 		// Retry backoff
 		double _next_outbound_process_time = 0.0;  // Next time to process outbound queue
-		static constexpr double OUTBOUND_RETRY_DELAY = 5.0;  // Seconds between retries
-		static constexpr double PATH_REQUEST_WAIT = 3.0;     // Seconds to wait after path request
+		static constexpr double OUTBOUND_RETRY_DELAY = 10.0; // Seconds between retries (Python: DELIVERY_RETRY_WAIT = 10)
+		static constexpr double PATH_REQUEST_WAIT = 15.0;    // Seconds to wait after path request (Python: 7s, but LoRa needs more RX window)
+		static constexpr int MAX_DELIVERY_ATTEMPTS = 5;      // Max attempts before failing (Python: 5)
+		static constexpr int MAX_PROPAGATION_DELIVERY_ATTEMPTS = 8;
+		static constexpr int MAX_PATHLESS_TRIES = 1;          // Attempts before requesting path (Python: 1)
+		static constexpr int PROPAGATION_FALLBACK_ATTEMPTS = 3; // Direct/opportunistic retries before fallback/fail
+		static constexpr double PROPAGATION_SYNC_NUDGE_INTERVAL = 15.0;
 
 		// Propagation node support
-		PropagationNodeManager* _propagation_manager = nullptr;
 		RNS::Bytes _outbound_propagation_node;
+		uint8_t _outbound_propagation_stamp_cost = 0;
 		RNS::Link _outbound_propagation_link{RNS::Type::NONE};
 		bool _fallback_to_propagation = true;
 		bool _propagation_only = false;
@@ -627,6 +719,8 @@ namespace LXMF {
 		// Propagation sync state
 		PropagationSyncState _sync_state = PR_IDLE;
 		float _sync_progress = 0.0f;
+		double _sync_start_time = 0.0;
+		double _last_propagation_sync_nudge = 0.0;
 		SyncCompleteCallback _sync_complete_callback;
 
 		// Locally delivered transient IDs circular buffer (zero heap fragmentation)

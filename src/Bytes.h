@@ -97,14 +97,12 @@ MEM("Creating from data-move...");
 			MEMF("Bytes object created from data-move \"%s\", this: %lu, data: %lu", toString().c_str(), this, _data.get());
 		}
 		// Construct from std::vector<uint8_t> with standard allocator (for MsgPack interop)
-		// Only needed on Arduino where Data uses PSRAMAllocator (different from std::allocator)
-#ifdef ARDUINO
+		// Needed because Data uses PSRAMAllocator (different from std::allocator)
 		Bytes(const std::vector<uint8_t>& stdvec) {
 MEM("Creating from std::vector<uint8_t>...");
 			assign(stdvec.data(), stdvec.size());
 			MEMF("Bytes object created from std::vector \"%s\", this: %lu, data: %lu", toString().c_str(), this, _data.get());
 		}
-#endif
 		Bytes(const uint8_t* chunk, size_t size) {
 			assign(chunk, size);
 			MEMF("Bytes object created from chunk \"%s\", this: %lu, data: %lu", toString().c_str(), this, _data.get());

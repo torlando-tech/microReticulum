@@ -196,8 +196,8 @@ void ConversationListScreen::refresh() {
     _conversation_containers.clear();
     _peer_hash_pool.clear();
 
-    // Load conversations from store
-    std::vector<Bytes> peer_hashes = _message_store->get_conversations();
+	// Load conversations from store
+	std::vector<Bytes> peer_hashes = _message_store->get_conversations();
 
     // Reserve capacity to avoid reallocations during population
     _peer_hash_pool.reserve(peer_hashes.size());
@@ -210,20 +210,13 @@ void ConversationListScreen::refresh() {
         INFO(log_buf);
     }
 
-    for (const auto& peer_hash : peer_hashes) {
-        std::vector<Bytes> messages = _message_store->get_messages_for_conversation(peer_hash);
+	for (const auto& peer_hash : peer_hashes) {
+		::LXMF::MessageStore::ConversationInfo info = _message_store->get_conversation_info(peer_hash);
+		Bytes last_msg_hash = info.last_message_hash_bytes();
 
-        if (messages.empty()) {
-            continue;
-        }
-
-        // Load last message for preview
-        Bytes last_msg_hash = messages.back();
-        ::LXMF::LXMessage last_msg = _message_store->load_message(last_msg_hash);
-
-        // Create conversation item
-        ConversationItem item;
-        item.peer_hash = peer_hash;
+		// Create conversation item
+		ConversationItem item;
+		item.peer_hash = peer_hash;
 
         // Try to get display name from app_data, fall back to hash
         Bytes app_data = Identity::recall_app_data(peer_hash);
@@ -234,24 +227,35 @@ void ConversationListScreen::refresh() {
             } else {
                 item.peer_name = truncate_hash(peer_hash);
             }
-        } else {
-            item.peer_name = truncate_hash(peer_hash);
-        }
+		} else {
+			item.peer_name = truncate_hash(peer_hash);
+		}
 
-        // Get message content for preview
-        String content((const char*)last_msg.content().data(), last_msg.content().size());
-        item.last_message = content.substring(0, 30);  // Truncate to 30 chars
-        if (content.length() > 30) {
-            item.last_message += "...";
-        }
+		// Prefer preview cached in the index; only fall back to metadata if needed.
+		if (info.last_message_preview_cstr()[0] != '\0') {
+			item.last_message = info.last_message_preview_cstr();
+		} else if (last_msg_hash) {
+			::LXMF::MessageStore::MessageMetadata meta = _message_store->load_message_metadata(last_msg_hash);
+			if (meta.valid) {
+				String content(meta.content.c_str());
+				item.last_message = content.substring(0, 30);
+				if (content.length() > 30) {
+					item.last_message += "...";
+				}
+			} else {
+				item.last_message = "";
+			}
+		} else {
+			item.last_message = "";
+		}
 
-        item.timestamp = (uint32_t)last_msg.timestamp();
-        item.timestamp_str = format_timestamp(item.timestamp);
-        item.unread_count = 0;  // TODO: Track unread count
+		item.timestamp = (uint32_t)info.last_activity;
+		item.timestamp_str = format_timestamp(item.timestamp);
+		item.unread_count = info.unread_count;
 
-        _conversations.push_back(item);
-        create_conversation_item(item);
-    }
+		_conversations.push_back(item);
+		create_conversation_item(item);
+	}
 }
 
 void ConversationListScreen::create_conversation_item(const ConversationItem& item) {
@@ -320,15 +324,49 @@ void ConversationListScreen::create_conversation_item(const ConversationItem& it
 }
 
 void ConversationListScreen::update_unread_count(const Bytes& peer_hash, uint16_t unread_count) {
-    LVGL_LOCK();
-    // Find conversation and update
-    for (auto& conv : _conversations) {
-        if (conv.peer_hash == peer_hash) {
-            conv.unread_count = unread_count;
-            refresh();  // Redraw list
-            break;
-        }
-    }
+	LVGL_LOCK();
+	for (size_t i = 0; i < _conversations.size(); ++i) {
+		auto& conv = _conversations[i];
+		if (conv.peer_hash != peer_hash) {
+			continue;
+		}
+
+		conv.unread_count = unread_count;
+		if (i < _conversation_containers.size()) {
+			lv_obj_t* container = _conversation_containers[i];
+			if (container) {
+				uint32_t child_count = lv_obj_get_child_cnt(container);
+				lv_obj_t* badge = (child_count > 3) ? lv_obj_get_child(container, child_count - 1) : nullptr;
+
+				if (unread_count == 0) {
+					if (badge) {
+						lv_obj_del(badge);
+					}
+				} else {
+					if (badge && lv_obj_get_child_cnt(badge) > 0) {
+						lv_obj_t* label_count = lv_obj_get_child(badge, 0);
+						if (label_count) {
+							lv_label_set_text_fmt(label_count, "%d", unread_count);
+						}
+					} else {
+						lv_obj_t* new_badge = lv_obj_create(container);
+						lv_obj_set_size(new_badge, 20, 20);
+						lv_obj_align(new_badge, LV_ALIGN_BOTTOM_RIGHT, -6, -4);
+						lv_obj_set_style_bg_color(new_badge, Theme::error(), 0);
+						lv_obj_set_style_radius(new_badge, LV_RADIUS_CIRCLE, 0);
+						lv_obj_set_style_border_width(new_badge, 0, 0);
+						lv_obj_set_style_pad_all(new_badge, 0, 0);
+
+						lv_obj_t* label_count = lv_label_create(new_badge);
+						lv_label_set_text_fmt(label_count, "%d", unread_count);
+						lv_obj_center(label_count);
+						lv_obj_set_style_text_color(label_count, lv_color_white(), 0);
+					}
+				}
+			}
+		}
+		break;
+	}
 }
 
 void ConversationListScreen::set_conversation_selected_callback(ConversationSelectedCallback callback) {

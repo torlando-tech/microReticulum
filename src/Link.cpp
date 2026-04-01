@@ -18,6 +18,63 @@
 #define MSGPACK_DEBUGLOG_ENABLE 0
 #include <MsgPack.h>
 
+// Helper: parse msgpack [request_id, response_data] without type constraints.
+// The request_id is always BIN (hash bytes). The response_data can be ANY
+// msgpack type (array, int, bin, etc.) — we return its raw bytes for the
+// caller to parse. This is needed for Python interop where response_data
+// is a native msgpack array, not BIN-wrapped.
+// Returns byte offset past request_id (>0 on success, 0 on failure).
+static size_t parse_response_array(const RNS::Bytes& packed, RNS::Bytes& request_id_out, RNS::Bytes& response_data_out) {
+	const uint8_t* p = packed.data();
+	size_t total = packed.size();
+	if (total < 3) return 0;  // Minimum: fixarray(2) + 1 byte + 1 byte
+
+	size_t pos = 0;
+
+	// 1. Parse array header — expect fixarray of 2 (0x92) or array16/array32
+	uint8_t header = p[pos++];
+	size_t arr_size = 0;
+	if ((header & 0xf0) == 0x90) {
+		arr_size = header & 0x0f;  // fixarray
+	} else if (header == 0xdc && pos + 2 <= total) {
+		arr_size = ((size_t)p[pos] << 8) | p[pos+1];  // array16
+		pos += 2;
+	} else if (header == 0xdd && pos + 4 <= total) {
+		arr_size = ((size_t)p[pos] << 24) | ((size_t)p[pos+1] << 16) | ((size_t)p[pos+2] << 8) | p[pos+3];  // array32
+		pos += 4;
+	} else {
+		return 0;  // Not an array
+	}
+	if (arr_size < 2) return 0;
+
+	// 2. Parse element [0]: request_id (BIN type — hash bytes)
+	if (pos >= total) return 0;
+	uint8_t bin_header = p[pos++];
+	size_t bin_len = 0;
+	if (bin_header == 0xc4 && pos + 1 <= total) {  // bin8
+		bin_len = p[pos++];
+	} else if (bin_header == 0xc5 && pos + 2 <= total) {  // bin16
+		bin_len = ((size_t)p[pos] << 8) | p[pos+1];
+		pos += 2;
+	} else if (bin_header == 0xc6 && pos + 4 <= total) {  // bin32
+		bin_len = ((size_t)p[pos] << 24) | ((size_t)p[pos+1] << 16) | ((size_t)p[pos+2] << 8) | p[pos+3];
+		pos += 4;
+	} else {
+		return 0;  // request_id not BIN type
+	}
+	if (pos + bin_len > total) return 0;
+	request_id_out = RNS::Bytes(p + pos, bin_len);
+	pos += bin_len;
+
+	// 3. Remaining bytes are the raw msgpack of element [1] (response_data)
+	if (pos >= total) {
+		response_data_out = RNS::Bytes();
+	} else {
+		response_data_out = RNS::Bytes(p + pos, total - pos);
+	}
+	return pos;
+}
+
 #include <math.h>
 
 #include <algorithm>
@@ -192,6 +249,23 @@ Link::Link(const Destination& destination /*= {Type::NONE}*/, Callbacks::establi
 			Link link({Type::NONE}, nullptr, nullptr, owner, data.left(ECPUBSIZE/2), data.mid(ECPUBSIZE/2, ECPUBSIZE/2));
 			INFO(">>> Link::validate_request step 2: setting link_id");
 			link.set_link_id(packet);
+
+			if (data.size() == ECPUBSIZE + LINK_MTU_SIZE) {
+				DEBUG("Link request includes MTU signalling");
+				try {
+					uint16_t mtu = mtu_from_lr_packet(packet);
+					link.mtu((mtu != 0) ? mtu : Type::Reticulum::MTU);
+				}
+				catch (std::exception& e) {
+					ERRORF("An error occurred while validating link request %s", link.link_id().toHex().c_str());
+					link.mtu(Type::Reticulum::MTU);
+				}
+			}
+
+			link.mode(mode_from_lr_packet(packet));
+			DEBUGF("Incoming link request with mode %d", link.get_mode());
+			link.update_mdu();
+
 			link.destination(packet.destination());
 			link.establishment_timeout(ESTABLISHMENT_TIMEOUT_PER_HOP * std::max((uint8_t)1, packet.hops()) + KEEPALIVE);
 			link.establishment_cost(link.establishment_cost() + packet.raw().size());
@@ -220,7 +294,7 @@ Link::Link(const Destination& destination /*= {Type::NONE}*/, Callbacks::establi
 		}
 	}
 	else {
-		DEBUG("Invalid link request payload size, dropping request");
+		DEBUGF("Invalid link request payload size (%zu), dropping request", data.size());
 		return {Type::NONE};
 	}
 }
@@ -280,12 +354,20 @@ void Link::prove() {
 	INFO(">>> prove(): entry");
 	DEBUGF("Link %s requesting proof", link_id().toHex().c_str());
 	INFO(">>> prove(): preparing signed_data");
-	Bytes signed_data =_object->_link_id + _object->_pub_bytes + _object->_sig_pub_bytes;
+	// Cap link MTU at interface HW_MTU for constrained interfaces (e.g. LoRa 255 bytes)
+	if (_object->_attached_interface &&
+		(_object->_attached_interface.AUTOCONFIGURE_MTU() || _object->_attached_interface.FIXED_MTU()) &&
+		_object->_attached_interface.HW_MTU() < _object->_mtu) {
+		DEBUGF("Capping link MTU from %d to interface HW_MTU %d", _object->_mtu, _object->_attached_interface.HW_MTU());
+		_object->_mtu = _object->_attached_interface.HW_MTU();
+	}
+	Bytes signalling_bytes = Link::signalling_bytes(_object->_mtu, _object->_mode);
+	Bytes signed_data =_object->_link_id + _object->_pub_bytes + _object->_sig_pub_bytes + signalling_bytes;
 	INFO(">>> prove(): calling identity.sign()");
 	const Bytes signature(_object->_owner.identity().sign(signed_data));
 	INFO(">>> prove(): signature complete, building proof packet");
 
-	Bytes proof_data = signature + _object->_pub_bytes;
+	Bytes proof_data = signature + _object->_pub_bytes + signalling_bytes;
 	// CBA LINK
 	// CBA TODO: Determine which approach is better, passing liunk to packet or passing _link_destination
 	INFO(">>> prove(): creating Packet");
@@ -346,7 +428,7 @@ void Link::validate_proof(const Packet& packet) {
 				handshake();
 
 				_object->_establishment_cost += packet.raw().size();
-				Bytes signed_data = _object->_link_id + _object->_peer_pub_bytes + _object->_peer_sig_pub_bytes;
+				Bytes signed_data = _object->_link_id + _object->_peer_pub_bytes + _object->_peer_sig_pub_bytes + signalling_bytes;
 				const Bytes signature(packet_data.left(Type::Identity::SIGLENGTH/8));
 				
 				TRACEF("Link %s validating identity", link_id().toHex().c_str());
@@ -359,27 +441,35 @@ void Link::validate_proof(const Packet& packet) {
 					_object->__remote_identity = _object->_destination.identity();
 					if (confirmed_mtu) _object->_mtu = confirmed_mtu;
 					else _object->_mtu = RNS::Type::Reticulum::MTU;
+					// Cap link MTU at interface HW_MTU for constrained interfaces (e.g. LoRa 255 bytes)
+					if (_object->_attached_interface &&
+						(_object->_attached_interface.AUTOCONFIGURE_MTU() || _object->_attached_interface.FIXED_MTU()) &&
+						_object->_attached_interface.HW_MTU() < _object->_mtu) {
+						DEBUGF("Capping link MTU from %d to interface HW_MTU %d", _object->_mtu, _object->_attached_interface.HW_MTU());
+						_object->_mtu = _object->_attached_interface.HW_MTU();
+					}
 					update_mdu();
 					_object->_status = Type::Link::ACTIVE;
 					_object->_activated_at = OS::time();
 					_object->_last_proof = _object->_activated_at;
+					// Save a local copy before activate_link, which removes the
+				// link from the pending pool and invalidates *this.
+					Link self(*this);
 					Transport::activate_link(*this);
-					std::string link_str = toString();
-					std::string dest_str = _object->_destination.toString();
-					VERBOSEF("Link %s established with %s, RTT is %f s", link_str.c_str(), dest_str.c_str(), OS::round(_object->_rtt, 3));
-					
-					//p if _object->_rtt != None and _object->_establishment_cost != None and _object->_rtt > 0 and _object->_establishment_cost > 0:
-					if (_object->_rtt != 0.0 && _object->_establishment_cost != 0 && _object->_rtt > 0 and _object->_establishment_cost > 0) {
-						_object->_establishment_rate = _object->_establishment_cost / _object->_rtt;
+					// After activate_link, *this and _object are invalid - use self.
+					VERBOSEF("Link %s established with %s, RTT is %f s",
+						self.toString().c_str(), self.destination().toString().c_str(),
+						OS::round(self._object->_rtt, 3));
+
+					if (self._object->_rtt != 0.0 && self._object->_establishment_cost != 0 && self._object->_rtt > 0 && self._object->_establishment_cost > 0) {
+						self._object->_establishment_rate = self._object->_establishment_cost / self._object->_rtt;
 					}
 
-                    //p rtt_data = umsgpack.packb(self.rtt)
 					MsgPack::Packer packer;
-					packer.serialize(_object->_rtt);
+					packer.serialize(self._object->_rtt);
 					Bytes rtt_data(packer.data(), packer.size());
 TRACEF("***** RTT data size: %d", rtt_data.size());
-                    //p rtt_packet = RNS.Packet(self, rtt_data, context=RNS.Packet.LRRTT)
-					Packet rtt_packet(*this, rtt_data, Type::Packet::DATA, Type::Packet::LRRTT);
+					Packet rtt_packet(self, rtt_data, Type::Packet::DATA, Type::Packet::LRRTT);
 TRACEF("***** RTT packet data: %s", rtt_packet.data().toHex().c_str());
 rtt_packet.pack();
 Packet test_packet(RNS::Destination(RNS::Type::NONE), rtt_packet.raw());
@@ -387,17 +477,13 @@ test_packet.unpack();
 TRACEF("***** RTT test packet destination hash: %s", test_packet.destination_hash().toHex().c_str());
 TRACEF("***** RTT test packet data size: %d", test_packet.data().size());
 TRACEF("***** RTT test packet data: %s", test_packet.data().toHex().c_str());
-Bytes plaintext = decrypt(test_packet.data());
+Bytes plaintext = self.decrypt(test_packet.data());
 TRACEF("***** RTT test packet plaintext: %s", plaintext.toHex().c_str());
 					rtt_packet.send();
-					had_outbound();
+					self.had_outbound();
 
-					if (_object->_callbacks._established != nullptr) {
-						VERBOSEF("Link %s is established", link_id().toHex().c_str());
-						//p thread = threading.Thread(target=_object->_callbacks.link_established, args=(self,))
-						//p thread.daemon = True
-						//p thread.start()
-						_object->_callbacks._established(*this);
+					if (self._object->_callbacks._established != nullptr) {
+						self._object->_callbacks._established(self);
 					}
 				}
 				else {
@@ -456,9 +542,41 @@ const RNS::RequestReceipt Link::request(const Bytes& path, const Bytes& data /*=
 
 	//p unpacked_request = [OS::time(), request_path_hash, data]
 	//p packed_request = umsgpack.packb(unpacked_request)
-    MsgPack::Packer packer;
-	packer.to_array(OS::time(), request_path_hash, data);
-	Bytes packed_request(packer.data(), packer.size());
+	// NOTE: data is pre-serialized msgpack. We must embed it as raw bytes
+	// (not BIN-wrapped) so Python peers see nested objects, not binary blobs.
+	// Using to_array() would call Bytes::to_msgpack() which packs as BIN type,
+	// causing Python's umsgpack.unpackb() to return bytes instead of the
+	// original structure. Build the packed request manually instead.
+
+	// Pack timestamp as float64
+	MsgPack::Packer ts_packer;
+	ts_packer.pack(OS::time());
+	// Pack path_hash as BIN (correct: both Python and C++ expect bytes)
+	MsgPack::Packer ph_packer;
+	request_path_hash.to_msgpack(ph_packer);
+
+	// Build [timestamp, path_hash, data] with data as raw embedded msgpack
+	size_t total = 1 + ts_packer.size() + ph_packer.size();  // 1 for fixarray header
+	if (data && data.size() > 0) {
+		total += data.size();
+	} else {
+		total += 1;  // nil byte
+	}
+
+	Bytes packed_request;
+	uint8_t* p = packed_request.writable(total);
+	size_t pos = 0;
+	p[pos++] = 0x93;  // fixarray of 3
+	memcpy(p + pos, ts_packer.data(), ts_packer.size());
+	pos += ts_packer.size();
+	memcpy(p + pos, ph_packer.data(), ph_packer.size());
+	pos += ph_packer.size();
+	if (data && data.size() > 0) {
+		memcpy(p + pos, data.data(), data.size());
+		pos += data.size();
+	} else {
+		p[pos++] = 0xc0;  // nil
+	}
 
 	if (timeout == 0.0) {
 		timeout = _object->_rtt * _object->_traffic_timeout_factor + Type::Resource::RESPONSE_MAX_GRACE_TIME * 1.125;
@@ -983,18 +1101,16 @@ void Link::request_resource_concluded(const Resource& resource) {
 void Link::response_resource_concluded(const Resource& resource) {
 	assert(_object);
 	if (resource.status() == Type::Resource::COMPLETE) {
-		//p packed_response = resource.data.read()
 		Bytes packed_response = resource.data();
-		//p unpacked_response = umsgpack.unpackb(packed_response)
-		//p request_id        = unpacked_response[0]
-		//p response_data     = unpacked_response[1]
-		MsgPack::Unpacker unpacker;
-		unpacker.feed(packed_response.data(), packed_response.size());
-		MsgPack::bin_t<uint8_t> request_id;
-		MsgPack::bin_t<uint8_t> response_data;
-		unpacker.from_array(request_id, response_data);
-
-		handle_response(request_id, response_data, resource.total_size(), resource.size());
+		// Parse [request_id, response_data] — response_data may be any msgpack type
+		Bytes request_id;
+		Bytes response_data;
+		size_t offset = parse_response_array(packed_response, request_id, response_data);
+		if (offset > 0) {
+			handle_response(request_id, response_data, resource.total_size(), resource.size());
+		} else {
+			ERROR("response_resource_concluded: Failed to parse [request_id, response_data]");
+		}
 	}
 	else {
 		DEBUGF("Incoming response resource failed with status: %d", resource.status());
@@ -1049,6 +1165,7 @@ void Link::receive(const Packet& packet) {
 				switch (packet.context()) {
 				case Type::Packet::CONTEXT_NONE:
 				{
+					DEBUGF("Link::receive CTX_NONE: data_sz=%zu first64=%s", packet.data().size(), packet.data().left(64).toHex().c_str());
 					const Bytes plaintext = decrypt(packet.data());
 					if (plaintext) {
 						if (_object->_callbacks._packet) {
@@ -1087,7 +1204,7 @@ void Link::receive(const Packet& packet) {
 				{
 					const Bytes plaintext = decrypt(packet.data());
 					if (plaintext) {
-						if (_object->_initiator && plaintext.size() == Type::Identity::KEYSIZE/8 + Type::Identity::SIGLENGTH/8) {
+						if (!_object->_initiator && plaintext.size() == Type::Identity::KEYSIZE/8 + Type::Identity::SIGLENGTH/8) {
 							const Bytes public_key   = plaintext.left(Type::Identity::KEYSIZE/8);
 							const Bytes signed_data  = _object->_link_id + public_key;
 							const Bytes signature    = plaintext.mid(Type::Identity::KEYSIZE/8, Type::Identity::SIGLENGTH/8);
@@ -1143,16 +1260,17 @@ void Link::receive(const Packet& packet) {
 							//p unpacked_response = umsgpack.unpackb(packed_response)
 							//p request_id = unpacked_response[0]
 							//p response_data = unpacked_response[1]
-                            //p transfer_size = len(umsgpack.packb(response_data))-2
-							MsgPack::Unpacker unpacker;
-							unpacker.feed(packed_response.data(), packed_response.size());
-							MsgPack::bin_t<uint8_t> request_id;
-							MsgPack::bin_t<uint8_t> response_data;
-							unpacker.from_array(request_id, response_data);
-							MsgPack::Packer packer;
-							packer.serialize(response_data);
-							size_t transfer_size = packer.size() - 2;
-							handle_response(Bytes(request_id.data(), request_id.size()), Bytes(response_data.data(), response_data.size()), transfer_size, transfer_size);
+							//p transfer_size = len(umsgpack.packb(response_data))-2
+							// NOTE: response_data may be any msgpack type (array, int, etc.)
+							// from Python peers, not just BIN. Extract request_id then take
+							// remaining raw bytes as response data for caller to parse.
+							Bytes request_id;
+							Bytes response_data;
+							size_t offset = parse_response_array(packed_response, request_id, response_data);
+							if (offset > 0) {
+								size_t transfer_size = response_data.size();
+								handle_response(request_id, response_data, transfer_size, transfer_size);
+							}
 						}
 					}
 					catch (std::exception& e) {
@@ -1165,6 +1283,7 @@ void Link::receive(const Packet& packet) {
 					if (!_object->_initiator) {
 						rtt_packet(packet);
 					}
+					break;
 				}
 				case Type::Packet::LINKCLOSE:
 				{
@@ -1265,8 +1384,10 @@ void Link::receive(const Packet& packet) {
 */
 				case Type::Packet::RESOURCE_ADV:
 				{
+					DEBUGF("Link::receive RESOURCE_ADV: data_sz=%zu first64=%s", packet.data().size(), packet.data().left(64).toHex().c_str());
 					const Bytes plaintext = decrypt(packet.data());
 					if (plaintext) {
+						DEBUGF("Link::receive RESOURCE_ADV: decrypt OK pt_sz=%zu", plaintext.size());
 						// Store plaintext in packet for Resource::accept to use
 						const_cast<Packet&>(packet).plaintext(plaintext);
 
@@ -1478,7 +1599,7 @@ const Bytes Link::decrypt(const Bytes& ciphertext) {
 		return _object->_token->decrypt(ciphertext);
 	}
 	catch (std::exception& e) {
-		ERRORF("Decryption failed on link %s. The contained exception was: %s", toString().c_str(), e.what());
+		ERRORF("Decryption FAILED on link %s: %s (ct_sz=%zu ct_first32=%s)", toString().c_str(), e.what(), ciphertext.size(), ciphertext.left(32).toHex().c_str());
 		return {Bytes::NONE};
 	}
 }
@@ -1593,7 +1714,7 @@ void Link::cancel_incoming_resource(const Resource& resource) {
 
 bool Link::ready_for_new_resource() {
 	assert(_object);
-	return (_object->_outgoing_resources_count > 0);
+	return (_object->_outgoing_resources_count == 0);
 }
 
 SegmentAccumulator& Link::segment_accumulator() {
@@ -1632,9 +1753,17 @@ void Link::handle_resource_concluded(const Resource& resource) {
 
 	// Check if resource completed successfully
 	if (resource_copy.status() != Type::Resource::COMPLETE) {
-		// Failed resource - clean up and notify application
 		resource_concluded(resource_copy);
 		DEBUGF("Link::handle_resource_concluded: Resource failed with status %d", resource_copy.status());
+		// Check if this failed resource was a response to a pending request
+		if (resource_copy.request_id() && _object->_pending_requests_count > 0) {
+			for (size_t i = 0; i < _object->_pending_requests_count; i++) {
+				if (_object->_pending_requests[i].request_id() == resource_copy.request_id()) {
+					response_resource_concluded(resource_copy);
+					return;
+				}
+			}
+		}
 		if (_object->_callbacks._resource_concluded) {
 			_object->_callbacks._resource_concluded(resource_copy);
 		}
@@ -1664,6 +1793,37 @@ void Link::handle_resource_concluded(const Resource& resource) {
 		DEBUG("Link::handle_resource_concluded: segment_completed returned false, falling through");
 	}
 
+	// Check if this resource is a response to a pending Link::request().
+	// First try matching by resource's request_id field (from advertisement).
+	// If that's empty (Python servers often omit it), try parsing the resource
+	// data as [request_id, response_data] and matching the embedded request_id.
+	if (_object->_pending_requests_count > 0) {
+		Bytes match_id = resource_copy.request_id();
+
+		// If no request_id in resource metadata, try extracting from data
+		if (!match_id && resource_copy.data().size() > 3) {
+			Bytes extracted_id;
+			Bytes unused_data;
+			if (parse_response_array(resource_copy.data(), extracted_id, unused_data) > 0) {
+				match_id = extracted_id;
+				DEBUGF("Link::handle_resource_concluded: Extracted request_id from data: %s",
+					match_id.toHex().c_str());
+			}
+		}
+
+		if (match_id) {
+			for (size_t i = 0; i < _object->_pending_requests_count; i++) {
+				if (_object->_pending_requests[i].request_id() == match_id) {
+					DEBUGF("Link::handle_resource_concluded: Resource is response to pending request %s",
+						match_id.toHex().c_str());
+					resource_concluded(resource_copy);
+					response_resource_concluded(resource_copy);
+					return;
+				}
+			}
+		}
+	}
+
 	// Single-segment resource or non-segmented - clean up and notify application
 	resource_concluded(resource_copy);
 	if (_object->_callbacks._resource_concluded) {
@@ -1689,6 +1849,11 @@ double Link::rtt() const {
 const Destination& Link::destination() const {
 	assert(_object);
 	return _object->_destination;
+}
+
+const Interface& Link::attached_interface() const {
+	assert(_object);
+	return _object->_attached_interface;
 }
 
 // CBA LINK
@@ -1944,6 +2109,16 @@ void Link::increment_txbytes(uint16_t bytes) {
 void Link::status(Type::Link::status status) {
 	assert(_object);
 	_object->_status = status;
+}
+
+void Link::mtu(uint16_t mtu) {
+	assert(_object);
+	_object->_mtu = mtu;
+}
+
+void Link::mode(RNS::Type::Link::link_mode mode) {
+	assert(_object);
+	_object->_mode = mode;
 }
 
 

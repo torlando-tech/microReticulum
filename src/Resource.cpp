@@ -11,9 +11,6 @@
 
 #include <MsgPack.h>
 #include <algorithm>
-#include <fstream>
-#include <sstream>
-#include <iomanip>
 
 #if defined(ESP_PLATFORM) || defined(ARDUINO)
 #include <esp_heap_caps.h>
@@ -539,16 +536,16 @@ void Resource::cancel() {
 		Packet cancel_packet(_object->_link, cancel_data,
 							Type::Packet::DATA, Type::Packet::RESOURCE_ICL);
 		cancel_packet.send();
-		_object->_link.cancel_outgoing_resource(*this);
 	} else {
 		// Receiver cancelling - send RESOURCE_RCL (Receiver Cancel)
 		Packet cancel_packet(_object->_link, cancel_data,
 							Type::Packet::DATA, Type::Packet::RESOURCE_RCL);
 		cancel_packet.send();
-		_object->_link.cancel_incoming_resource(*this);
 	}
 
-	// Fire concluded callback with FAILED status
+	// Fire concluded callback - this removes the resource from the link's
+	// tracking array via handle_resource_concluded, invalidating 'this'.
+	// Do NOT access _object after this point.
 	if (_object->_callbacks._concluded != nullptr) {
 		_object->_callbacks._concluded(*this);
 	}
@@ -572,26 +569,35 @@ void Resource::check_timeout() {
 	}
 	_object->_watchdog_lock = true;
 
+	// Timeout handlers return true if the resource was terminated (concluded
+	// callback fired). When terminated, the concluded callback removes this
+	// resource from the link's tracking array via handle_resource_concluded(),
+	// which compacts the array and invalidates 'this'. We must NOT access
+	// _object after a terminal return.
+	bool terminated = false;
+
 	switch (_object->_status) {
 	case Type::Resource::ADVERTISED:
-		timeout_advertised();
+		terminated = timeout_advertised();
 		break;
 	case Type::Resource::TRANSFERRING:
-		timeout_transferring();
+		terminated = timeout_transferring();
 		break;
 	case Type::Resource::AWAITING_PROOF:
-		timeout_awaiting_proof();
+		terminated = timeout_awaiting_proof();
 		break;
 	default:
 		break;
 	}
 
-	_object->_watchdog_lock = false;
+	if (!terminated) {
+		_object->_watchdog_lock = false;
+	}
 }
 
-void Resource::timeout_advertised() {
+bool Resource::timeout_advertised() {
 	// Only sender can be in ADVERTISED state
-	if (!_object->_initiator) return;
+	if (!_object->_initiator) return false;
 
 	double now = OS::time();
 
@@ -616,11 +622,14 @@ void Resource::timeout_advertised() {
 				WARNING("Resource::timeout_advertised: Failing resource - internal RAM critically low ("
 					+ std::to_string(free_internal) + " bytes free)");
 				_object->_status = Type::Resource::FAILED;
+				// Reset watchdog before callback (callback may invalidate 'this')
+				_object->_watchdog_lock = false;
 				if (_object->_callbacks._concluded != nullptr) {
 					_object->_callbacks._concluded(*this);
 				}
-				_object->_link.cancel_outgoing_resource(*this);
-				return;
+				// Do NOT access _object after callback - handle_resource_concluded
+				// already removed this resource from link tracking
+				return true;
 			}
 #endif
 			_object->_retries_left--;
@@ -631,17 +640,19 @@ void Resource::timeout_advertised() {
 			DEBUG("Resource::timeout_advertised: Advertisement timed out, max retries exceeded");
 			_object->_status = Type::Resource::FAILED;
 
+			// Reset watchdog before callback (callback may invalidate 'this')
+			_object->_watchdog_lock = false;
 			if (_object->_callbacks._concluded != nullptr) {
 				_object->_callbacks._concluded(*this);
 			}
-
-			// Unregister from link
-			_object->_link.cancel_outgoing_resource(*this);
+			// Do NOT access _object after callback
+			return true;
 		}
 	}
+	return false;
 }
 
-void Resource::timeout_transferring() {
+bool Resource::timeout_transferring() {
 	double now = OS::time();
 
 	// Get RTT estimate
@@ -663,11 +674,13 @@ void Resource::timeout_transferring() {
 			DEBUG("Resource::timeout_transferring: Sender timeout waiting for requests");
 			_object->_status = Type::Resource::FAILED;
 
+			// Reset watchdog before callback (callback may invalidate 'this')
+			_object->_watchdog_lock = false;
 			if (_object->_callbacks._concluded != nullptr) {
 				_object->_callbacks._concluded(*this);
 			}
-
-			_object->_link.cancel_outgoing_resource(*this);
+			// Do NOT access _object after callback
+			return true;
 		}
 	} else {
 		// Receiver: waiting for parts from sender
@@ -703,11 +716,12 @@ void Resource::timeout_transferring() {
 					WARNING("Resource::timeout_transferring: Failing resource - internal RAM critically low ("
 						+ std::to_string(free_internal) + " bytes free)");
 					_object->_status = Type::Resource::FAILED;
+					_object->_watchdog_lock = false;
 					if (_object->_callbacks._concluded != nullptr) {
 						_object->_callbacks._concluded(*this);
 					}
-					_object->_link.cancel_incoming_resource(*this);
-					return;
+					// Do NOT access _object after callback
+					return true;
 				}
 #endif
 				_object->_retries_left--;
@@ -728,19 +742,22 @@ void Resource::timeout_transferring() {
 				DEBUG("Resource::timeout_transferring: Transfer timed out, max retries exceeded");
 				_object->_status = Type::Resource::FAILED;
 
+				// Reset watchdog before callback (callback may invalidate 'this')
+				_object->_watchdog_lock = false;
 				if (_object->_callbacks._concluded != nullptr) {
 					_object->_callbacks._concluded(*this);
 				}
-
-				_object->_link.cancel_incoming_resource(*this);
+				// Do NOT access _object after callback
+				return true;
 			}
 		}
 	}
+	return false;
 }
 
-void Resource::timeout_awaiting_proof() {
+bool Resource::timeout_awaiting_proof() {
 	// Only sender awaits proof
-	if (!_object->_initiator) return;
+	if (!_object->_initiator) return false;
 
 	double now = OS::time();
 
@@ -759,12 +776,15 @@ void Resource::timeout_awaiting_proof() {
 		DEBUG("Resource::timeout_awaiting_proof: Proof timed out");
 		_object->_status = Type::Resource::FAILED;
 
+		// Reset watchdog before callback (callback may invalidate 'this')
+		_object->_watchdog_lock = false;
 		if (_object->_callbacks._concluded != nullptr) {
 			_object->_callbacks._concluded(*this);
 		}
-
-		_object->_link.cancel_outgoing_resource(*this);
+		// Do NOT access _object after callback
+		return true;
 	}
+	return false;
 }
 
 void Resource::prepare_next_segment() {
@@ -1638,6 +1658,10 @@ void Resource::receive_part(const Packet& packet) {
 	if (_object->_received_count >= _object->_total_parts) {
 		DEBUG("Resource::receive_part: All parts received, assembling");
 		assemble();
+		// IMPORTANT: assemble()'s concluded callback removes this resource from
+		// the link's _incoming_resources array, which invalidates 'this'.
+		// We must return immediately - do NOT access _object after this point.
+		return;
 	} else if (_object->_outstanding_parts == 0) {
 		// Dynamic window scaling: measure RTT and adjust window for fast links
 		if (_object->_req_sent > 0) {
@@ -1699,47 +1723,6 @@ void Resource::assemble() {
 
 	TRACE("Resource::assemble: Starting assembly");
 
-	// DEBUG: Save individual parts before assembly
-	{
-		std::string parts_dir = "/tmp/cpp_stage0_parts";
-		// Create directory using system call
-		system("mkdir -p /tmp/cpp_stage0_parts");
-
-		for (size_t i = 0; i < _object->_parts.size(); i++) {
-			// Format part number with leading zeros (e.g., part_0000.bin)
-			std::ostringstream filename;
-			filename << parts_dir << "/part_" << std::setfill('0') << std::setw(4) << i << ".bin";
-
-			std::string filename_str = filename.str();
-			std::ofstream f(filename_str, std::ios::binary);
-			if (f) {
-				const Bytes& part = _object->_parts[i];
-				f.write(reinterpret_cast<const char*>(part.data()), part.size());
-				f.close();
-				DEBUGF("Resource::assemble: Saved part %zu (%zu bytes) to %s",
-					   i, part.size(), filename_str.c_str());
-			}
-		}
-
-		// Save parts metadata
-		std::ofstream meta("/tmp/cpp_parts_metadata.json", std::ios::out);
-		if (meta) {
-			meta << "{\n";
-			meta << "  \"total_parts\": " << _object->_parts.size() << ",\n";
-			meta << "  \"parts\": [\n";
-			for (size_t i = 0; i < _object->_parts.size(); i++) {
-				meta << "    {\"index\": " << i << ", \"size\": " << _object->_parts[i].size();
-				meta << ", \"hash\": \"" << _object->_hashmap[i].toHex() << "\"}";
-				if (i < _object->_parts.size() - 1) meta << ",";
-				meta << "\n";
-			}
-			meta << "  ]\n";
-			meta << "}\n";
-			meta.close();
-			DEBUG("Resource::assemble: Saved parts metadata to /tmp/cpp_parts_metadata.json");
-		}
-	}
-
 	// Concatenate all parts (Token-encrypted chunks)
 	Bytes assembled_data;
 	for (size_t i = 0; i < _object->_parts.size(); i++) {
@@ -1747,16 +1730,6 @@ void Resource::assemble() {
 	}
 
 	DEBUGF("Resource::assemble: Assembled %zu bytes from %zu parts", assembled_data.size(), _object->_parts.size());
-
-	// DEBUG: Save encrypted data before decryption
-	{
-		std::ofstream f("/tmp/cpp_stage1_encrypted.bin", std::ios::binary);
-		if (f) {
-			f.write(reinterpret_cast<const char*>(assembled_data.data()), assembled_data.size());
-			f.close();
-			DEBUGF("Resource::assemble: Saved %zu encrypted bytes to /tmp/cpp_stage1_encrypted.bin", assembled_data.size());
-		}
-	}
 
 	// Decrypt if needed (Resource uses Token encryption via link.encrypt())
 	if (_object->_encrypted) {
@@ -1769,16 +1742,6 @@ void Resource::assemble() {
 		}
 		assembled_data = decrypted;
 		DEBUGF("Resource::assemble: Decrypted to %zu bytes", assembled_data.size());
-
-		// DEBUG: Save decrypted data (with random_hash)
-		{
-			std::ofstream f("/tmp/cpp_stage2_decrypted.bin", std::ios::binary);
-			if (f) {
-				f.write(reinterpret_cast<const char*>(assembled_data.data()), assembled_data.size());
-				f.close();
-				DEBUGF("Resource::assemble: Saved %zu decrypted bytes to /tmp/cpp_stage2_decrypted.bin", assembled_data.size());
-			}
-		}
 	}
 
 	// Strip off the random_hash prefix (4 bytes)
@@ -1788,25 +1751,8 @@ void Resource::assemble() {
 		_object->_assembly_lock = false;
 		return;
 	}
-	Bytes random_hash_prefix = assembled_data.left(Type::Resource::RANDOM_HASH_SIZE);
-	std::string random_hash_prefix_hex = random_hash_prefix.toHex();
-	DEBUGF("Resource::assemble: random_hash prefix = %s", random_hash_prefix_hex.c_str());
 	assembled_data = assembled_data.mid(Type::Resource::RANDOM_HASH_SIZE);
 	DEBUGF("Resource::assemble: After stripping random_hash: %zu bytes", assembled_data.size());
-
-	// DEBUG: Save data after stripping random_hash (before decompression)
-	{
-		std::ofstream f("/tmp/cpp_stage3_stripped.bin", std::ios::binary);
-		if (f) {
-			f.write(reinterpret_cast<const char*>(assembled_data.data()), assembled_data.size());
-			f.close();
-			DEBUGF("Resource::assemble: Saved %zu stripped bytes to /tmp/cpp_stage3_stripped.bin", assembled_data.size());
-			std::string first_50_hex = assembled_data.left(50).toHex();
-			std::string last_20_hex = assembled_data.right(20).toHex();
-			DEBUGF("Resource::assemble: First 50 bytes: %s", first_50_hex.c_str());
-			DEBUGF("Resource::assemble: Last 20 bytes: %s", last_20_hex.c_str());
-		}
-	}
 
 	// Decompress if needed
 	if (_object->_compressed) {
@@ -1819,20 +1765,6 @@ void Resource::assemble() {
 		}
 		assembled_data = decompressed;
 		DEBUGF("Resource::assemble: Decompressed to %zu bytes", assembled_data.size());
-
-		// DEBUG: Save decompressed data
-		{
-			std::ofstream f("/tmp/cpp_stage4_decompressed.bin", std::ios::binary);
-			if (f) {
-				f.write(reinterpret_cast<const char*>(assembled_data.data()), assembled_data.size());
-				f.close();
-				DEBUGF("Resource::assemble: Saved %zu decompressed bytes to /tmp/cpp_stage4_decompressed.bin",
-					   assembled_data.size());
-				std::string decompressed_50_hex = assembled_data.left(50).toHex();
-				DEBUGF("Resource::assemble: Decompressed first 50 bytes: %s",
-					   decompressed_50_hex.c_str());
-			}
-		}
 	}
 
 	// Verify hash
@@ -1855,35 +1787,6 @@ void Resource::assemble() {
 	DEBUGF("Resource::assemble: Assembly complete, data_size=%zu, expected_total_size=%zu",
 		_object->_data.size(), _object->_total_size);
 
-	// DEBUG: Save final verified data
-	{
-		std::ofstream f("/tmp/cpp_stage5_final.bin", std::ios::binary);
-		if (f) {
-			f.write(reinterpret_cast<const char*>(assembled_data.data()), assembled_data.size());
-			f.close();
-			DEBUGF("Resource::assemble: Saved %zu final verified bytes to /tmp/cpp_stage5_final.bin",
-				   assembled_data.size());
-		}
-
-		// Save comprehensive metadata
-		std::ofstream meta("/tmp/cpp_final_metadata.json", std::ios::out);
-		if (meta) {
-			meta << "{\n";
-			meta << "  \"resource_hash\": \"" << _object->_hash.toHex() << "\",\n";
-			meta << "  \"random_hash\": \"" << _object->_random_hash.toHex() << "\",\n";
-			meta << "  \"total_size\": " << _object->_total_size << ",\n";
-			meta << "  \"transfer_size\": " << _object->_size << ",\n";
-			meta << "  \"total_parts\": " << _object->_total_parts << ",\n";
-			meta << "  \"compressed\": " << (_object->_compressed ? "true" : "false") << ",\n";
-			meta << "  \"encrypted\": " << (_object->_encrypted ? "true" : "false") << ",\n";
-			meta << "  \"final_data_size\": " << _object->_data.size() << ",\n";
-			meta << "  \"hash_verification\": \"PASSED\"\n";
-			meta << "}\n";
-			meta.close();
-			DEBUG("Resource::assemble: Saved final metadata to /tmp/cpp_final_metadata.json");
-		}
-	}
-
 	// Validate data size matches advertised total_size
 	if (_object->_data.size() != _object->_total_size) {
 		ERRORF("Resource::assemble: SIZE MISMATCH! received %zu bytes, expected %zu bytes",
@@ -1893,12 +1796,15 @@ void Resource::assemble() {
 	// Send proof to sender
 	prove();
 
-	// Call concluded callback
+	// Release assembly lock BEFORE concluded callback, because the callback
+	// may remove this resource from the link's tracking (dropping our shared_ptr
+	// ref count), invalidating _object. Assembly is complete at this point anyway.
+	_object->_assembly_lock = false;
+
+	// Call concluded callback (may destroy this resource's _object via shared_ptr)
 	if (_object->_callbacks._concluded != nullptr) {
 		_object->_callbacks._concluded(*this);
 	}
-
-	_object->_assembly_lock = false;
 }
 
 // Send proof that resource was received

@@ -80,6 +80,9 @@ Reticulum::Reticulum() : _object(new Object()) {
 	//RNG.addNoiseSource(noise);
  #endif
 
+	// Initialize Transport pools in PSRAM before any interface registration
+	Transport::init_pools();
+
 	//z RNS.vendor.platformutils.platform_checks()
 
 /*p TODO

@@ -85,12 +85,14 @@ void RNS::doLog(LogLevel level, const char* msg) {
 		return;
 	}
 #ifdef ARDUINO
-	Serial.print(getTimeString());
-	Serial.print(" [");
-	Serial.print(getLevelName(level));
-	Serial.print("] ");
-	Serial.println(msg);
-	Serial.flush();
+	if (Serial) {
+		Serial.print(getTimeString());
+		Serial.print(" [");
+		Serial.print(getLevelName(level));
+		Serial.print("] ");
+		Serial.println(msg);
+		Serial.flush();
+	}
 #else
 	printf("%s [%s] %s\n", getTimeString(), getLevelName(level), msg);
 	fflush(stdout);
@@ -102,7 +104,9 @@ void HEAD(const char* msg, LogLevel level) {
 		return;
 	}
 #ifdef ARDUINO
-	Serial.println("");
+	if (Serial) {
+		Serial.println("");
+	}
 #else
 	printf("\n");
 #endif

@@ -283,6 +283,7 @@ namespace RNS {
 		inline const Interface& attached_interface() const { assert(_object); return _object->_attached_interface; }
 		inline const Interface& receiving_interface() const { assert(_object); return _object->_receiving_interface; }
 		inline Type::Packet::header_types header_type() const { assert(_object); return _object->_header_type; }
+		inline Type::Packet::context_flag context_flag() const { assert(_object); return static_cast<Type::Packet::context_flag>(_object->_context_flag); }
 		inline Type::Transport::types transport_type() const { assert(_object); return _object->_transport_type; }
 		inline Type::Destination::types destination_type() const { assert(_object); return _object->_destination_type; }
 		inline Type::Packet::types packet_type() const { assert(_object); return _object->_packet_type; }

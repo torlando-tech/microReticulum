@@ -397,10 +397,18 @@ void BLEPeerManager::setPeerState(const Bytes& identifier, PeerState state) {
 }
 
 void BLEPeerManager::setPeerHandle(const Bytes& identifier, uint16_t conn_handle) {
+    // Validate handle is in range (ESP32 NimBLE uses 0-7)
+    if (conn_handle != 0xFFFF && conn_handle >= MAX_CONN_HANDLES) {
+        WARNING("BLEPeerManager: Rejecting invalid conn_handle=" +
+                std::to_string(conn_handle) + " (max=" +
+                std::to_string(MAX_CONN_HANDLES - 1) + ")");
+        return;
+    }
+
     PeerInfo* peer = findPeer(identifier);
     if (peer) {
         // Remove old handle mapping if exists
-        if (peer->conn_handle != 0xFFFF) {
+        if (peer->conn_handle != 0xFFFF && peer->conn_handle < MAX_CONN_HANDLES) {
             clearHandleToPeer(peer->conn_handle);
         }
         peer->conn_handle = conn_handle;
@@ -586,6 +594,20 @@ void BLEPeerManager::cleanupStalePeers(double max_age) {
             }
         }
     }
+
+    // Zombie detection: connected peers with no recent activity
+    for (size_t i = 0; i < PEERS_POOL_SIZE; i++) {
+        if (!_peers_by_identity_pool[i].in_use) continue;
+
+        PeerInfo& peer = _peers_by_identity_pool[i].peer;
+        if (peer.isConnected() && peer.last_activity > 0) {
+            double idle = now - peer.last_activity;
+            if (idle > Timing::ZOMBIE_TIMEOUT) {
+                WARNING("BLEPeerManager: Zombie peer detected, marking for disconnect");
+                peer.state = PeerState::DISCONNECTING;
+            }
+        }
+    }
 }
 
 //=============================================================================
@@ -686,7 +708,13 @@ void BLEPeerManager::promoteToIdentityKeyed(const Bytes& mac_address, const Byte
 
     // Update handle mapping to point to new location
     if (identity_slot->peer.conn_handle != 0xFFFF) {
-        setHandleToPeer(identity_slot->peer.conn_handle, &identity_slot->peer);
+        if (identity_slot->peer.conn_handle < MAX_CONN_HANDLES) {
+            setHandleToPeer(identity_slot->peer.conn_handle, &identity_slot->peer);
+        } else {
+            WARNING("BLEPeerManager: Promoted peer has invalid conn_handle=" +
+                    std::to_string(identity_slot->peer.conn_handle) + ", clearing");
+            identity_slot->peer.conn_handle = 0xFFFF;
+        }
     }
 
     // Add MAC-to-identity mapping

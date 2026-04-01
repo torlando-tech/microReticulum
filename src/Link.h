@@ -302,6 +302,8 @@ namespace RNS {
 		void increment_tx();
 		void increment_txbytes(uint16_t bytes);
 		void status(Type::Link::status status);
+		void mtu(uint16_t mtu);
+		void mode(RNS::Type::Link::link_mode mode);
 
 	protected:
 		std::shared_ptr<LinkData> _object;

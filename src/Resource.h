@@ -89,9 +89,9 @@ namespace RNS {
 		void check_timeout();
 
 	private:
-		void timeout_advertised();
-		void timeout_transferring();
-		void timeout_awaiting_proof();
+		bool timeout_advertised();
+		bool timeout_transferring();
+		bool timeout_awaiting_proof();
 
 	public:
 		// Multi-segment sending

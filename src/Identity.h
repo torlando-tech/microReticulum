@@ -26,18 +26,21 @@ namespace RNS {
 		static constexpr size_t DEST_HASH_SIZE = 16;    // RNS truncated hash
 		static constexpr size_t PACKET_HASH_SIZE = 32;  // SHA256 full hash
 		static constexpr size_t PUBLIC_KEY_SIZE = 64;   // Ed25519 + X25519 public keys
+		static constexpr size_t APP_DATA_MAX_SIZE = 128; // Max app_data (display names are 5-30 bytes)
 
 		class IdentityEntry {
 		public:
-			IdentityEntry() : _timestamp(0) {
+			IdentityEntry() : _timestamp(0), _app_data_len(0) {
 				memset(_packet_hash, 0, PACKET_HASH_SIZE);
 				memset(_public_key, 0, PUBLIC_KEY_SIZE);
+				memset(_app_data, 0, APP_DATA_MAX_SIZE);
 			}
 			IdentityEntry(double timestamp, const Bytes& packet_hash, const Bytes& public_key, const Bytes& app_data)
-				: _timestamp(timestamp), _app_data(app_data)
+				: _timestamp(timestamp), _app_data_len(0)
 			{
 				set_packet_hash(packet_hash);
 				set_public_key(public_key);
+				set_app_data(app_data);
 			}
 
 			// Helper methods for fixed array access
@@ -54,19 +57,40 @@ namespace RNS {
 				if (len < PUBLIC_KEY_SIZE) memset(_public_key + len, 0, PUBLIC_KEY_SIZE - len);
 			}
 
+			// app_data access — fixed buffer, zero BytesPool allocations
+			Bytes app_data_bytes() const {
+				if (_app_data_len == 0) return {Bytes::NONE};
+				return Bytes(_app_data, _app_data_len);
+			}
+			void set_app_data(const Bytes& b) {
+				if (!b || b.size() == 0) {
+					_app_data_len = 0;
+					return;
+				}
+				_app_data_len = static_cast<uint8_t>(std::min(b.size(), APP_DATA_MAX_SIZE));
+				memcpy(_app_data, b.data(), _app_data_len);
+			}
+			bool app_data_equals(const Bytes& b) const {
+				if ((!b || b.size() == 0) && _app_data_len == 0) return true;
+				if (!b || b.size() != _app_data_len) return false;
+				return memcmp(_app_data, b.data(), _app_data_len) == 0;
+			}
+
 		public:
 			double _timestamp = 0;
 			uint8_t _packet_hash[PACKET_HASH_SIZE];   // Fixed array - no heap alloc
-			uint8_t _public_key[PUBLIC_KEY_SIZE];    // Fixed array - no heap alloc
-			Bytes _app_data;  // Keep as Bytes - variable size, typically small or empty
+			uint8_t _public_key[PUBLIC_KEY_SIZE];      // Fixed array - no heap alloc
+			uint8_t _app_data[APP_DATA_MAX_SIZE];      // Fixed buffer - no BytesPool slot consumed
+			uint8_t _app_data_len = 0;
 		};
 
 		// Fixed pool for known destinations (replaces std::map<Bytes, IdentityEntry>)
-		// Memory: 2048 slots × ~160 bytes = ~320KB in PSRAM
-		// Pool allocated in PSRAM. Zero-allocation culling allows larger pools.
+		// Memory: 2048 slots × ~250 bytes = ~500KB in PSRAM (includes 128-byte app_data buffer)
+		// Pool allocated in PSRAM. Zero BytesPool allocations per destination.
 		static constexpr size_t KNOWN_DESTINATIONS_SIZE = 2048;
 		struct KnownDestinationSlot {
 			bool in_use = false;
+			bool persist = false;  // Only save to flash if true (contact/conversation peer)
 			uint8_t destination_hash[DEST_HASH_SIZE];  // Fixed array - no heap alloc
 			IdentityEntry entry;
 
@@ -83,6 +107,7 @@ namespace RNS {
 			}
 			void clear() {
 				in_use = false;
+				persist = false;
 				memset(destination_hash, 0, DEST_HASH_SIZE);
 				entry = IdentityEntry();
 			}
@@ -98,6 +123,8 @@ namespace RNS {
 		static size_t known_destinations_count();
 		//static std::map<Bytes, IdentityEntry> _known_destinations;
 		static bool _saving_known_destinations;
+		static bool _known_destinations_dirty;
+		static double _known_destinations_dirty_since;  // When dirty flag was first set
 		// CBA
 		static uint16_t _known_destinations_maxsize;
 
@@ -255,7 +282,21 @@ namespace RNS {
 
 		static bool validate_announce(const Packet& packet);
 		static void persist_data();
+		static bool should_persist_data();  // Persist if dirty for >5s
 		static void exit_handler();
+
+		// Yield callback — called periodically during long persistence operations
+		// (e.g., writing 50+ known destinations to flash). Platform code should
+		// set this to feed the watchdog timer and/or yield the CPU.
+		static void (*_persist_yield_callback)();
+		static void set_persist_yield_callback(void (*cb)()) { _persist_yield_callback = cb; }
+
+		// Mark a known destination for persistence. Only persistent destinations
+		// are written to flash — the rest stay in RAM for routing but don't
+		// survive reboots. Call this when a message is sent to or received from
+		// a destination (i.e., it's a real contact, not just a network announce).
+		static void mark_persistent(const Bytes& destination_hash);
+		static size_t persistent_destinations_count();
 
 		// getters/setters
 		inline const Bytes& encryptionPrivateKey() const { assert(_object); return _object->_prv_bytes; }

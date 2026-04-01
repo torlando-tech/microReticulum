@@ -95,6 +95,16 @@ bool BLEReassembler::processFragment(const Bytes& peer_identity, const Bytes& fr
 
     double now = Utilities::OS::time();
 
+    // Handle LONE fragment - single complete message, no reassembly needed
+    if (type == Fragment::LONE) {
+        Bytes payload = BLEFragmenter::extractPayload(fragment);
+        TRACE("BLEReassembler: LONE fragment, delivering immediately");
+        if (_reassembly_callback) {
+            _reassembly_callback(peer_identity, payload);
+        }
+        return true;
+    }
+
     // Handle START fragment - begins a new reassembly
     if (type == Fragment::START) {
         // Clear any existing incomplete reassembly for this peer
