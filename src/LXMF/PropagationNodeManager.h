@@ -83,6 +83,8 @@ namespace LXMF {
 
 		// Stale node timeout (1 hour)
 		static constexpr double NODE_STALE_TIMEOUT = 3600.0;
+		static constexpr double EFFECTIVE_NODE_STICKY_WINDOW = 120.0;
+		static constexpr uint8_t EFFECTIVE_NODE_SWITCH_HOP_MARGIN = 2;
 
 	public:
 		/**
@@ -146,7 +148,7 @@ namespace LXMF {
 		 *
 		 * @return Destination hash of selected node (or empty if none)
 		 */
-		RNS::Bytes get_selected_node() const { return _selected_node; }
+		RNS::Bytes get_selected_node() const { return _manual_selected_node; }
 
 		/**
 		 * @brief Auto-select the best available propagation node
@@ -216,6 +218,7 @@ namespace LXMF {
 		 * @return Pointer to empty slot, nullptr if pool is full
 		 */
 		PropagationNodeSlot* find_empty_node_slot();
+		PropagationNodeSlot* find_worst_node_slot();
 
 		/**
 		 * @brief Get the number of nodes currently in use
@@ -223,10 +226,15 @@ namespace LXMF {
 		 * @return Number of active nodes in the pool
 		 */
 		size_t nodes_count() const;
+		bool is_better_candidate(const PropagationNodeInfo& candidate, const PropagationNodeInfo& current) const;
+		bool is_reachable_candidate(const PropagationNodeInfo& candidate) const;
+		bool should_switch_effective_node(const PropagationNodeInfo& current, const PropagationNodeInfo& candidate, bool force_reselect) const;
+		void update_effective_node(bool force_reselect = false);
 
 	private:
 		PropagationNodeSlot _nodes_pool[MAX_PROPAGATION_NODES];
-		RNS::Bytes _selected_node;
+		RNS::Bytes _manual_selected_node;
+		RNS::Bytes _effective_node;
 		NodeUpdateCallback _update_callback;
 	};
 

@@ -4,10 +4,41 @@
 
 #include <ArduinoJson.h>
 #include <algorithm>
-#include <sstream>
+#include <cstdlib>
+#include <cstring>
+#include <utility>
+
+#ifdef ARDUINO
+#include <esp_heap_caps.h>
+#endif
 
 using namespace LXMF;
 using namespace RNS;
+
+namespace {
+
+static std::string make_message_preview(const Bytes& content) {
+	size_t preview_len = std::min<size_t>(content.size(), 60);
+	std::string preview;
+	preview.assign(reinterpret_cast<const char*>(content.data()), preview_len);
+	if (content.size() > preview_len) {
+		preview += "...";
+	}
+	return preview;
+}
+
+static bool write_json_document(const std::string& path, JsonDocument& doc) {
+	std::string json_str;
+	serializeJson(doc, json_str);
+	Bytes data(reinterpret_cast<const uint8_t*>(json_str.data()), json_str.size());
+	return Utilities::OS::write_file(path.c_str(), data) == data.size();
+}
+
+static bool write_bytes_file(const std::string& path, const Bytes& data) {
+	return Utilities::OS::write_file(path.c_str(), data) == data.size();
+}
+
+}  // namespace
 
 // ConversationInfo helper methods
 bool MessageStore::ConversationInfo::add_message_hash(const Bytes& hash) {
@@ -62,6 +93,7 @@ void MessageStore::ConversationInfo::clear() {
 	last_activity = 0.0;
 	unread_count = 0;
 	memset(last_message_hash, 0, MESSAGE_HASH_SIZE);
+	memset(last_message_preview, 0, sizeof(last_message_preview));
 }
 
 // ConversationSlot helper method
@@ -78,14 +110,38 @@ MessageStore::MessageStore(const std::string& base_path) :
 {
 	INFO("Initializing MessageStore at: " + _base_path);
 
-	// Initialize pool
+	// Allocate conversation pool off internal heap when PSRAM is available.
+	const size_t pool_bytes = sizeof(ConversationSlot) * MAX_CONVERSATIONS;
+	void* pool_mem = nullptr;
+	bool pool_from_psram = false;
+#ifdef ARDUINO
+	pool_mem = heap_caps_malloc(pool_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+	if (!pool_mem) {
+		WARNING("MessageStore: PSRAM pool allocation failed, falling back to internal heap");
+		pool_mem = std::malloc(pool_bytes);
+	} else {
+		pool_from_psram = true;
+	}
+#else
+	pool_mem = std::malloc(pool_bytes);
+#endif
+
+	if (!pool_mem) {
+		ERROR("Failed to allocate conversation pool");
+		return;
+	}
+
+	_conversations_pool = std::unique_ptr<ConversationSlot[], ConversationPoolDeleter>(
+		static_cast<ConversationSlot*>(pool_mem),
+		ConversationPoolDeleter(pool_from_psram)
+	);
 	for (size_t i = 0; i < MAX_CONVERSATIONS; ++i) {
 		_conversations_pool[i].clear();
 	}
 
 	if (initialize_storage()) {
-		load_index();
 		_initialized = true;
+		load_index();
 		INFO("MessageStore initialized with " + std::to_string(count_conversations()) + " conversations");
 	} else {
 		ERROR("Failed to initialize MessageStore");
@@ -96,6 +152,7 @@ MessageStore::~MessageStore() {
 	if (_initialized) {
 		save_index();
 	}
+	_conversations_pool.reset();
 	TRACE("MessageStore destroyed");
 }
 
@@ -113,6 +170,8 @@ bool MessageStore::initialize_storage() {
 // Load conversation index from disk
 void MessageStore::load_index() {
 	std::string index_path = "/conv.json";  // Short path for SPIFFS
+	bool index_needs_save = false;
+	std::vector<std::pair<size_t, Bytes>> preview_backfill;
 
 	if (!Utilities::OS::file_exists(index_path.c_str())) {
 		DEBUG("No existing conversation index found");
@@ -178,7 +237,40 @@ void MessageStore::load_index() {
 				slot.info.set_last_message_hash(last_msg_bytes);
 			}
 
+			if (conv["last_message_preview"].is<const char*>()) {
+				slot.info.set_last_message_preview(conv["last_message_preview"].as<std::string>());
+			} else {
+				Bytes last_msg_hash = slot.info.last_message_hash_bytes();
+				if (last_msg_hash) {
+					preview_backfill.push_back(std::make_pair(slot_index, last_msg_hash));
+				}
+			}
+
 			++slot_index;
+		}
+
+		for (const auto& entry : preview_backfill) {
+			if (entry.first >= MAX_CONVERSATIONS) {
+				continue;
+			}
+
+			ConversationSlot& slot = _conversations_pool[entry.first];
+			if (!slot.in_use) {
+				continue;
+			}
+
+			MessageMetadata meta = load_message_metadata(entry.second);
+			if (meta.valid && !meta.content.empty()) {
+				slot.info.set_last_message_preview(make_message_preview(Bytes(
+					reinterpret_cast<const uint8_t*>(meta.content.data()),
+					meta.content.size()
+				)));
+				index_needs_save = true;
+			}
+		}
+
+		if (index_needs_save) {
+			save_index();
 		}
 
 		DEBUG("Loaded " + std::to_string(count_conversations()) + " conversations from index");
@@ -216,6 +308,10 @@ bool MessageStore::save_index() {
 				conv["last_message_hash"] = last_msg.toHex();
 			}
 
+			if (info.last_message_preview_cstr()[0] != '\0') {
+				conv["last_message_preview"] = info.last_message_preview_cstr();
+			}
+
 			// Serialize message hashes
 			JsonArray messages = conv["messages"].to<JsonArray>();
 			for (size_t j = 0; j < info.message_count; ++j) {
@@ -225,8 +321,8 @@ bool MessageStore::save_index() {
 
 		// Serialize to string then write via OS abstraction (SPIFFS compatible)
 		std::string json_str;
-		serializeJsonPretty(_json_doc, json_str);
-		Bytes data((const uint8_t*)json_str.data(), json_str.size());
+		serializeJson(_json_doc, json_str);
+		Bytes data(reinterpret_cast<const uint8_t*>(json_str.data()), json_str.size());
 
 		if (Utilities::OS::write_file(index_path.c_str(), data) != data.size()) {
 			ERROR("Failed to write index file: " + index_path);
@@ -252,36 +348,42 @@ bool MessageStore::save_message(const LXMessage& message) {
 	INFO("Saving message: " + message.hash().toHex());
 
 	try {
-		// Use reusable document to reduce heap fragmentation
-		_json_doc.clear();
+		const Bytes message_hash = message.hash();
+		const std::string metadata_path = get_message_metadata_path(message_hash);
+		const std::string payload_path = get_message_payload_path(message_hash);
+		const std::string legacy_path = get_legacy_message_path(message_hash);
+		const std::string preview = make_message_preview(message.content());
 
-		_json_doc["hash"] = message.hash().toHex();
+		// Build compact metadata document only. Packed payload lives in a separate file.
+		_json_doc.clear();
+		_json_doc["hash"] = message_hash.toHex();
 		_json_doc["destination_hash"] = message.destination_hash().toHex();
 		_json_doc["source_hash"] = message.source_hash().toHex();
 		_json_doc["incoming"] = message.incoming();
 		_json_doc["timestamp"] = message.timestamp();
 		_json_doc["state"] = static_cast<int>(message.state());
+		_json_doc["propagated"] = false;
+		_json_doc["content"] = std::string(reinterpret_cast<const char*>(message.content().data()), message.content().size());
 
-		// Store content as UTF-8 for fast loading (no msgpack unpacking needed)
-		std::string content_str((const char*)message.content().data(), message.content().size());
-		_json_doc["content"] = content_str;
-
-		// Store the entire packed message to preserve hash/signature
-		// This ensures exact reconstruction on load
-		_json_doc["packed"] = message.packed().toHex();
-
-		// Write message file via OS abstraction (SPIFFS compatible)
-		std::string message_path = get_message_path(message.hash());
-		std::string json_str;
-		serializeJsonPretty(_json_doc, json_str);
-		Bytes data((const uint8_t*)json_str.data(), json_str.size());
-
-		if (Utilities::OS::write_file(message_path.c_str(), data) != data.size()) {
-			ERROR("Failed to write message file: " + message_path);
+		if (!write_json_document(metadata_path, _json_doc)) {
+			ERROR("Failed to write message metadata: " + metadata_path);
 			return false;
 		}
 
-		DEBUG("  Message file saved: " + message_path);
+		const Bytes& packed = message.packed();
+		if (!write_bytes_file(payload_path, packed)) {
+			ERROR("Failed to write message payload: " + payload_path);
+			Utilities::OS::remove_file(metadata_path.c_str());
+			return false;
+		}
+
+		// Remove any legacy monolithic file so the split layout is canonical.
+		if (Utilities::OS::file_exists(legacy_path.c_str())) {
+			Utilities::OS::remove_file(legacy_path.c_str());
+		}
+
+		DEBUG("  Message metadata saved: " + metadata_path);
+		DEBUG("  Message payload saved: " + payload_path);
 
 		// Update conversation index
 		// Determine peer hash (the other party in the conversation)
@@ -305,7 +407,8 @@ bool MessageStore::save_message(const LXMessage& message) {
 				WARNING("Message pool full for conversation: " + peer_hash.toHex());
 			} else {
 				conv.last_activity = message.timestamp();
-				conv.set_last_message_hash(message.hash());
+				conv.set_last_message_hash(message_hash);
+				conv.set_last_message_preview(preview);
 
 				// Increment unread count for incoming messages
 				if (message.incoming()) {
@@ -335,43 +438,86 @@ LXMessage MessageStore::load_message(const Bytes& message_hash) {
 		return LXMessage(Bytes(), Bytes(), Bytes(), Bytes());
 	}
 
-	std::string message_path = get_message_path(message_hash);
-
-	if (!Utilities::OS::file_exists(message_path.c_str())) {
-		WARNING("Message file not found: " + message_path);
-		return LXMessage(Bytes(), Bytes(), Bytes(), Bytes());
-	}
+	const std::string metadata_path = get_message_metadata_path(message_hash);
+	const std::string payload_path = get_message_payload_path(message_hash);
+	const std::string legacy_path = get_legacy_message_path(message_hash);
 
 	try {
-		// Read JSON file via OS abstraction (SPIFFS compatible)
-		Bytes data;
-		if (Utilities::OS::read_file(message_path.c_str(), data) == 0) {
-			ERROR("Failed to read message file: " + message_path);
-			return LXMessage(Bytes(), Bytes(), Bytes(), Bytes());
-		}
-
-		// Use reusable document to reduce heap fragmentation
-		_json_doc.clear();
-		DeserializationError error = deserializeJson(_json_doc, data.data(), data.size());
-
-		if (error) {
-			ERROR("Failed to parse message file: " + std::string(error.c_str()));
-			return LXMessage(Bytes(), Bytes(), Bytes(), Bytes());
-		}
-
-		// Unpack the message from stored packed bytes
-		// This preserves the exact hash and signature
 		Bytes packed;
-		packed.assignHex(_json_doc["packed"].as<const char*>());
+		bool incoming = true;
 
-		// Skip signature validation - messages from storage were already validated when received
-		LXMessage message = LXMessage::unpack_from_bytes(packed, LXMF::Type::Message::DIRECT, true);
+		if (Utilities::OS::file_exists(payload_path.c_str())) {
+			if (Utilities::OS::read_file(payload_path.c_str(), packed) == 0) {
+				ERROR("Failed to read message payload: " + payload_path);
+				return LXMessage(Bytes(), Bytes(), Bytes(), Bytes());
+			}
 
-		// Restore incoming flag from storage (unpack_from_bytes defaults to true)
-		if (!_json_doc["incoming"].isNull()) {
-			message.incoming(_json_doc["incoming"].as<bool>());
+			if (Utilities::OS::file_exists(metadata_path.c_str())) {
+				Bytes metadata_bytes;
+				if (Utilities::OS::read_file(metadata_path.c_str(), metadata_bytes) > 0) {
+					_json_doc.clear();
+					DeserializationError error = deserializeJson(_json_doc, metadata_bytes.data(), metadata_bytes.size());
+					if (!error && !_json_doc["incoming"].isNull()) {
+						incoming = _json_doc["incoming"].as<bool>();
+					}
+				}
+			}
+		} else {
+			std::string source_path = legacy_path;
+			if (!Utilities::OS::file_exists(source_path.c_str())) {
+				source_path = metadata_path;
+			}
+			if (!Utilities::OS::file_exists(source_path.c_str())) {
+				WARNING("Message file not found: " + source_path);
+				return LXMessage(Bytes(), Bytes(), Bytes(), Bytes());
+			}
+
+			Bytes data;
+			if (Utilities::OS::read_file(source_path.c_str(), data) == 0) {
+				ERROR("Failed to read message file: " + source_path);
+				return LXMessage(Bytes(), Bytes(), Bytes(), Bytes());
+			}
+
+			_json_doc.clear();
+			DeserializationError error = deserializeJson(_json_doc, data.data(), data.size());
+			if (error) {
+				ERROR("Failed to parse message file: " + std::string(error.c_str()));
+				return LXMessage(Bytes(), Bytes(), Bytes(), Bytes());
+			}
+
+			if (!_json_doc["incoming"].isNull()) {
+				incoming = _json_doc["incoming"].as<bool>();
+			}
+
+			const char* packed_hex = _json_doc["packed"].as<const char*>();
+			if (!packed_hex || packed_hex[0] == '\0') {
+				ERROR("Message file missing packed payload: " + source_path);
+				return LXMessage(Bytes(), Bytes(), Bytes(), Bytes());
+			}
+
+			packed.assignHex(packed_hex);
+
+			if (!Utilities::OS::file_exists(metadata_path.c_str())) {
+				JsonDocument metadata_doc;
+				metadata_doc["hash"] = _json_doc["hash"] | message_hash.toHex();
+				metadata_doc["destination_hash"] = _json_doc["destination_hash"] | "";
+				metadata_doc["source_hash"] = _json_doc["source_hash"] | "";
+				metadata_doc["incoming"] = incoming;
+				metadata_doc["timestamp"] = _json_doc["timestamp"] | 0.0;
+				metadata_doc["state"] = _json_doc["state"] | 0;
+				metadata_doc["propagated"] = _json_doc["propagated"] | false;
+				if (_json_doc["content"].is<const char*>()) {
+					metadata_doc["content"] = _json_doc["content"].as<std::string>();
+				}
+				if (write_json_document(metadata_path, metadata_doc)) {
+					write_bytes_file(payload_path, packed);
+					Utilities::OS::remove_file(legacy_path.c_str());
+				}
+			}
 		}
 
+		LXMessage message = LXMessage::unpack_from_bytes(packed, LXMF::Type::Message::DIRECT, true);
+		message.incoming(incoming);
 		DEBUG("Loaded message: " + message_hash.toHex());
 		return message;
 
@@ -390,35 +536,38 @@ MessageStore::MessageMetadata MessageStore::load_message_metadata(const Bytes& m
 		return meta;
 	}
 
-	std::string message_path = get_message_path(message_hash);
-
-	if (!Utilities::OS::file_exists(message_path.c_str())) {
-		return meta;
-	}
+	const std::string metadata_path = get_message_metadata_path(message_hash);
+	const std::string legacy_path = get_legacy_message_path(message_hash);
 
 	try {
-		Bytes data;
-		if (Utilities::OS::read_file(message_path.c_str(), data) == 0) {
+		std::string source_path;
+		if (Utilities::OS::file_exists(metadata_path.c_str())) {
+			source_path = metadata_path;
+		} else if (Utilities::OS::file_exists(legacy_path.c_str())) {
+			source_path = legacy_path;
+		} else {
 			return meta;
 		}
 
-		// Use reusable document to reduce heap fragmentation
+		Bytes data;
+		if (Utilities::OS::read_file(source_path.c_str(), data) == 0) {
+			return meta;
+		}
+
 		_json_doc.clear();
 		DeserializationError error = deserializeJson(_json_doc, data.data(), data.size());
-
 		if (error) {
 			return meta;
 		}
 
 		meta.hash = message_hash;
-
-		// Read pre-extracted fields (no msgpack unpacking needed)
 		if (_json_doc["content"].is<const char*>()) {
 			meta.content = _json_doc["content"].as<std::string>();
 		}
 		meta.timestamp = _json_doc["timestamp"] | 0.0;
 		meta.incoming = _json_doc["incoming"] | true;
 		meta.state = _json_doc["state"] | 0;
+		meta.propagated = _json_doc["propagated"] | false;
 		meta.valid = true;
 
 		return meta;
@@ -428,29 +577,35 @@ MessageStore::MessageMetadata MessageStore::load_message_metadata(const Bytes& m
 	}
 }
 
-// Update message state in storage
-bool MessageStore::update_message_state(const Bytes& message_hash, Type::Message::State state) {
+bool MessageStore::update_message_metadata(
+	const Bytes& message_hash,
+	const Type::Message::State* state,
+	const bool* propagated
+) {
 	if (!_initialized) {
 		ERROR("MessageStore not initialized");
 		return false;
 	}
 
-	std::string message_path = get_message_path(message_hash);
+	const std::string metadata_path = get_message_metadata_path(message_hash);
+	const std::string payload_path = get_message_payload_path(message_hash);
+	const std::string legacy_path = get_legacy_message_path(message_hash);
 
-	if (!Utilities::OS::file_exists(message_path.c_str())) {
-		WARNING("Message file not found: " + message_path);
+	const bool has_metadata = Utilities::OS::file_exists(metadata_path.c_str());
+	const bool has_legacy = Utilities::OS::file_exists(legacy_path.c_str());
+	if (!has_metadata && !has_legacy) {
+		WARNING("Message file not found: " + metadata_path);
 		return false;
 	}
 
 	try {
-		// Read existing JSON
+		const std::string source_path = has_metadata ? metadata_path : legacy_path;
 		Bytes data;
-		if (Utilities::OS::read_file(message_path.c_str(), data) == 0) {
-			ERROR("Failed to read message file: " + message_path);
+		if (Utilities::OS::read_file(source_path.c_str(), data) == 0) {
+			ERROR("Failed to read message file: " + source_path);
 			return false;
 		}
 
-		// Use reusable document to reduce heap fragmentation
 		_json_doc.clear();
 		DeserializationError error = deserializeJson(_json_doc, data.data(), data.size());
 		if (error) {
@@ -458,24 +613,81 @@ bool MessageStore::update_message_state(const Bytes& message_hash, Type::Message
 			return false;
 		}
 
-		// Update state
-		_json_doc["state"] = static_cast<int>(state);
+		bool update_migrated_layout = !has_metadata && has_legacy;
+		if (state) {
+			_json_doc["state"] = static_cast<int>(*state);
+		}
 
-		// Write back
-		std::string json_str;
-		serializeJson(_json_doc, json_str);
-		if (!Utilities::OS::write_file(message_path.c_str(), Bytes((uint8_t*)json_str.c_str(), json_str.length()))) {
-			ERROR("Failed to write message file: " + message_path);
+		if (propagated) {
+			_json_doc["propagated"] = *propagated;
+		}
+
+		if (update_migrated_layout) {
+			const char* packed_hex = _json_doc["packed"].as<const char*>();
+			if (packed_hex && packed_hex[0] != '\0') {
+				Bytes packed;
+				packed.assignHex(packed_hex);
+
+				JsonDocument metadata_doc;
+				metadata_doc["hash"] = _json_doc["hash"] | message_hash.toHex();
+				metadata_doc["destination_hash"] = _json_doc["destination_hash"] | "";
+				metadata_doc["source_hash"] = _json_doc["source_hash"] | "";
+				metadata_doc["incoming"] = _json_doc["incoming"] | true;
+				metadata_doc["timestamp"] = _json_doc["timestamp"] | 0.0;
+				metadata_doc["state"] = _json_doc["state"] | 0;
+				metadata_doc["propagated"] = _json_doc["propagated"] | false;
+				if (_json_doc["content"].is<const char*>()) {
+					metadata_doc["content"] = _json_doc["content"].as<std::string>();
+				}
+
+				if (!write_json_document(metadata_path, metadata_doc)) {
+					ERROR("Failed to write message metadata: " + metadata_path);
+					return false;
+				}
+
+				if (!write_bytes_file(payload_path, packed)) {
+					ERROR("Failed to write message payload: " + payload_path);
+					return false;
+				}
+
+				Utilities::OS::remove_file(legacy_path.c_str());
+			} else {
+				ERROR("Legacy message missing packed payload: " + legacy_path);
+				return false;
+			}
+		} else if (!write_json_document(metadata_path, _json_doc)) {
+			ERROR("Failed to write message metadata: " + metadata_path);
 			return false;
 		}
 
-		INFO("Message state updated to " + std::to_string(static_cast<int>(state)));
+		if (state && propagated) {
+			INFO("Message delivery metadata updated: state=" +
+				std::to_string(static_cast<int>(*state)) +
+				", propagated=" + std::string(*propagated ? "true" : "false"));
+		} else if (state) {
+			INFO("Message state updated to " + std::to_string(static_cast<int>(*state)));
+		} else if (propagated) {
+			INFO("Message propagated flag updated to " + std::string(*propagated ? "true" : "false"));
+		}
 		return true;
 
 	} catch (const std::exception& e) {
-		ERROR("Exception updating message state: " + std::string(e.what()));
+		ERROR("Exception updating message metadata: " + std::string(e.what()));
 		return false;
 	}
+}
+
+// Update message state in storage
+bool MessageStore::update_message_state(const Bytes& message_hash, Type::Message::State state) {
+	return update_message_metadata(message_hash, &state, nullptr);
+}
+
+bool MessageStore::update_message_delivery_status(
+	const Bytes& message_hash,
+	Type::Message::State state,
+	bool propagated
+) {
+	return update_message_metadata(message_hash, &state, &propagated);
 }
 
 // Delete message from storage
@@ -487,13 +699,23 @@ bool MessageStore::delete_message(const Bytes& message_hash) {
 
 	INFO("Deleting message: " + message_hash.toHex());
 
-	// Remove message file
-	std::string message_path = get_message_path(message_hash);
-	if (Utilities::OS::file_exists(message_path.c_str())) {
-		if (!Utilities::OS::remove_file(message_path.c_str())) {
-			ERROR("Failed to delete message file: " + message_path);
-			return false;
-		}
+	// Remove message files (split metadata/payload plus legacy monolith)
+	const std::string metadata_path = get_message_metadata_path(message_hash);
+	const std::string payload_path = get_message_payload_path(message_hash);
+	const std::string legacy_path = get_legacy_message_path(message_hash);
+
+	if (Utilities::OS::file_exists(metadata_path.c_str()) &&
+	    !Utilities::OS::remove_file(metadata_path.c_str())) {
+		ERROR("Failed to delete message metadata: " + metadata_path);
+		return false;
+	}
+	if (Utilities::OS::file_exists(payload_path.c_str()) &&
+	    !Utilities::OS::remove_file(payload_path.c_str())) {
+		ERROR("Failed to delete message payload: " + payload_path);
+		return false;
+	}
+	if (Utilities::OS::file_exists(legacy_path.c_str())) {
+		Utilities::OS::remove_file(legacy_path.c_str());
 	}
 
 	// Update conversation index - remove from all conversations
@@ -548,12 +770,41 @@ std::vector<Bytes> MessageStore::get_conversations() {
 }
 
 // Get conversation info
-MessageStore::ConversationInfo MessageStore::get_conversation_info(const Bytes& peer_hash) {
+const MessageStore::ConversationInfo* MessageStore::get_conversation_info(const Bytes& peer_hash) const {
 	const ConversationSlot* slot = find_conversation(peer_hash);
 	if (slot) {
-		return slot->info;
+		return &slot->info;
 	}
-	return ConversationInfo();
+	return nullptr;
+}
+
+std::vector<MessageStore::ConversationSummary> MessageStore::get_conversation_summaries() const {
+	std::vector<ConversationSummary> summaries;
+	summaries.reserve(count_conversations());
+
+	for (size_t i = 0; i < MAX_CONVERSATIONS; ++i) {
+		const ConversationSlot& slot = _conversations_pool[i];
+		if (!slot.in_use) {
+			continue;
+		}
+
+		ConversationSummary summary;
+		summary.peer_hash = slot.peer_hash_bytes();
+		summary.last_activity = slot.info.last_activity;
+		summary.unread_count = static_cast<uint16_t>(slot.info.unread_count);
+		summary.last_message_preview = slot.info.last_message_preview_cstr();
+		summaries.push_back(summary);
+	}
+
+	std::sort(
+		summaries.begin(),
+		summaries.end(),
+		[](const ConversationSummary& a, const ConversationSummary& b) {
+			return a.last_activity > b.last_activity;
+		}
+	);
+
+	return summaries;
 }
 
 // Get messages for conversation
@@ -592,9 +843,18 @@ bool MessageStore::delete_conversation(const Bytes& peer_hash) {
 
 	// Delete all message files
 	for (size_t i = 0; i < slot->info.message_count; ++i) {
-		std::string message_path = get_message_path(slot->info.message_hash_bytes(i));
-		if (Utilities::OS::file_exists(message_path.c_str())) {
-			Utilities::OS::remove_file(message_path.c_str());
+		const Bytes hash = slot->info.message_hash_bytes(i);
+		const std::string metadata_path = get_message_metadata_path(hash);
+		const std::string payload_path = get_message_payload_path(hash);
+		const std::string legacy_path = get_legacy_message_path(hash);
+		if (Utilities::OS::file_exists(metadata_path.c_str())) {
+			Utilities::OS::remove_file(metadata_path.c_str());
+		}
+		if (Utilities::OS::file_exists(payload_path.c_str())) {
+			Utilities::OS::remove_file(payload_path.c_str());
+		}
+		if (Utilities::OS::file_exists(legacy_path.c_str())) {
+			Utilities::OS::remove_file(legacy_path.c_str());
 		}
 	}
 
@@ -644,9 +904,18 @@ bool MessageStore::clear_all() {
 			continue;
 		}
 		for (size_t j = 0; j < slot.info.message_count; ++j) {
-			std::string message_path = get_message_path(slot.info.message_hash_bytes(j));
-			if (Utilities::OS::file_exists(message_path.c_str())) {
-				Utilities::OS::remove_file(message_path.c_str());
+			const Bytes hash = slot.info.message_hash_bytes(j);
+			const std::string metadata_path = get_message_metadata_path(hash);
+			const std::string payload_path = get_message_payload_path(hash);
+			const std::string legacy_path = get_legacy_message_path(hash);
+			if (Utilities::OS::file_exists(metadata_path.c_str())) {
+				Utilities::OS::remove_file(metadata_path.c_str());
+			}
+			if (Utilities::OS::file_exists(payload_path.c_str())) {
+				Utilities::OS::remove_file(payload_path.c_str());
+			}
+			if (Utilities::OS::file_exists(legacy_path.c_str())) {
+				Utilities::OS::remove_file(legacy_path.c_str());
 			}
 		}
 		slot.clear();
@@ -663,6 +932,18 @@ bool MessageStore::clear_all() {
 // Use short path for SPIFFS compatibility (32 char filename limit)
 // Format: /m/<first12chars>.j (12 chars of hash = 6 bytes = plenty unique for local store)
 std::string MessageStore::get_message_path(const Bytes& message_hash) const {
+	return get_legacy_message_path(message_hash);
+}
+
+std::string MessageStore::get_message_metadata_path(const Bytes& message_hash) const {
+	return "/m/" + message_hash.toHex().substr(0, 12) + ".m";
+}
+
+std::string MessageStore::get_message_payload_path(const Bytes& message_hash) const {
+	return "/m/" + message_hash.toHex().substr(0, 12) + ".p";
+}
+
+std::string MessageStore::get_legacy_message_path(const Bytes& message_hash) const {
 	return "/m/" + message_hash.toHex().substr(0, 12) + ".j";
 }
 

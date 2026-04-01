@@ -216,12 +216,6 @@ bool UIManager::init() {
 
 void UIManager::update() {
     LVGL_LOCK();
-    // Process outbound LXMF messages
-    _router.process_outbound();
-
-    // Process inbound LXMF messages
-    _router.process_inbound();
-
     // Update status indicators (WiFi/battery) on conversation list
     static uint32_t last_status_update = 0;
     uint32_t now = millis();
@@ -587,9 +581,10 @@ void UIManager::on_message_received(::LXMF::LXMessage& message) {
         }
     }
 
-    // Update conversation list unread count
-    // TODO: Track unread counts
-    _conversation_list_screen->refresh();
+    // Update conversation list only while it is visible.
+    if (_current_screen == SCREEN_CONVERSATION_LIST) {
+        _conversation_list_screen->refresh();
+    }
 
     INFO("  Message processed");
 }

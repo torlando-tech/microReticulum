@@ -19,6 +19,7 @@ void PropagationNodeManager::received_announce(
 	const Identity& announced_identity,
 	const Bytes& app_data
 ) {
+	(void)announced_identity;
 	std::string hash_str = destination_hash.toHex().substr(0, 16);
 	TRACE("PropagationNodeManager::received_announce from " + hash_str + "...");
 
@@ -35,6 +36,8 @@ void PropagationNodeManager::received_announce(
 
 	info.node_hash = destination_hash;
 	info.last_seen = Utilities::OS::time();
+	Bytes effective_before = get_effective_node();
+	PropagationNodeInfo effective_before_info = get_node(effective_before);
 
 	// Get hop count from Transport
 	info.hops = Transport::hops_to(destination_hash);
@@ -48,8 +51,15 @@ void PropagationNodeManager::received_announce(
 	if (!slot) {
 		slot = find_empty_node_slot();
 		if (!slot) {
-			WARNING("PropagationNodeManager: Pool full, cannot add node " + hash_str);
-			return;
+			PropagationNodeSlot* worst_slot = find_worst_node_slot();
+			if (!worst_slot || !is_better_candidate(info, worst_slot->info)) {
+				WARNING("PropagationNodeManager: Pool full, dropping lower-priority node " + hash_str);
+				return;
+			}
+
+			INFO("PropagationNodeManager: Evicting node " +
+			     worst_slot->node_hash.toHex().substr(0, 16) + "... for better candidate " + hash_str);
+			slot = worst_slot;
 		}
 	}
 
@@ -68,8 +78,21 @@ void PropagationNodeManager::received_announce(
 		     "... reports propagation disabled");
 	}
 
+	update_effective_node(false);
+
 	// Notify listeners
-	if (_update_callback) {
+	Bytes effective_after = get_effective_node();
+	PropagationNodeInfo effective_after_info = get_node(effective_after);
+	bool effective_changed = (effective_after != effective_before);
+	bool effective_info_changed =
+		(effective_after == effective_before) &&
+		(
+			effective_after_info.stamp_cost != effective_before_info.stamp_cost ||
+			effective_after_info.enabled != effective_before_info.enabled ||
+			effective_after_info.hops != effective_before_info.hops
+		);
+
+	if (_update_callback && (effective_changed || effective_info_changed)) {
 		_update_callback();
 	}
 }
@@ -199,9 +222,15 @@ bool PropagationNodeManager::has_node(const Bytes& hash) const {
 }
 
 void PropagationNodeManager::set_selected_node(const Bytes& hash) {
+	Bytes effective_before = get_effective_node();
+
 	if (hash.size() == 0) {
-		_selected_node = {};
+		_manual_selected_node = {};
+		update_effective_node(true);
 		INFO("PropagationNodeManager: Cleared manual node selection");
+		if (_update_callback && get_effective_node() != effective_before) {
+			_update_callback();
+		}
 		return;
 	}
 
@@ -210,10 +239,14 @@ void PropagationNodeManager::set_selected_node(const Bytes& hash) {
 		return;
 	}
 
-	_selected_node = hash;
+	_manual_selected_node = hash;
+	update_effective_node(true);
 	PropagationNodeInfo node = get_node(hash);
 	INFO("PropagationNodeManager: Selected node '" + node.name + "' (" +
 	     hash.toHex().substr(0, 16) + "...)");
+	if (_update_callback && get_effective_node() != effective_before) {
+		_update_callback();
+	}
 }
 
 Bytes PropagationNodeManager::get_best_node() const {
@@ -227,8 +260,7 @@ Bytes PropagationNodeManager::get_best_node() const {
 		}
 		const PropagationNodeInfo& node = _nodes_pool[i].info;
 
-		// Skip disabled nodes
-		if (!node.enabled) {
+		if (!is_reachable_candidate(node)) {
 			continue;
 		}
 
@@ -237,6 +269,8 @@ Bytes PropagationNodeManager::get_best_node() const {
 		if (node.hops < best.hops) {
 			is_better = true;
 		} else if (node.hops == best.hops && node.last_seen > best.last_seen) {
+			is_better = true;
+		} else if (node.hops == best.hops && node.last_seen == best.last_seen && node.stamp_cost < best.stamp_cost) {
 			is_better = true;
 		}
 
@@ -254,21 +288,27 @@ Bytes PropagationNodeManager::get_best_node() const {
 }
 
 Bytes PropagationNodeManager::get_effective_node() const {
-	if (_selected_node.size() > 0) {
-		// Verify selected node is still valid
-		const PropagationNodeSlot* slot = find_node_slot(_selected_node);
-		if (slot && slot->info.enabled) {
-			return _selected_node;
+	if (_manual_selected_node.size() > 0) {
+		const PropagationNodeSlot* slot = find_node_slot(_manual_selected_node);
+		if (slot) {
+			return _manual_selected_node;
 		}
 	}
 
-	// Fall back to auto-selection
+	if (_effective_node.size() > 0) {
+		const PropagationNodeSlot* slot = find_node_slot(_effective_node);
+		if (slot) {
+			return _effective_node;
+		}
+	}
+
 	return get_best_node();
 }
 
 void PropagationNodeManager::clean_stale_nodes() {
 	double now = Utilities::OS::time();
 	bool removed_any = false;
+	Bytes effective_before = get_effective_node();
 
 	for (size_t i = 0; i < MAX_PROPAGATION_NODES; ++i) {
 		if (_nodes_pool[i].in_use &&
@@ -280,7 +320,11 @@ void PropagationNodeManager::clean_stale_nodes() {
 		}
 	}
 
-	if (removed_any && _update_callback) {
+	if (removed_any) {
+		update_effective_node(true);
+	}
+
+	if (removed_any && _update_callback && get_effective_node() != effective_before) {
 		_update_callback();
 	}
 }
@@ -312,6 +356,26 @@ PropagationNodeSlot* PropagationNodeManager::find_empty_node_slot() {
 	return nullptr;
 }
 
+PropagationNodeSlot* PropagationNodeManager::find_worst_node_slot() {
+	PropagationNodeSlot* worst = nullptr;
+
+	for (size_t i = 0; i < MAX_PROPAGATION_NODES; ++i) {
+		if (!_nodes_pool[i].in_use) {
+			continue;
+		}
+		if (!worst) {
+			worst = &_nodes_pool[i];
+			continue;
+		}
+
+		if (is_better_candidate(worst->info, _nodes_pool[i].info)) {
+			worst = &_nodes_pool[i];
+		}
+	}
+
+	return worst;
+}
+
 size_t PropagationNodeManager::nodes_count() const {
 	size_t count = 0;
 	for (size_t i = 0; i < MAX_PROPAGATION_NODES; ++i) {
@@ -320,4 +384,98 @@ size_t PropagationNodeManager::nodes_count() const {
 		}
 	}
 	return count;
+}
+
+bool PropagationNodeManager::is_better_candidate(const PropagationNodeInfo& candidate, const PropagationNodeInfo& current) const {
+	if (!candidate.enabled && current.enabled) {
+		return false;
+	}
+	if (candidate.enabled && !current.enabled) {
+		return true;
+	}
+	if (candidate.hops != current.hops) {
+		return candidate.hops < current.hops;
+	}
+	if (candidate.last_seen != current.last_seen) {
+		return candidate.last_seen > current.last_seen;
+	}
+	return candidate.stamp_cost < current.stamp_cost;
+}
+
+bool PropagationNodeManager::is_reachable_candidate(const PropagationNodeInfo& candidate) const {
+	if (!candidate || !candidate.enabled) {
+		return false;
+	}
+
+	if (!Transport::has_path(candidate.node_hash)) {
+		return false;
+	}
+
+	Identity identity = Identity::recall(candidate.node_hash);
+	return static_cast<bool>(identity);
+}
+
+bool PropagationNodeManager::should_switch_effective_node(
+	const PropagationNodeInfo& current,
+	const PropagationNodeInfo& candidate,
+	bool force_reselect
+) const {
+	if (!candidate || !is_reachable_candidate(candidate)) {
+		return false;
+	}
+	if (!current) {
+		return true;
+	}
+	if (!is_reachable_candidate(current)) {
+		return true;
+	}
+	if (force_reselect) {
+		return is_better_candidate(candidate, current);
+	}
+
+	double now = Utilities::OS::time();
+	double current_age = now - current.last_seen;
+	if (current_age > EFFECTIVE_NODE_STICKY_WINDOW) {
+		return is_better_candidate(candidate, current);
+	}
+
+	if (candidate.hops + EFFECTIVE_NODE_SWITCH_HOP_MARGIN <= current.hops) {
+		return true;
+	}
+
+	return false;
+}
+
+void PropagationNodeManager::update_effective_node(bool force_reselect) {
+	if (_manual_selected_node.size() > 0) {
+		const PropagationNodeSlot* manual_slot = find_node_slot(_manual_selected_node);
+		if (manual_slot) {
+			_effective_node = _manual_selected_node;
+			return;
+		}
+	}
+
+	if (_effective_node.size() > 0) {
+		const PropagationNodeSlot* current_slot = find_node_slot(_effective_node);
+		if (current_slot) {
+			Bytes best_hash = get_best_node();
+			if (best_hash.size() == 0) {
+				return;
+			}
+
+			const PropagationNodeSlot* best_slot = find_node_slot(best_hash);
+			if (!best_slot) {
+				return;
+			}
+
+			if (!should_switch_effective_node(current_slot->info, best_slot->info, force_reselect)) {
+				return;
+			}
+		}
+	}
+
+	Bytes best_hash = get_best_node();
+	if (best_hash.size() > 0) {
+		_effective_node = best_hash;
+	}
 }

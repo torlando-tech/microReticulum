@@ -7,6 +7,12 @@
 
 #include <MsgPack.h>
 
+#ifdef ARDUINO
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <esp_task_wdt.h>
+#endif
+
 using namespace LXMF;
 using namespace RNS;
 
@@ -105,6 +111,101 @@ static OutboundResourceSlot* find_empty_outbound_resource_slot() {
 	}
 	return nullptr;
 }
+
+namespace {
+const char* method_name(LXMF::Type::Message::Method method) {
+	switch (method) {
+		case LXMF::Type::Message::OPPORTUNISTIC: return "OPPORTUNISTIC";
+		case LXMF::Type::Message::DIRECT: return "DIRECT";
+		case LXMF::Type::Message::PROPAGATED: return "PROPAGATED";
+		case LXMF::Type::Message::PAPER: return "PAPER";
+		default: return "UNKNOWN";
+	}
+}
+
+const char* state_name(LXMF::Type::Message::State state) {
+	switch (state) {
+		case LXMF::Type::Message::GENERATING: return "GENERATING";
+		case LXMF::Type::Message::OUTBOUND: return "OUTBOUND";
+		case LXMF::Type::Message::SENDING: return "SENDING";
+		case LXMF::Type::Message::SENT: return "SENT";
+		case LXMF::Type::Message::DELIVERED: return "DELIVERED";
+		case LXMF::Type::Message::REJECTED: return "REJECTED";
+		case LXMF::Type::Message::CANCELLED: return "CANCELLED";
+		case LXMF::Type::Message::FAILED: return "FAILED";
+		default: return "UNKNOWN";
+	}
+}
+
+void log_state_transition(LXMessage& message, LXMF::Type::Message::State new_state, const std::string& reason) {
+	LXMF::Type::Message::State old_state = message.state();
+	if (old_state != new_state) {
+		std::string msg = "LXMF state " + std::string(state_name(old_state)) +
+		                 " -> " + state_name(new_state) +
+		                 " for " + message.hash().toHex().substr(0, 16) + "...";
+		if (!reason.empty()) {
+			msg += " (" + reason + ")";
+		}
+		if (new_state == LXMF::Type::Message::FAILED) {
+			WARNING(msg);
+		} else {
+			INFO(msg);
+		}
+	} else if (!reason.empty()) {
+		DEBUG("LXMF state " + std::string(state_name(new_state)) + " unchanged (" + reason + ")");
+	}
+	message.state(new_state);
+}
+
+#ifdef ARDUINO
+struct PropagationStampJob {
+	volatile bool queued = false;
+	volatile bool running = false;
+	volatile bool completed = false;
+	volatile bool failed = false;
+	uint8_t target_cost = 0;
+	LXMF::LXMRouter* router = nullptr;
+	LXMF::LXMessage* message = nullptr;
+	uint8_t message_hash[32] = {0};
+};
+
+static PropagationStampJob _propagation_stamp_job;
+static TaskHandle_t _propagation_stamp_worker = nullptr;
+
+static bool stamp_job_matches_hash(const Bytes& hash) {
+	return hash.size() == sizeof(_propagation_stamp_job.message_hash) &&
+	       memcmp(_propagation_stamp_job.message_hash, hash.data(), sizeof(_propagation_stamp_job.message_hash)) == 0;
+}
+
+static void propagation_stamp_worker_task(void* param) {
+	(void)param;
+	esp_task_wdt_add(NULL);
+
+	for (;;) {
+		if (_propagation_stamp_job.queued && !_propagation_stamp_job.running) {
+			_propagation_stamp_job.running = true;
+			_propagation_stamp_job.completed = false;
+			_propagation_stamp_job.failed = false;
+
+			LXMF::LXMessage* message = _propagation_stamp_job.message;
+			uint8_t target_cost = _propagation_stamp_job.target_cost;
+			Bytes stamp;
+
+			if (message) {
+				stamp = message->generate_propagation_stamp(target_cost);
+			}
+
+			_propagation_stamp_job.failed = (message == nullptr || stamp.size() == 0);
+			_propagation_stamp_job.completed = !_propagation_stamp_job.failed;
+			_propagation_stamp_job.queued = false;
+			_propagation_stamp_job.running = false;
+		}
+
+		vTaskDelay(pdMS_TO_TICKS(2));
+	}
+}
+#endif
+}  // namespace
 
 // Static pending proofs pool definition
 LXMRouter::PendingProofSlot LXMRouter::_pending_proofs_pool[LXMRouter::PENDING_PROOFS_SIZE];
@@ -425,6 +526,16 @@ LXMessage* LXMRouter::pending_outbound_front() {
 	return &_pending_outbound_pool[_pending_outbound_tail];
 }
 
+LXMessage* LXMRouter::pending_outbound_find(const Bytes& hash) {
+	for (size_t i = 0; i < _pending_outbound_count; i++) {
+		size_t idx = (_pending_outbound_tail + i) % PENDING_OUTBOUND_SIZE;
+		if (_pending_outbound_pool[idx].hash() == hash) {
+			return &_pending_outbound_pool[idx];
+		}
+	}
+	return nullptr;
+}
+
 bool LXMRouter::pending_outbound_pop(LXMessage& msg) {
 	if (_pending_outbound_count == 0) return false;
 	msg = _pending_outbound_pool[_pending_outbound_tail];
@@ -485,6 +596,223 @@ bool LXMRouter::failed_outbound_pop(LXMessage& msg) {
 	return true;
 }
 
+LXMRouter::OutboundContextSlot* LXMRouter::find_outbound_context_slot(const Bytes& hash) {
+	for (size_t i = 0; i < OUTBOUND_CONTEXTS_SIZE; i++) {
+		if (_outbound_contexts_pool[i].in_use && _outbound_contexts_pool[i].message_hash_equals(hash)) {
+			return &_outbound_contexts_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+LXMRouter::OutboundContextSlot* LXMRouter::find_empty_outbound_context_slot() {
+	for (size_t i = 0; i < OUTBOUND_CONTEXTS_SIZE; i++) {
+		if (!_outbound_contexts_pool[i].in_use) {
+			return &_outbound_contexts_pool[i];
+		}
+	}
+	return nullptr;
+}
+
+LXMRouter::OutboundContextSlot* LXMRouter::get_or_create_outbound_context(const Bytes& hash) {
+	OutboundContextSlot* slot = find_outbound_context_slot(hash);
+	if (slot) {
+		return slot;
+	}
+
+	slot = find_empty_outbound_context_slot();
+	if (!slot) {
+		return nullptr;
+	}
+
+	slot->in_use = true;
+	slot->set_message_hash(hash);
+	return slot;
+}
+
+void LXMRouter::clear_outbound_context(const Bytes& hash) {
+	OutboundContextSlot* slot = find_outbound_context_slot(hash);
+	if (slot) {
+		slot->clear();
+	}
+
+#ifdef ARDUINO
+	if ((_propagation_stamp_job.queued || _propagation_stamp_job.running) && stamp_job_matches_hash(hash)) {
+		if (!_propagation_stamp_job.running) {
+			_propagation_stamp_job.queued = false;
+			_propagation_stamp_job.completed = false;
+			_propagation_stamp_job.failed = false;
+			_propagation_stamp_job.message = nullptr;
+			_propagation_stamp_job.router = nullptr;
+			memset(_propagation_stamp_job.message_hash, 0, sizeof(_propagation_stamp_job.message_hash));
+		}
+	}
+#endif
+}
+
+void LXMRouter::schedule_outbound_retry(LXMessage& message, double delay, OutboundStage stage, const std::string& reason) {
+	OutboundContextSlot* slot = get_or_create_outbound_context(message.hash());
+	if (slot) {
+		slot->next_attempt_time = Utilities::OS::time() + delay;
+		slot->stage = stage;
+	}
+	if (message.state() != Type::Message::OUTBOUND) {
+		log_state_transition(message, Type::Message::OUTBOUND, reason);
+	} else {
+		INFO(reason);
+	}
+}
+
+void LXMRouter::update_pending_message_state(const Bytes& message_hash, Type::Message::State state, const std::string& reason) {
+	LXMessage* message = pending_outbound_find(message_hash);
+	if (!message) {
+		return;
+	}
+
+	log_state_transition(*message, state, reason);
+	if (state == Type::Message::DELIVERED || state == Type::Message::SENT || state == Type::Message::FAILED) {
+		OutboundContextSlot* slot = find_outbound_context_slot(message_hash);
+		if (slot) {
+			slot->next_attempt_time = 0.0;
+			slot->stage = OutboundStage::NONE;
+			slot->propagation_stamp_pending = false;
+			slot->propagation_stamp_failed = false;
+		}
+	}
+}
+
+void LXMRouter::notify_sent_for_message_hash(const Bytes& message_hash, Type::Message::Method method) {
+	if (_sent_callback) {
+		Bytes empty_hash;
+		LXMessage msg(empty_hash, empty_hash);
+		msg.hash(message_hash);
+		msg.state(Type::Message::SENT);
+		msg.set_method(method);
+		_sent_callback(msg);
+	}
+}
+
+void LXMRouter::notify_delivered_for_message_hash(const Bytes& message_hash) {
+	if (_delivered_callback) {
+		Bytes empty_hash;
+		LXMessage msg(empty_hash, empty_hash);
+		msg.hash(message_hash);
+		msg.state(Type::Message::DELIVERED);
+		_delivered_callback(msg);
+	}
+}
+
+void LXMRouter::notify_failed_for_message_hash(const Bytes& message_hash) {
+	if (_failed_callback) {
+		Bytes empty_hash;
+		LXMessage msg(empty_hash, empty_hash);
+		msg.hash(message_hash);
+		msg.state(Type::Message::FAILED);
+		_failed_callback(msg);
+	}
+}
+
+bool LXMRouter::path_supports_opportunistic(const Bytes& destination_hash, bool avoid_auto_interface_path) const {
+	if (!Transport::has_path(destination_hash)) {
+		return false;
+	}
+
+	Interface next_hop_interface = Transport::next_hop_interface(destination_hash);
+	if (!next_hop_interface) {
+		return true;
+	}
+
+	std::string if_name = next_hop_interface.toString();
+	if (avoid_auto_interface_path && if_name.find("AutoInterface[") != std::string::npos) {
+		DEBUG("  Next hop is AutoInterface; suppressing opportunistic routing for this destination");
+		return false;
+	}
+
+	return true;
+}
+
+bool LXMRouter::ensure_stamp_worker_started() {
+#ifdef ARDUINO
+	if (_propagation_stamp_worker != nullptr) {
+		return true;
+	}
+
+	BaseType_t result = xTaskCreatePinnedToCore(
+		propagation_stamp_worker_task,
+		"lxmf_stamp",
+		8192,
+		nullptr,
+		1,
+		&_propagation_stamp_worker,
+		1
+	);
+	if (result != pdPASS) {
+		ERROR("Failed to start propagation stamp worker task");
+		_propagation_stamp_worker = nullptr;
+		return false;
+	}
+	return true;
+#else
+	return true;
+#endif
+}
+
+bool LXMRouter::queue_propagation_stamp_job(LXMessage& message) {
+	OutboundContextSlot* slot = get_or_create_outbound_context(message.hash());
+	if (!slot) {
+		ERROR("No outbound context slot available for propagation stamp job");
+		return false;
+	}
+
+#ifdef ARDUINO
+	if (!ensure_stamp_worker_started()) {
+		return false;
+	}
+
+	if (_propagation_stamp_job.running || _propagation_stamp_job.queued) {
+		return stamp_job_matches_hash(message.hash());
+	}
+
+	slot->propagation_stamp_pending = true;
+	slot->propagation_stamp_failed = false;
+	slot->stage = OutboundStage::WAITING_PROP_STAMP;
+
+	_propagation_stamp_job.target_cost = _outbound_propagation_stamp_cost;
+	_propagation_stamp_job.router = this;
+	_propagation_stamp_job.message = &message;
+	memcpy(_propagation_stamp_job.message_hash, message.hash().data(), sizeof(_propagation_stamp_job.message_hash));
+	_propagation_stamp_job.failed = false;
+	_propagation_stamp_job.completed = false;
+	_propagation_stamp_job.queued = true;
+
+	INFO("  Queued propagation stamp generation on background worker");
+	return true;
+#else
+	Bytes stamp = message.generate_propagation_stamp(_outbound_propagation_stamp_cost);
+	slot->propagation_stamp_pending = false;
+	slot->propagation_stamp_failed = (stamp.size() == 0);
+	return !slot->propagation_stamp_failed;
+#endif
+}
+
+void LXMRouter::nudge_propagation_sync(const std::string& reason) {
+	if (_outbound_propagation_node.size() == 0) {
+		return;
+	}
+
+	double now = Utilities::OS::time();
+	if (now - _last_propagation_sync_nudge < PROPAGATION_SYNC_NUDGE_INTERVAL) {
+		return;
+	}
+	if (!(_sync_state == PR_IDLE || _sync_state == PR_COMPLETE || _sync_state == PR_FAILED)) {
+		return;
+	}
+
+	_last_propagation_sync_nudge = now;
+	INFO("Nudging propagation sync: " + reason);
+	request_messages_from_propagation_node();
+}
+
 // ============== End Circular Buffer Helpers ==============
 
 // Register callbacks
@@ -529,7 +857,7 @@ void LXMRouter::handle_outbound(LXMessage& message) {
 	}
 
 	// Set state to outbound
-	message.state(Type::Message::OUTBOUND);
+	log_state_transition(message, Type::Message::OUTBOUND, "queued for outbound routing");
 
 	// Add to pending queue
 	pending_outbound_push(message);
@@ -544,67 +872,193 @@ void LXMRouter::process_outbound() {
 		return;
 	}
 
-	// Check backoff timer - don't process if we're in retry delay
 	double now = Utilities::OS::time();
-	if (now < _next_outbound_process_time) {
-		return;  // Wait until retry delay expires
-	}
-
-	// Process one message per call to avoid blocking
 	LXMessage* message_ptr = pending_outbound_front();
 	if (!message_ptr) return;
 	LXMessage& message = *message_ptr;
+	OutboundContextSlot* context = get_or_create_outbound_context(message.hash());
 	char buf[128];
+
+	if (message.state() == Type::Message::DELIVERED) {
+		INFO("Delivery confirmed, removing message from outbound queue");
+		clear_outbound_context(message.hash());
+		LXMessage dummy;
+		pending_outbound_pop(dummy);
+		return;
+	}
+
+	if (message.method() == Type::Message::PROPAGATED && message.state() == Type::Message::SENT) {
+		INFO("Propagation transfer completed, removing message from outbound queue");
+		clear_outbound_context(message.hash());
+		LXMessage dummy;
+		pending_outbound_pop(dummy);
+		return;
+	}
+
+	if (context && now < context->next_attempt_time) {
+		return;
+	}
+
+	if (context && context->stage == OutboundStage::WAITING_PROP_STAMP && context->propagation_stamp_pending) {
+		return;
+	}
 
 	snprintf(buf, sizeof(buf), "Processing outbound message to %s", message.destination_hash().toHex().c_str());
 	DEBUG(buf);
 
 	try {
-		// Check max delivery attempts
-		if (message.delivery_attempts() >= MAX_DELIVERY_ATTEMPTS) {
-			WARNING("Max delivery attempts reached for message to " + message.destination_hash().toHex());
-			message.state(Type::Message::FAILED);
+		auto fail_message = [&](const std::string& reason) {
+			log_state_transition(message, Type::Message::FAILED, reason);
+			clear_outbound_context(message.hash());
 			if (_failed_callback) {
 				_failed_callback(message);
 			}
 			failed_outbound_push(message);
 			LXMessage dummy;
 			pending_outbound_pop(dummy);
+		};
+
+		auto retry_later = [&](double delay, OutboundStage stage, const std::string& reason) {
+			schedule_outbound_retry(message, delay, stage, reason);
+		};
+
+		auto attempt_propagated = [&](const std::string& reason) -> bool {
+			if (_outbound_propagation_node.size() == 0) {
+				fail_message("Propagation fallback requested but no propagation node is selected");
+				return true;
+			}
+
+			INFO("  Falling back to PROPAGATED delivery: " + reason);
+			if (context && !context->using_propagated_retry_budget) {
+				context->using_propagated_retry_budget = true;
+				context->propagation_attempts = 0;
+				INFO("  Resetting retry budget for PROPAGATED delivery");
+			}
+			message.set_method(Type::Message::PROPAGATED);
+
+			send_propagated(message);
+			return true;
+		};
+
+		auto using_propagated_budget = [&]() -> bool {
+			return context && context->using_propagated_retry_budget && message.method() == Type::Message::PROPAGATED;
+		};
+
+		auto current_attempts = [&]() -> int {
+			return using_propagated_budget() ? context->propagation_attempts : message.delivery_attempts();
+		};
+
+		auto current_attempt_limit = [&]() -> int {
+			return using_propagated_budget() ? MAX_PROPAGATION_DELIVERY_ATTEMPTS : MAX_DELIVERY_ATTEMPTS;
+		};
+
+		auto increment_attempts = [&]() {
+			if (using_propagated_budget()) {
+				context->propagation_attempts++;
+			} else {
+				message.increment_delivery_attempts();
+			}
+		};
+
+		if (message.state() == Type::Message::SENDING) {
+			if (context && context->stage == OutboundStage::DIRECT_TRANSFER) {
+				if (context->next_attempt_time > 0.0 && now >= context->next_attempt_time) {
+					schedule_outbound_retry(message, OUTBOUND_RETRY_DELAY, OutboundStage::WAITING_DIRECT_LINK,
+					                       "Direct delivery timed out waiting for proof/resource completion");
+				}
+				return;
+			}
+			if (context && context->stage == OutboundStage::PROP_TRANSFER) {
+				if (context->next_attempt_time > 0.0 && now >= context->next_attempt_time) {
+					schedule_outbound_retry(message, OUTBOUND_RETRY_DELAY, OutboundStage::WAITING_PROP_LINK,
+					                       "Propagation transfer timed out waiting for node confirmation");
+				}
+				return;
+			}
+			if (context && context->stage == OutboundStage::WAITING_PROP_STAMP) {
+				DEBUG("  Waiting for propagation stamp worker");
+				return;
+			}
+		}
+
+		// Check max delivery attempts
+		if (current_attempts() >= current_attempt_limit()) {
+			fail_message("Max delivery attempts reached");
 			return;
 		}
-		message.increment_delivery_attempts();
+		increment_attempts();
 
 		// If propagation-only mode is enabled, send via propagation node
 		if (_propagation_only) {
 			DEBUG("  Using PROPAGATED delivery (propagation-only mode)");
 			message.set_method(Type::Message::PROPAGATED);
-			if (send_propagated(message)) {
-				INFO("Message sent via PROPAGATED delivery");
-				if (_sent_callback) {
-					_sent_callback(message);
-				}
-				LXMessage dummy;
-				pending_outbound_pop(dummy);
-			} else {
-				// Propagation not ready yet - wait and retry
-				DEBUG("  Propagation delivery not ready, will retry...");
-				_next_outbound_process_time = now + OUTBOUND_RETRY_DELAY;
+			if (_outbound_propagation_node.size() == 0) {
+				fail_message("Propagation-only mode is enabled but no propagation node is configured");
+				return;
 			}
+			send_propagated(message);
 			return;
 		}
 
-		// Determine delivery method based on message size
-		// If caller explicitly set OPPORTUNISTIC (e.g., telemetry), use the general
-		// ENCRYPTED_PACKET_MDU (391 bytes) matching Python LXMF behavior.
-		// Otherwise, auto-detect using the conservative LoRa-safe threshold (159 bytes).
-		bool use_opportunistic;
+		bool has_dest_identity = Identity::recall(message.destination_hash()) ? true : false;
+		bool has_dest_path = Transport::has_path(message.destination_hash());
+		if (context && message.delivery_attempts() == 1 && !has_dest_path && _fallback_to_propagation) {
+			context->avoid_auto_interface_path = true;
+		}
+		bool has_routable_path = has_dest_path;
+		if (context && context->avoid_auto_interface_path) {
+			has_routable_path = path_supports_opportunistic(message.destination_hash(), true);
+		}
+		bool has_opportunistic_path = path_supports_opportunistic(
+			message.destination_hash(),
+			context ? context->avoid_auto_interface_path : false
+		);
+		bool has_prop_node = _outbound_propagation_node.size() > 0;
+
+		// Determine delivery method based on message size, but only allow
+		// OPPORTUNISTIC when a concrete path exists to the destination.
+		bool opportunistic_size_ok;
 		if (message.method() == Type::Message::OPPORTUNISTIC) {
-			use_opportunistic = (message.packed_size() <= Type::Constants::ENCRYPTED_PACKET_MDU);
+			opportunistic_size_ok = (message.packed_size() <= Type::Constants::ENCRYPTED_PACKET_MDU);
 		} else {
-			use_opportunistic = (message.packed_size() <= Type::Constants::LORA_ENCRYPTED_PACKET_MDU);
+			opportunistic_size_ok = (message.packed_size() <= Type::Constants::LORA_ENCRYPTED_PACKET_MDU);
 		}
 
-		if (use_opportunistic) {
+		bool opportunistic_allowed = opportunistic_size_ok && has_opportunistic_path;
+		Type::Message::Method route_method = message.method() == Type::Message::PROPAGATED ?
+		                                    Type::Message::PROPAGATED :
+		                                    (opportunistic_allowed ? Type::Message::OPPORTUNISTIC : Type::Message::DIRECT);
+		if (message.method() != Type::Message::PROPAGATED) {
+			message.set_method(route_method);
+		}
+
+		snprintf(buf, sizeof(buf),
+		         "  attempt=%d/%d method=%s packed=%zu identity=%s path=%s opp_path=%s prop=%s fallback=%s",
+		         current_attempts(),
+		         current_attempt_limit(),
+		         method_name(route_method),
+		         message.packed_size(),
+		         has_dest_identity ? "yes" : "no",
+		         has_dest_path ? "yes" : "no",
+		         has_opportunistic_path ? "yes" : "no",
+		         has_prop_node ? "yes" : "no",
+		         _fallback_to_propagation ? "on" : "off");
+		INFO(buf);
+
+		if (message.method() == Type::Message::PROPAGATED) {
+			attempt_propagated("message already marked for propagated delivery");
+			return;
+		}
+
+		if (opportunistic_size_ok && !has_opportunistic_path) {
+			if (has_dest_path) {
+				INFO("  Opportunistic delivery skipped because only a non-opportunistic path is available");
+			} else {
+				INFO("  Pathless OPPORTUNISTIC delivery skipped; waiting for path or fallback");
+			}
+		}
+
+		if (message.method() == Type::Message::OPPORTUNISTIC) {
 			// OPPORTUNISTIC delivery - send as single encrypted packet
 			DEBUG("  Using OPPORTUNISTIC delivery (single packet)");
 
@@ -614,7 +1068,11 @@ void LXMRouter::process_outbound() {
 				// Identity not known - request path which may trigger an announce
 				INFO("  Destination identity not known, requesting path...");
 				Transport::request_path(message.destination_hash());
-				_next_outbound_process_time = now + PATH_REQUEST_WAIT;
+				if (_fallback_to_propagation && current_attempts() >= PROPAGATION_FALLBACK_ATTEMPTS) {
+					attempt_propagated("destination identity remained unknown after opportunistic retries");
+					return;
+				}
+				retry_later(PATH_REQUEST_WAIT, OutboundStage::WAITING_PATH, "  Waiting for destination identity/path after request");
 				return;
 			}
 
@@ -631,27 +1089,31 @@ void LXMRouter::process_outbound() {
 				LXMessage dummy;
 				pending_outbound_pop(dummy);
 			} else {
-				ERROR("Failed to send OPPORTUNISTIC message");
-				message.state(Type::Message::FAILED);
-
-				if (_failed_callback) {
-					_failed_callback(message);
+				if (_fallback_to_propagation) {
+					attempt_propagated("opportunistic send failed");
+				} else {
+					fail_message("Failed to send OPPORTUNISTIC message");
 				}
-
-				failed_outbound_push(message);
-				LXMessage dummy;
-				pending_outbound_pop(dummy);
 			}
 		} else {
 			// DIRECT delivery - need a link for large messages
 			DEBUG("  Using DIRECT delivery (via link)");
 
 			// Check if we have a path to the destination
-			if (!Transport::has_path(message.destination_hash())) {
+			if (!has_routable_path) {
 				// Request path from network
 				INFO("  No path to destination, requesting...");
 				Transport::request_path(message.destination_hash());
-				_next_outbound_process_time = now + PATH_REQUEST_WAIT;
+				if (opportunistic_size_ok) {
+					INFO("  Small message is waiting for path-aware routing before send");
+				}
+				if (_fallback_to_propagation && current_attempts() >= PROPAGATION_FALLBACK_ATTEMPTS) {
+					attempt_propagated(opportunistic_size_ok ?
+						"no path became available for path-aware opportunistic delivery" :
+						"no direct path became available");
+					return;
+				}
+				retry_later(PATH_REQUEST_WAIT, OutboundStage::WAITING_PATH, "  Waiting for direct path after path request");
 				return;
 			}
 
@@ -659,19 +1121,21 @@ void LXMRouter::process_outbound() {
 			Link link = get_link_for_destination(message.destination_hash());
 
 			if (!link) {
-				WARNING("Failed to establish link for message delivery");
-				// Set backoff timer to avoid tight loop
-				_next_outbound_process_time = now + OUTBOUND_RETRY_DELAY;
-				snprintf(buf, sizeof(buf), "  Will retry in %d seconds", (int)OUTBOUND_RETRY_DELAY);
-				INFO(buf);
+				if (_fallback_to_propagation && current_attempts() >= PROPAGATION_FALLBACK_ATTEMPTS) {
+					attempt_propagated("direct link could not be established");
+					return;
+				}
+				retry_later(OUTBOUND_RETRY_DELAY, OutboundStage::WAITING_DIRECT_LINK, "  Direct link unavailable, will retry");
 				return;
 			}
 
 			// Check link status
 			if (link.status() != RNS::Type::Link::ACTIVE) {
-				DEBUG("Link not yet active, waiting...");
-				// Set shorter backoff for pending links
-				_next_outbound_process_time = now + 1.0;  // Check again in 1 second
+				if (_fallback_to_propagation && current_attempts() >= PROPAGATION_FALLBACK_ATTEMPTS) {
+					attempt_propagated("direct link did not become active");
+					return;
+				}
+				retry_later(1.0, OutboundStage::WAITING_DIRECT_LINK, "  Direct link pending activation");
 				return;
 			}
 
@@ -679,41 +1143,27 @@ void LXMRouter::process_outbound() {
 			if (send_via_link(message, link)) {
 				INFO("Message sent successfully via link");
 
-				// Call sent callback if registered
-				if (_sent_callback) {
-					_sent_callback(message);
+				if (context) {
+					context->stage = OutboundStage::DIRECT_TRANSFER;
+					context->next_attempt_time = now + (OUTBOUND_RETRY_DELAY * 2.0);
 				}
-
-				// Remove from pending queue
-				LXMessage dummy;
-				pending_outbound_pop(dummy);
+				return;
 			} else {
-				ERROR("Failed to send message via link");
-				message.state(Type::Message::FAILED);
-
-				// Call failed callback
-				if (_failed_callback) {
-					_failed_callback(message);
+				if (_fallback_to_propagation) {
+					attempt_propagated("direct send failed");
+				} else {
+					fail_message("Failed to send message via link");
 				}
-
-				// Move to failed queue
-				failed_outbound_push(message);
-				LXMessage dummy;
-				pending_outbound_pop(dummy);
 			}
 		}
 
 	} catch (const std::exception& e) {
 		snprintf(buf, sizeof(buf), "Exception processing outbound message: %s", e.what());
 		ERROR(buf);
-		message.state(Type::Message::FAILED);
-
-		// Call failed callback
+		log_state_transition(message, Type::Message::FAILED, "exception while processing outbound");
 		if (_failed_callback) {
 			_failed_callback(message);
 		}
-
-		// Move to failed queue
 		failed_outbound_push(message);
 		LXMessage dummy;
 		pending_outbound_pop(dummy);
@@ -1074,7 +1524,7 @@ bool LXMRouter::send_via_link(LXMessage& message, Link& link) {
 			return false;
 		}
 
-		message.state(Type::Message::SENDING);
+		log_state_transition(message, Type::Message::SENDING, "sending via direct link");
 
 		if (message.representation() == Type::Message::PACKET) {
 			// Send as single packet over link
@@ -1082,10 +1532,20 @@ bool LXMRouter::send_via_link(LXMessage& message, Link& link) {
 			INFO(buf);
 
 			Packet packet(link, message.packed());
-			packet.send();
+			PacketReceipt receipt = packet.send();
+			if (receipt) {
+				receipt.set_delivery_callback(static_proof_callback);
+				PendingProofSlot* slot = find_empty_pending_proof_slot();
+				if (slot) {
+					slot->in_use = true;
+					slot->set_packet_hash(receipt.hash());
+					slot->set_message_hash(message.hash());
+					snprintf(buf, sizeof(buf), "  Registered direct proof callback for packet %.16s...", receipt.hash().toHex().c_str());
+					DEBUG(buf);
+				}
+			}
 
-			message.state(Type::Message::SENT);
-			INFO("Message sent successfully as packet");
+			INFO("Message sent successfully as packet, waiting for proof");
 			return true;
 
 		} else if (message.representation() == Type::Message::RESOURCE) {
@@ -1111,8 +1571,7 @@ bool LXMRouter::send_via_link(LXMessage& message, Link& link) {
 				}
 			}
 
-			message.state(Type::Message::SENT);
-			INFO("Message resource transfer initiated");
+			INFO("Message resource transfer initiated, waiting for completion");
 			return true;
 
 		} else {
@@ -1180,7 +1639,7 @@ bool LXMRouter::send_opportunistic(LXMessage& message, const Identity& dest_iden
 			}
 		}
 
-		message.state(Type::Message::SENT);
+		log_state_transition(message, Type::Message::SENT, "opportunistic packet transmitted");
 		INFO("  OPPORTUNISTIC packet sent");
 
 		return true;
@@ -1214,8 +1673,12 @@ void LXMRouter::handle_direct_proof(const Bytes& message_hash) {
 					break;
 				}
 			}
-			if (!already_notified && router && router->_delivered_callback) {
+			if (!already_notified && router) {
 				notified_routers[notified_count++] = router;
+				router->update_pending_message_state(message_hash, Type::Message::DELIVERED, "direct delivery proof received");
+				if (!router->_delivered_callback) {
+					continue;
+				}
 				Bytes empty_hash;
 				LXMessage msg(empty_hash, empty_hash);
 				msg.hash(message_hash);
@@ -1342,6 +1805,9 @@ void LXMRouter::on_resource_concluded(const RNS::Resource& resource) {
 
 void LXMRouter::set_outbound_propagation_node(const Bytes& node_hash) {
 	if (node_hash.size() == 0) {
+		if (_outbound_propagation_node.size() == 0) {
+			return;
+		}
 		_outbound_propagation_node = {};
 		_outbound_propagation_link = Link(RNS::Type::NONE);
 		INFO("Cleared outbound propagation node");
@@ -1349,6 +1815,9 @@ void LXMRouter::set_outbound_propagation_node(const Bytes& node_hash) {
 	}
 
 	// Check if changing to a different node
+	if (_outbound_propagation_node == node_hash) {
+		return;
+	}
 	if (_outbound_propagation_node != node_hash) {
 		// Tear down existing link if any
 		if (_outbound_propagation_link && _outbound_propagation_link.status() != RNS::Type::Link::CLOSED) {
@@ -1362,6 +1831,7 @@ void LXMRouter::set_outbound_propagation_node(const Bytes& node_hash) {
 	snprintf(buf, sizeof(buf), "Set outbound propagation node (%d bytes): %s",
 		(int)node_hash.size(), node_hash.toHex().c_str());
 	INFO(buf);
+	nudge_propagation_sync("propagation node changed");
 }
 
 void LXMRouter::register_sync_complete_callback(SyncCompleteCallback callback) {
@@ -1389,43 +1859,60 @@ void LXMRouter::static_propagation_resource_concluded(const Resource& resource) 
 	if (resource.status() == RNS::Type::Resource::COMPLETE) {
 		snprintf(buf, sizeof(buf), "PROPAGATED delivery to node confirmed for message %.16s...", message_hash.toHex().c_str());
 		INFO(buf);
-
-		// For PROPAGATED, "delivered" means delivered to propagation node, not final recipient
-		// We mark it as SENT (not DELIVERED) to indicate it's on the propagation network
-		LXMRouter* notified_routers[ROUTER_REGISTRY_SIZE];
-		size_t notified_count = 0;
-
-		for (size_t i = 0; i < ROUTER_REGISTRY_SIZE; i++) {
-			if (_router_registry_pool[i].in_use) {
-				LXMRouter* router = _router_registry_pool[i].router;
-				bool already_notified = false;
-				for (size_t j = 0; j < notified_count; j++) {
-					if (notified_routers[j] == router) {
-						already_notified = true;
-						break;
-					}
-				}
-				if (!already_notified && router && router->_sent_callback) {
-					notified_routers[notified_count++] = router;
-					Bytes empty_hash;
-					LXMessage msg(empty_hash, empty_hash);
-					msg.hash(message_hash);
-					msg.state(Type::Message::SENT);
-					router->_sent_callback(msg);
-				}
-			}
-		}
 	} else {
 		snprintf(buf, sizeof(buf), "PROPAGATED resource transfer failed with status %d", (int)resource.status());
 		WARNING(buf);
 	}
 
 	slot->clear();
+
+	LXMRouter* notified_routers[ROUTER_REGISTRY_SIZE];
+	size_t notified_count = 0;
+
+	for (size_t i = 0; i < ROUTER_REGISTRY_SIZE; i++) {
+		if (!_router_registry_pool[i].in_use) {
+			continue;
+		}
+
+		LXMRouter* router = _router_registry_pool[i].router;
+		bool already_notified = false;
+		for (size_t j = 0; j < notified_count; j++) {
+			if (notified_routers[j] == router) {
+				already_notified = true;
+				break;
+			}
+		}
+		if (already_notified || !router) {
+			continue;
+		}
+		notified_routers[notified_count++] = router;
+
+		if (resource.status() == RNS::Type::Resource::COMPLETE) {
+			router->update_pending_message_state(message_hash, Type::Message::SENT, "propagation node accepted message");
+			router->notify_sent_for_message_hash(message_hash, Type::Message::PROPAGATED);
+			router->nudge_propagation_sync("propagated transfer completed");
+		} else {
+			LXMessage* pending = router->pending_outbound_find(message_hash);
+			if (pending) {
+				router->schedule_outbound_retry(
+					*pending,
+					OUTBOUND_RETRY_DELAY,
+					OutboundStage::WAITING_PROP_LINK,
+					"Propagation resource failed; scheduling retry"
+				);
+			}
+		}
+	}
 }
 
 bool LXMRouter::send_propagated(LXMessage& message) {
 	INFO("Sending LXMF message via PROPAGATED delivery");
 	char buf[128];
+	OutboundContextSlot* context = get_or_create_outbound_context(message.hash());
+	if (!context) {
+		ERROR("No outbound context slot available for propagated delivery");
+		return false;
+	}
 
 	// Get propagation node
 	Bytes prop_node = _outbound_propagation_node;
@@ -1446,6 +1933,8 @@ bool LXMRouter::send_propagated(LXMessage& message) {
 		if (!Transport::has_path(prop_node)) {
 			INFO("  No path to propagation node, requesting...");
 			Transport::request_path(prop_node);
+			schedule_outbound_retry(message, PATH_REQUEST_WAIT, OutboundStage::WAITING_PATH,
+			                       "  Waiting for propagation-node path after request");
 			return false;  // Will retry next cycle
 		}
 
@@ -1453,6 +1942,8 @@ bool LXMRouter::send_propagated(LXMessage& message) {
 		Identity node_identity = Identity::recall(prop_node);
 		if (!node_identity) {
 			INFO("  Propagation node identity not known, waiting for announce...");
+			schedule_outbound_retry(message, PATH_REQUEST_WAIT, OutboundStage::WAITING_PROP_LINK,
+			                       "  Waiting for propagation-node identity");
 			return false;
 		}
 
@@ -1468,24 +1959,80 @@ bool LXMRouter::send_propagated(LXMessage& message) {
 		// Create link with established callback
 		_outbound_propagation_link = Link(prop_dest);
 		INFO("  Establishing link to propagation node...");
+		schedule_outbound_retry(message, 1.0, OutboundStage::WAITING_PROP_LINK,
+		                       "  Waiting for propagation link activation");
 		return false;  // Will retry when link established
 	}
 
 	// Check if link is active
 	if (_outbound_propagation_link.status() != RNS::Type::Link::ACTIVE) {
 		DEBUG("  Propagation link not yet active, waiting...");
+		schedule_outbound_retry(message, 1.0, OutboundStage::WAITING_PROP_LINK,
+		                       "  Propagation link pending activation");
 		return false;  // Will retry
 	}
 
-	// Generate propagation stamp if required by node
-	if (_outbound_propagation_stamp_cost > 0) {
-		snprintf(buf, sizeof(buf), "  Generating propagation stamp (cost=%u)...", _outbound_propagation_stamp_cost);
-		DEBUG(buf);
-		Bytes stamp = message.generate_propagation_stamp(_outbound_propagation_stamp_cost);
-		if (stamp.size() == 0) {
-			WARNING("  Failed to generate propagation stamp, sending anyway");
+	// Generate propagation stamp asynchronously if required by node.
+	if (_outbound_propagation_stamp_cost > 0 && message.propagation_stamp().size() == 0) {
+#ifdef ARDUINO
+		if (stamp_job_matches_hash(message.hash())) {
+			if (_propagation_stamp_job.completed) {
+				context->propagation_stamp_pending = false;
+				context->propagation_stamp_failed = false;
+				context->stage = OutboundStage::NONE;
+				_propagation_stamp_job.completed = false;
+				_propagation_stamp_job.message = nullptr;
+				_propagation_stamp_job.router = nullptr;
+				memset(_propagation_stamp_job.message_hash, 0, sizeof(_propagation_stamp_job.message_hash));
+				INFO("  Propagation stamp job completed");
+			} else if (_propagation_stamp_job.failed) {
+				context->propagation_stamp_pending = false;
+				context->propagation_stamp_failed = true;
+				_propagation_stamp_job.failed = false;
+				_propagation_stamp_job.message = nullptr;
+				_propagation_stamp_job.router = nullptr;
+				memset(_propagation_stamp_job.message_hash, 0, sizeof(_propagation_stamp_job.message_hash));
+				WARNING("  Propagation stamp generation failed");
+				return false;
+			} else {
+				context->propagation_stamp_pending = true;
+				context->stage = OutboundStage::WAITING_PROP_STAMP;
+				DEBUG("  Propagation stamp still generating in background");
+				return false;
+			}
 		}
+#endif
+
+		if (!context->propagation_stamp_pending) {
+			snprintf(buf, sizeof(buf), "  Queueing propagation stamp generation (cost=%u)...", _outbound_propagation_stamp_cost);
+			DEBUG(buf);
+			if (!queue_propagation_stamp_job(message)) {
+				WARNING("  Could not queue propagation stamp job yet");
+				schedule_outbound_retry(message, 1.0, OutboundStage::WAITING_PROP_STAMP,
+				                       "  Waiting for propagation stamp worker availability");
+				return false;
+			}
+		}
+
+		context->propagation_stamp_pending = true;
+		context->stage = OutboundStage::WAITING_PROP_STAMP;
+		return false;
 	}
+
+	if (context->propagation_stamp_failed) {
+		WARNING("  Propagation stamp generation previously failed");
+		context->propagation_stamp_failed = false;
+		message.set_propagation_stamp({});
+		return false;
+	}
+
+	if (message.state() == Type::Message::SENDING && context->stage == OutboundStage::PROP_TRANSFER) {
+		DEBUG("  Propagation resource already in progress");
+		return false;
+	}
+
+	context->propagation_stamp_pending = false;
+	context->propagation_stamp_failed = false;
 
 	// Pack message for propagation
 	Bytes prop_packed = message.pack_propagated();
@@ -1514,7 +2061,9 @@ bool LXMRouter::send_propagated(LXMessage& message) {
 		}
 	}
 
-	message.state(Type::Message::SENDING);
+	log_state_transition(message, Type::Message::SENDING, "propagated resource transfer initiated");
+	context->stage = OutboundStage::PROP_TRANSFER;
+	context->next_attempt_time = Utilities::OS::time() + (OUTBOUND_RETRY_DELAY * 2.0);
 	INFO("  PROPAGATED resource transfer initiated");
 	return true;
 }

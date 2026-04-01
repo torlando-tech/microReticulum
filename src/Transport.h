@@ -391,7 +391,7 @@ namespace RNS {
 		// Fixed-size pool structures for zero heap fragmentation
 		// Overflow behavior: find_empty_*_slot() returns nullptr when pool full
 		// Callers must check for nullptr and handle gracefully (drop/log/cull)
-		static constexpr size_t ANNOUNCE_TABLE_SIZE = 8;  // Reduced for testing
+		static constexpr size_t ANNOUNCE_TABLE_SIZE = 32;
 		struct AnnounceTableSlot {
 			bool in_use = false;
 			Bytes destination_hash;
@@ -403,7 +403,7 @@ namespace RNS {
 		static AnnounceTableSlot* find_empty_announce_table_slot();
 		static size_t announce_table_count();
 
-		static constexpr size_t DESTINATION_TABLE_SIZE = 16;  // Reduced for testing
+		static constexpr size_t DESTINATION_TABLE_SIZE = 64;
 		struct DestinationTableSlot {
 			bool in_use = false;
 			Bytes destination_hash;
@@ -415,7 +415,7 @@ namespace RNS {
 		static DestinationTableSlot* find_empty_destination_table_slot();
 		static size_t destination_table_count();
 
-		static constexpr size_t REVERSE_TABLE_SIZE = 8;  // Reduced for testing
+		static constexpr size_t REVERSE_TABLE_SIZE = 16;
 		struct ReverseTableSlot {
 			bool in_use = false;
 			Bytes packet_hash;
@@ -427,7 +427,7 @@ namespace RNS {
 		static ReverseTableSlot* find_empty_reverse_table_slot();
 		static size_t reverse_table_count();
 
-		static constexpr size_t LINK_TABLE_SIZE = 8;  // Reduced for testing
+		static constexpr size_t LINK_TABLE_SIZE = 16;
 		struct LinkTableSlot {
 			bool in_use = false;
 			Bytes link_id;
@@ -439,7 +439,7 @@ namespace RNS {
 		static LinkTableSlot* find_empty_link_table_slot();
 		static size_t link_table_count();
 
-		static constexpr size_t HELD_ANNOUNCES_SIZE = 8;  // Reduced for testing
+		static constexpr size_t HELD_ANNOUNCES_SIZE = 16;
 		struct HeldAnnounceSlot {
 			bool in_use = false;
 			Bytes destination_hash;
@@ -463,7 +463,7 @@ namespace RNS {
 		static TunnelSlot* find_empty_tunnel_slot();
 		static size_t tunnels_count();
 
-		static constexpr size_t ANNOUNCE_RATE_TABLE_SIZE = 8;  // Reduced for testing
+		static constexpr size_t ANNOUNCE_RATE_TABLE_SIZE = 16;
 		struct RateTableSlot {
 			bool in_use = false;
 			Bytes destination_hash;
@@ -475,7 +475,7 @@ namespace RNS {
 		static RateTableSlot* find_empty_rate_table_slot();
 		static size_t announce_rate_table_count();
 
-		static constexpr size_t PATH_REQUESTS_SIZE = 8;  // Reduced for testing
+		static constexpr size_t PATH_REQUESTS_SIZE = 32;
 		struct PathRequestSlot {
 			bool in_use = false;
 			Bytes destination_hash;
@@ -488,7 +488,7 @@ namespace RNS {
 		static size_t path_requests_count();
 
 		// Receipts fixed array
-		static constexpr size_t RECEIPTS_SIZE = 8;  // Reduced for testing
+		static constexpr size_t RECEIPTS_SIZE = 16;
 		static PacketReceipt* _receipts_pool;
 		static size_t _receipts_count;
 		static bool receipts_add(const PacketReceipt& receipt);
@@ -496,7 +496,7 @@ namespace RNS {
 		static inline size_t receipts_count() { return _receipts_count; }
 
 		// Packet hashlist circular buffer (replaces std::set<Bytes>)
-		static constexpr size_t PACKET_HASHLIST_SIZE = 64;  // Reduced for testing
+		static constexpr size_t PACKET_HASHLIST_SIZE = 128;
 		static Bytes* _packet_hashlist_buffer;
 		static size_t _packet_hashlist_head;
 		static size_t _packet_hashlist_count;
@@ -514,7 +514,7 @@ namespace RNS {
 		static void discovery_pr_tags_add(const Bytes& tag);
 
 		// Pending links fixed array (replaces std::set<Link>)
-		static constexpr size_t PENDING_LINKS_SIZE = 4;  // Reduced for testing
+		static constexpr size_t PENDING_LINKS_SIZE = 8;
 		static Link* _pending_links_pool;
 		static size_t _pending_links_count;
 		static bool pending_links_contains(const Link& link);
