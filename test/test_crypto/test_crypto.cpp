@@ -4,6 +4,7 @@
 #include "Utilities/Crc.h"
 #include "Cryptography/HMAC.h"
 #include "Cryptography/PKCS7.h"
+#include "Cryptography/X25519.h"
 
 #include <string.h>
 #include <unistd.h>
@@ -250,10 +251,49 @@ void tearDown(void) {
     // clean stuff up here after each test
 }
 
+// X25519 scalar clamping (RFC 7748 §5). Every private scalar must have:
+//   - bottom 3 bits of byte 0 cleared
+//   - top bit of byte 31 cleared
+//   - second-from-top bit of byte 31 set
+// Python's `cryptography` X25519PrivateKey.from_private_bytes applies these
+// before scalar multiplication; without matching clamping in C++, every ECDH
+// against Python RNS produces different bytes. This test feeds a 32-byte
+// scalar with all clamping-affected bits in the "wrong" state and verifies
+// the resulting `private_bytes()` reflects the canonical clamping.
+void testX25519Clamping() {
+	// Input: bottom 3 bits set (0x07), top bit set (0x80), second-from-top
+	// bit clear in byte 31. After clamping: byte 0 should have low 3 bits
+	// cleared, byte 31 should have top bit cleared and bit 6 set.
+	uint8_t raw[32];
+	memset(raw, 0x55, 32);   // 0x55 = 01010101 — middle bits arbitrary
+	raw[0]  = 0xFF;          // bottom 3 bits set, will be cleared
+	raw[31] = 0x80;          // top bit set, bit 6 clear — both must flip
+
+	RNS::Bytes priv_bytes(raw, 32);
+	auto priv = RNS::Cryptography::X25519PrivateKey::from_private_bytes(priv_bytes);
+	const RNS::Bytes& clamped = priv->private_bytes();
+
+	TEST_ASSERT_EQUAL_size_t(32, clamped.size());
+	// byte 0: low 3 bits must be zero
+	TEST_ASSERT_EQUAL_UINT8(0x00, clamped.data()[0] & 0x07);
+	// byte 31: top bit must be zero, bit 6 must be set
+	TEST_ASSERT_EQUAL_UINT8(0x00, clamped.data()[31] & 0x80);
+	TEST_ASSERT_EQUAL_UINT8(0x40, clamped.data()[31] & 0x40);
+	// concrete values: byte 0 = 0xFF & 0xF8 = 0xF8; byte 31 = (0x80 & 0x7F)
+	// | 0x40 = 0x40.
+	TEST_ASSERT_EQUAL_UINT8(0xF8, clamped.data()[0]);
+	TEST_ASSERT_EQUAL_UINT8(0x40, clamped.data()[31]);
+	// Middle bytes pass through unchanged (clamping affects only [0] and [31]).
+	for (size_t i = 1; i < 31; ++i) {
+		TEST_ASSERT_EQUAL_UINT8(0x55, clamped.data()[i]);
+	}
+}
+
 int runUnityTests(void) {
     UNITY_BEGIN();
 	RUN_TEST(testHMAC);
 	RUN_TEST(testPKCS7);
+	RUN_TEST(testX25519Clamping);
 	RUN_TEST(testCrc8);
 	RUN_TEST(testCrc32);
 	RUN_TEST(testIncrementalCrc32);
