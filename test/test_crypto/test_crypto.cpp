@@ -19,22 +19,39 @@ extern uint8_t crypto_crc8(uint8_t tag, const void *data, unsigned size);
 
 void testHMAC() {
 
+	const char keystr[] = "key";
+	const char datastr[] = "The quick brown fox jumps over the lazy dog";
+	// HMAC-SHA256(key="key", "The quick brown fox jumps over the lazy dog")
+	// canonical reference vector (e.g. matches Python's `hmac.new(b"key",
+	// b"The quick...", hashlib.sha256).digest()`).
+	const uint8_t hasharr[] = {
+		0xf7, 0xbc, 0x83, 0xf4, 0x30, 0x53, 0x84, 0x24,
+		0xb1, 0x32, 0x98, 0xe6, 0xaa, 0x6f, 0xb1, 0x43,
+		0xef, 0x4d, 0x59, 0xa1, 0x49, 0x46, 0x17, 0x59,
+		0x97, 0x47, 0x9d, 0xbc, 0x2d, 0x1a, 0x3c, 0xd8
+	};
+
+	// Class form — was already tested before this commit.
 	{
-		const char keystr[] = "key";
-		const char datastr[] = "The quick brown fox jumps over the lazy dog";
-		const uint8_t hasharr[] = {
-			0xf7, 0xbc, 0x83, 0xf4, 0x30, 0x53, 0x84, 0x24,
-			0xb1, 0x32, 0x98, 0xe6, 0xaa, 0x6f, 0xb1, 0x43,
-			0xef, 0x4d, 0x59, 0xa1, 0x49, 0x46, 0x17, 0x59,
-			0x97, 0x47, 0x9d, 0xbc, 0x2d, 0x1a, 0x3c, 0xd8
-		};
 		RNS::Bytes key(keystr);
 		RNS::Bytes data(datastr);
 		RNS::Bytes hash(hasharr, sizeof(hasharr));
-		//TRACEF("expected hash: %s", hash.toHex().c_str());
 		RNS::Cryptography::HMAC hmac(key, data);
 		RNS::Bytes result = hmac.digest();
-		//TRACEF("result hash:   %s", result.toHex().c_str());
+		TEST_ASSERT_EQUAL_INT(0, memcmp(hash.data(), result.data(), result.size()));
+	}
+
+	// Inline `digest()` helper. Before this commit, the helper called
+	// hmac.update(msg) AFTER the HMAC(key, msg, ...) constructor had
+	// already consumed msg, producing HMAC(msg||msg) instead of HMAC(msg).
+	// Assert it now matches the canonical vector — same input as the class
+	// case above must produce the same hash.
+	{
+		RNS::Bytes key(keystr);
+		RNS::Bytes data(datastr);
+		RNS::Bytes hash(hasharr, sizeof(hasharr));
+		RNS::Bytes result = RNS::Cryptography::digest(key, data);
+		TEST_ASSERT_EQUAL_size_t(sizeof(hasharr), result.size());
 		TEST_ASSERT_EQUAL_INT(0, memcmp(hash.data(), result.data(), result.size()));
 	}
 }
