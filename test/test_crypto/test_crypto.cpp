@@ -114,6 +114,39 @@ void testPKCS7() {
 		TEST_ASSERT_EQUAL_size_t(len, bytes.size());
 		TEST_ASSERT_EQUAL_INT(0, memcmp(bytes.data(), str, len));
 	}
+
+	// Spec-conformance: PKCS#7 (RFC 5652 §6.3) requires the pad to consist
+	// of `padlen` octets each having value `padlen` — NOT zeros with the
+	// last byte set to padlen. Self-roundtrip works either way (unpad
+	// reads the last byte as padlen) so the older tests above don't catch
+	// this. The cases below assert the exact byte pattern.
+	{
+		// 13 bytes input → 3 padding bytes, each = 0x03.
+		RNS::Bytes bytes(str, 13);
+		bytes = RNS::Cryptography::PKCS7::pad(bytes);
+		TEST_ASSERT_EQUAL_size_t(RNS::Cryptography::PKCS7::BLOCKSIZE, bytes.size());
+		TEST_ASSERT_EQUAL_UINT8(0x03, bytes.data()[13]);
+		TEST_ASSERT_EQUAL_UINT8(0x03, bytes.data()[14]);
+		TEST_ASSERT_EQUAL_UINT8(0x03, bytes.data()[15]);
+	}
+	{
+		// Empty input → 16 padding bytes, each = 0x10.
+		RNS::Bytes bytes;
+		bytes = RNS::Cryptography::PKCS7::pad(bytes);
+		TEST_ASSERT_EQUAL_size_t(RNS::Cryptography::PKCS7::BLOCKSIZE, bytes.size());
+		for (size_t i = 0; i < 16; ++i) {
+			TEST_ASSERT_EQUAL_UINT8(0x10, bytes.data()[i]);
+		}
+	}
+	{
+		// 1 byte input → 15 padding bytes, each = 0x0F.
+		RNS::Bytes bytes(str, 1);
+		bytes = RNS::Cryptography::PKCS7::pad(bytes);
+		TEST_ASSERT_EQUAL_size_t(RNS::Cryptography::PKCS7::BLOCKSIZE, bytes.size());
+		for (size_t i = 1; i < 16; ++i) {
+			TEST_ASSERT_EQUAL_UINT8(0x0F, bytes.data()[i]);
+		}
+	}
 }
 
 void testCrc8() {
