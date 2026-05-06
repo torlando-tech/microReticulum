@@ -2226,6 +2226,18 @@ DestinationEntry empty_destination_entry;
 							else {
 								ERRORF("Failed to add destination %s to path table!", packet.destination_hash().toHex().c_str());
 							}
+							// Also populate the in-memory _path_table so callers
+							// using Transport::get_path_table() (eg the pyxis UI
+							// announce list, get_path_table().size() diagnostics)
+							// see paths as they arrive. The microStore migration
+							// commented out this insert in favor of the file-backed
+							// _new_path_table, but that left every existing
+							// in-memory path consumer reading an empty map. We
+							// dual-write: file for persistence, memory for
+							// fast iteration / size queries.
+							remove_path(packet.destination_hash());
+							_path_table.insert({packet.destination_hash(), destination_table_entry});
+							cull_path_table();
 						}
 						catch (const std::bad_alloc&) {
 							ERROR("inbound: bad_alloc - out of memory storing destination entry");
