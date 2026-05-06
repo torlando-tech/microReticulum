@@ -428,20 +428,43 @@ Recall last heard app_data for a destination hash.
 			//TRACEF("Identity::validate_announce: name_hash:        %s", name_hash.toHex().c_str());
 			Bytes random_hash = packet.data().mid(KEYSIZE/8 + NAME_HASH_LENGTH/8, RANDOM_HASH_LENGTH/8);
 			//TRACEF("Identity::validate_announce: random_hash:      %s", random_hash.toHex().c_str());
-			Bytes signature = packet.data().mid(KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8, SIGLENGTH/8);
+
+			// Ratchet support (RNS post-0.7): when the packet's
+			// context_flag is FLAG_SET, a 32-byte X25519 ratchet
+			// public key sits between random_hash and signature.
+			// Mirrors python RNS.Identity.validate_announce
+			// (Identity.py:510-528). Without this skip, the 32
+			// ratchet bytes leak into app_data and any caller that
+			// reads `recall_app_data()` (eg pyxis's announce list
+			// `parse_display_name`) gets binary garbage prefixed
+			// to the real app_data.
+			const size_t ratchet_size = (packet.context_flag() == Type::Packet::FLAG_SET)
+			                            ? RATCHETSIZE/8 : 0;
+			const size_t header_pre_sig = KEYSIZE/8 + NAME_HASH_LENGTH/8
+			                              + RANDOM_HASH_LENGTH/8 + ratchet_size;
+			Bytes ratchet;
+			if (ratchet_size > 0) {
+				ratchet = packet.data().mid(KEYSIZE/8 + NAME_HASH_LENGTH/8
+				                            + RANDOM_HASH_LENGTH/8, ratchet_size);
+			}
+			Bytes signature = packet.data().mid(header_pre_sig, SIGLENGTH/8);
 			//TRACEF("Identity::validate_announce: signature:        %s", signature.toHex().c_str());
 			Bytes app_data;
-			if (packet.data().size() > (KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8 + SIGLENGTH/8)) {
-				app_data = packet.data().mid(KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8 + SIGLENGTH/8);
+			if (packet.data().size() > (header_pre_sig + SIGLENGTH/8)) {
+				app_data = packet.data().mid(header_pre_sig + SIGLENGTH/8);
 			}
 			//TRACEF("Identity::validate_announce: app_data:         %s", app_data.toHex().c_str());
 			//TRACEF("Identity::validate_announce: app_data text:    %s", app_data.toString().c_str());
 
+			// signed_data = dest_hash || pubkey || name_hash ||
+			//               random_hash || ratchet || app_data
+			// (matches python at Identity.py:530)
 			Bytes signed_data;
-			signed_data << packet.destination_hash() << public_key << name_hash << random_hash+app_data;
+			signed_data << packet.destination_hash() << public_key << name_hash
+			            << random_hash << ratchet << app_data;
 			//TRACEF("Identity::validate_announce: signed_data:      %s", signed_data.toHex().c_str());
 
-			if (packet.data().size() <= KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8 + SIGLENGTH/8) {
+			if (packet.data().size() <= header_pre_sig + SIGLENGTH/8) {
 				app_data.clear();
 			}
 
