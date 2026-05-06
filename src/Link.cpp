@@ -1221,12 +1221,18 @@ void Link::receive(const Packet& packet) {
 				// of hash -> sequence map
 				case Type::Packet::RESOURCE:
 				{
-					// Plaintext is the part data — Resource::receive_part
-					// reads it via packet.plaintext().
-					const Bytes part_plain = decrypt(packet.data());
-					if (part_plain) {
-						const_cast<Packet&>(packet).plaintext(part_plain);
-					}
+					// RESOURCE context packets carry chunks of an
+					// already-encrypted stream (the Resource sender
+					// pre-encrypts the whole payload via link.encrypt
+					// then splits into SDU chunks). Packet layer does
+					// NOT add per-packet token wrapping for RESOURCE —
+					// Packet::pack at `_context == RESOURCE` sets
+					// ciphertext = data verbatim. Receiver must NOT
+					// call link.decrypt on each part; the per-part
+					// bytes are ciphertext chunks. The single
+					// link.decrypt happens once in Resource::assemble
+					// over the concatenated stream.
+					const_cast<Packet&>(packet).plaintext(packet.data());
 					for (auto& resource : _object->_incoming_resources) {
 						const_cast<Resource&>(resource).receive_part(packet);
 					}
