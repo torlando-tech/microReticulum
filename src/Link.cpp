@@ -1155,98 +1155,56 @@ void Link::receive(const Packet& packet) {
 					teardown_packet(packet);
 					break;
 				}
-/*z
 				case Type::Packet::RESOURCE_ADV:
 				{
-					//p packet.plaintext = decrypt(packet.data)
 					const Bytes plaintext = decrypt(packet.data());
 					if (plaintext) {
 						const_cast<Packet&>(packet).plaintext(plaintext);
-						if (ResourceAdvertisement::is_request(packet)) {
-							Resource::accept(packet, callback=_object->_request_resource_concluded);
-						}
-						else if (ResourceAdvertisement::is_response(packet)) {
-							Bytes request_id = ResourceAdvertisement::read_request_id(packet)
-							for (auto& pending_request : _object->_pending_requests) {
-								if (pending_request.request_id == request_id) {
-									const Bytes response_resource = Resource::accept(packet, callback=_object->_response_resource_concluded, progress_callback=pending_request.response_resource_progress, request_id = request_id);
-									if (response_resource) {
-										//p if pending_request.response_size == None:
-										if (pending_request.response_size == 0) {
-											pending_request.response_size = ResourceAdvertisement::read_size(packet);
-										}
-										//p if pending_request.response_transfer_size == None:
-										if (pending_request.response_transfer_size == 0) {
-											pending_request.response_transfer_size = 0;
-										}
-										pending_request.response_transfer_size += ResourceAdvertisement::read_transfer_size(packet);
-										//p if pending_request.started_at == None:
-										if (pending_request.started_at == 0.0) {
-											pending_request.started_at = OS::time();
-										}
-										pending_request.response_resource_progress(response_resource);
-									}
-								}
+						// ACCEPT_NONE explicitly rejects all advertisements;
+						// ACCEPT_APP defers to a per-link callback (not yet
+						// wired); ACCEPT_ALL takes everything. The conformance
+						// bridge sets ACCEPT_ALL on incoming LXMF links via
+						// LXMRouter::on_incoming_link_established's
+						// set_resource_concluded_callback (which switches
+						// strategy to ACCEPT_ALL implicitly through
+						// set_resource_concluded_callback below).
+						if (_object->_resource_strategy == Type::Link::ACCEPT_ALL ||
+						    _object->_callbacks._resource_concluded) {
+							try {
+								Resource accepted_res = Resource::accept(
+								    packet,
+								    _object->_callbacks._resource_concluded,
+								    nullptr,
+								    {Type::NONE});
+							}
+							catch (const std::exception& e) {
+								ERRORF("Resource::accept threw: %s", e.what());
 							}
 						}
-						else if (_object->_resource_strategy == ACCEPT_NONE) {
-							//p pass
-						}
-						else if (_object->_resource_strategy == ACCEPT_APP) {
-							if (_object->_callbacks.resource) {
-								try {
-									resource_advertisement = RNS.ResourceAdvertisement.unpack(packet.plaintext());
-									resource_advertisement.link = *this;
-									if (_object->_callbacks.resource(resource_advertisement)) {
-										Resource::accept(packet, _object->_callbacks.resource_concluded);
-									}
-								}
-								catch (const std::exception& e) {
-									ERRORF("Error while executing resource accept callback from %s. The contained exception was: %s", toString().c_str(), e.what());
-								}
-						elif _object->_resource_strategy == ACCEPT_ALL:
-							RNS.Resource.accept(packet, _object->_callbacks.resource_concluded)
+					}
 					break;
 				}
 				case Type::Packet::RESOURCE_REQ:
 				{
 					const Bytes plaintext = decrypt(packet.data());
 					if (plaintext) {
-						if ord(plaintext[:1]) == RNS.Resource.HASHMAP_IS_EXHAUSTED:
-							resource_hash = plaintext[1+RNS.Resource.MAPHASH_LEN:Type::Identity::HASHLENGTH//8+1+RNS.Resource.MAPHASH_LEN]
-						else:
-							resource_hash = plaintext[1:Type::Identity::HASHLENGTH//8+1]
-
-						for resource in _object->_outgoing_resources:
-							if resource.hash == resource_hash:
-								// We need to check that this request has not been
-								// received before in order to avoid sequencing errors.
-								if not packet.packet_hash in resource.req_hashlist:
-									resource.req_hashlist.append(packet.packet_hash)
-									resource.request(plaintext)
+						// payload: [exhausted_flag][resource_hash][requested_hashes...]
+						uint8_t exhausted = plaintext.data()[0];
+						size_t pad = (exhausted == Resource::HASHMAP_IS_EXHAUSTED)
+						    ? 1 + Resource::MAPHASH_LEN : 1;
+						if (plaintext.size() < pad + Type::Identity::HASHLENGTH/8) break;
+						Bytes resource_hash = plaintext.mid(pad, Type::Identity::HASHLENGTH/8);
+						for (auto& resource : _object->_outgoing_resources) {
+							if (resource.hash() == resource_hash) {
+								const_cast<Resource&>(resource).request(plaintext);
+							}
+						}
+					}
 					break;
 				}
-				case Type::Packet::RESOURCE_HMU:
-				{
-					const Bytes plaintext = decrypt(packet.data());
-					if (plaintext) {
-						resource_hash = plaintext[:Type::Identity::HASHLENGTH//8]
-						for resource in _object->_incoming_resources:
-							if resource_hash == resource.hash:
-								resource.hashmap_update_packet(plaintext)
-					break;
-				}
-				case Type::Packet::RESOURCE_ICL:
-				{
-					const Bytes plaintext = decrypt(packet.data());
-					if (plaintext) {
-						resource_hash = plaintext[:Type::Identity::HASHLENGTH//8]
-						for resource in _object->_incoming_resources:
-							if resource_hash == resource.hash:
-								resource.cancel()
-					break;
-				}
-*/
+				// RESOURCE_HMU / RESOURCE_ICL: deferred (only used by very-large multi-segment
+				// resources that exceed a single hashmap window — not exercised by
+				// test_direct_large or the lxmd propagation upload path).
 				case Type::Packet::KEEPALIVE:
 				{
 					if (!_object->_initiator && packet.data() == "\xFF") {
@@ -1263,8 +1221,14 @@ void Link::receive(const Packet& packet) {
 				// of hash -> sequence map
 				case Type::Packet::RESOURCE:
 				{
+					// Plaintext is the part data — Resource::receive_part
+					// reads it via packet.plaintext().
+					const Bytes part_plain = decrypt(packet.data());
+					if (part_plain) {
+						const_cast<Packet&>(packet).plaintext(part_plain);
+					}
 					for (auto& resource : _object->_incoming_resources) {
-						//z resource.receive_part(packet);
+						const_cast<Resource&>(resource).receive_part(packet);
 					}
 					break;
 				}
@@ -1289,10 +1253,12 @@ void Link::receive(const Packet& packet) {
 			}
 			else if (packet.packet_type() == Type::Packet::PROOF) {
 				if (packet.context() == Type::Packet::RESOURCE_PRF) {
+					// RESOURCE_PRF data is plaintext (not encrypted via the
+					// link layer — proof is its own integrity scheme).
 					Bytes resource_hash = packet.data().left(Type::Identity::HASHLENGTH/8);
 					for (const auto& resource : _object->_outgoing_resources) {
 						if (resource_hash == resource.hash()) {
-							//z resource.validate_proof(packet.data());
+							const_cast<Resource&>(resource).validate_proof(packet.data());
 						}
 					}
 				}
