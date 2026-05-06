@@ -33,6 +33,7 @@
 #include <math.h>
 
 #include <algorithm>
+#include <map>
 
 using namespace RNS;
 using namespace RNS::Type::Link;
@@ -458,11 +459,26 @@ const RNS::RequestReceipt Link::request(const Bytes& path, const Bytes& data /*=
 	DEBUGF("Link %s sending request", link_id().toHex().c_str());
 	const Bytes request_path_hash(Identity::truncated_hash(path));
 
-	//p unpacked_request = [OS::time(), request_path_hash, data]
-	//p packed_request = umsgpack.packb(unpacked_request)
-    MsgPack::Packer packer;
-	packer.to_array(OS::time(), request_path_hash, data);
+	// Wire format matches python RNS.Link.request:
+	//   packed_request = umsgpack.packb([time(), request_path_hash, data])
+	// Python embeds `data` as a structured object (list/dict/scalar). The
+	// caller pre-packs `data` here as raw msgpack bytes, and we inline
+	// them into the outer 3-element array — *not* wrapping them as
+	// msgpack-binary, which is what packer.to_array(..., data) would do
+	// when `data` is `Bytes`. The python /get handler expects
+	// `data = [None, None]` (a nested array), not a binary blob.
+	MsgPack::Packer packer;
+	packer.packArraySize(3);
+	packer.serialize((double)OS::time());
+	packer.packBinary(request_path_hash.data(), request_path_hash.size());
 	Bytes packed_request(packer.data(), packer.size());
+	if (data.size() > 0) {
+		packed_request.append(data.data(), data.size());
+	} else {
+		// Python's umsgpack.packb(None) → 0xC0 (nil)
+		uint8_t nil_byte = 0xC0;
+		packed_request.append(&nil_byte, 1);
+	}
 
 	if (timeout == 0.0) {
 		timeout = _object->_rtt * _object->_traffic_timeout_factor + Type::Resource::RESPONSE_MAX_GRACE_TIME * 1.125;
@@ -965,20 +981,77 @@ void Link::request_resource_concluded(const Resource& resource) {
 	}
 }
 
+// Static registry that maps a pending response-resource's request_id
+// (the resource's `q` field, set by python's RNS.Resource(..., is_response=True))
+// to the Link object that owns the matching outbound request. The
+// Resource API takes a non-capturing function pointer for its concluded
+// callback, so we trampoline through this map to recover `this`. Use
+// insert (not operator[]) so we never default-construct a Link — Link()
+// goes through the main constructor with all-default args, which leaves
+// `_sig_prv` null and crashes on the first public_key() call.
+static std::map<Bytes, Link>& response_resource_link_registry() {
+	static std::map<Bytes, Link> registry;
+	return registry;
+}
+
+void Link::register_response_resource_link(const Bytes& request_id, const Link& link) {
+	auto& reg = response_resource_link_registry();
+	auto it = reg.find(request_id);
+	if (it != reg.end()) {
+		it->second = link;
+	} else {
+		reg.insert(std::make_pair(request_id, link));
+	}
+}
+
+void Link::static_response_resource_concluded(const Resource& resource) {
+	auto& reg = response_resource_link_registry();
+	auto it = reg.find(resource.request_id());
+	if (it == reg.end()) {
+		ERRORF("Response-resource conclude: no Link registered for request_id %s",
+		       resource.request_id().toHex().c_str());
+		return;
+	}
+	Link link = it->second;
+	reg.erase(it);
+	link.response_resource_concluded(resource);
+}
+
 void Link::response_resource_concluded(const Resource& resource) {
 	assert(_object);
 	if (resource.status() == Type::Resource::COMPLETE) {
-		//p packed_response = resource.data.read()
+		// Wire format matches python: umsgpack.packb([request_id, response_data]).
+		// `response_data` is structured (list/dict/scalar), not binary —
+		// walk the msgpack manually to extract it as opaque raw msgpack.
+		// See the equivalent walker in the in-line RESPONSE-packet path.
 		Bytes packed_response = resource.data();
-		//p unpacked_response = umsgpack.unpackb(packed_response)
-		//p request_id        = unpacked_response[0]
-		//p response_data     = unpacked_response[1]
-		MsgPack::Unpacker unpacker;
-		unpacker.feed(packed_response.data(), packed_response.size());
-		MsgPack::bin_t<uint8_t> request_id;
-		MsgPack::bin_t<uint8_t> response_data;
-		unpacker.from_array(request_id, response_data);
-
+		const uint8_t* p = packed_response.data();
+		size_t n = packed_response.size();
+		if (n < 1 || p[0] != 0x92) {
+			ERRORF("Resource response: outer array marker missing (got 0x%02x)", n ? p[0] : 0);
+			return;
+		}
+		size_t off = 1;
+		size_t id_off, id_len;
+		if (off >= n) return;
+		if (p[off] == 0xc4) {
+			if (off + 2 > n) return;
+			id_len = p[off+1]; id_off = off + 2;
+		} else if (p[off] == 0xc5) {
+			if (off + 3 > n) return;
+			id_len = (size_t(p[off+1]) << 8) | p[off+2]; id_off = off + 3;
+		} else if (p[off] == 0xc6) {
+			if (off + 5 > n) return;
+			id_len = (size_t(p[off+1]) << 24) | (size_t(p[off+2]) << 16) | (size_t(p[off+3]) << 8) | p[off+4];
+			id_off = off + 5;
+		} else {
+			ERRORF("Resource response: request_id marker not bin (got 0x%02x)", p[off]);
+			return;
+		}
+		if (id_off + id_len > n) return;
+		Bytes request_id(p + id_off, id_len);
+		size_t resp_off = id_off + id_len;
+		Bytes response_data(p + resp_off, n - resp_off);
 		handle_response(request_id, response_data, resource.total_size(), resource.size());
 	}
 	else {
@@ -1123,19 +1196,47 @@ void Link::receive(const Packet& packet) {
 					try {
 						const Bytes packed_response = decrypt(packet.data());
 						if (packed_response) {
-							//p unpacked_response = umsgpack.unpackb(packed_response)
-							//p request_id = unpacked_response[0]
-							//p response_data = unpacked_response[1]
-                            //p transfer_size = len(umsgpack.packb(response_data))-2
-							MsgPack::Unpacker unpacker;
-							unpacker.feed(packed_response.data(), packed_response.size());
-							MsgPack::bin_t<uint8_t> request_id;
-							MsgPack::bin_t<uint8_t> response_data;
-							unpacker.from_array(request_id, response_data);
-							MsgPack::Packer packer;
-							packer.serialize(response_data);
-							size_t transfer_size = packer.size() - 2;
-							handle_response(Bytes(request_id.data(), request_id.size()), Bytes(response_data.data(), response_data.size()), transfer_size, transfer_size);
+							// Wire format matches python:
+							//   packed_response = umsgpack.packb([request_id, response_data])
+							// `response_data` is a structured object (list/dict/scalar),
+							// not binary. The caller's response_callback wants the raw
+							// msgpack bytes for `response_data` so it can deserialize
+							// per-handler. Walk the msgpack manually: outer fixarray-2
+							// marker (0x92), then request_id as bin8 (0xc4 LL ...), then
+							// the remainder is the response payload as opaque msgpack.
+							const uint8_t* p = packed_response.data();
+							size_t n = packed_response.size();
+							if (n < 1 || p[0] != 0x92) {
+								ERRORF("Response: outer array marker missing (got 0x%02x)", n ? p[0] : 0);
+								break;
+							}
+							size_t off = 1;
+							// request_id: msgpack bin8 (0xc4 <len:1> <bytes>) is what
+							// python's umsgpack emits for `bytes` <= 255B.
+							if (off >= n) break;
+							size_t id_off, id_len;
+							if (p[off] == 0xc4) { // bin8
+								if (off + 2 > n) break;
+								id_len = p[off+1];
+								id_off = off + 2;
+							} else if (p[off] == 0xc5) { // bin16
+								if (off + 3 > n) break;
+								id_len = (size_t(p[off+1]) << 8) | p[off+2];
+								id_off = off + 3;
+							} else if (p[off] == 0xc6) { // bin32
+								if (off + 5 > n) break;
+								id_len = (size_t(p[off+1]) << 24) | (size_t(p[off+2]) << 16) | (size_t(p[off+3]) << 8) | p[off+4];
+								id_off = off + 5;
+							} else {
+								ERRORF("Response: request_id marker not bin (got 0x%02x)", p[off]);
+								break;
+							}
+							if (id_off + id_len > n) break;
+							Bytes request_id(p + id_off, id_len);
+							size_t resp_off = id_off + id_len;
+							Bytes response_data(p + resp_off, n - resp_off);
+							size_t transfer_size = response_data.size();
+							handle_response(request_id, response_data, transfer_size, transfer_size);
 						}
 					}
 					catch (const std::exception& e) {
@@ -1160,22 +1261,58 @@ void Link::receive(const Packet& packet) {
 					const Bytes plaintext = decrypt(packet.data());
 					if (plaintext) {
 						const_cast<Packet&>(packet).plaintext(plaintext);
-						// ACCEPT_NONE explicitly rejects all advertisements;
-						// ACCEPT_APP defers to a per-link callback (not yet
-						// wired); ACCEPT_ALL takes everything. The conformance
-						// bridge sets ACCEPT_ALL on incoming LXMF links via
-						// LXMRouter::on_incoming_link_established's
-						// set_resource_concluded_callback (which switches
-						// strategy to ACCEPT_ALL implicitly through
-						// set_resource_concluded_callback below).
-						if (_object->_resource_strategy == Type::Link::ACCEPT_ALL ||
-						    _object->_callbacks._resource_concluded) {
+						// Mirror python RNS.Link RESOURCE_ADV dispatch
+						// (Link.py:1065-1095): inspect the advertisement
+						// to classify it as request-resource, response-
+						// resource, or regular (user) resource. Request
+						// and response resources auto-accept and route
+						// to the request/response handlers; regular
+						// resources defer to ACCEPT_ALL strategy or the
+						// per-link `_resource_concluded` callback.
+						RNS::ResourceAdvertisement adv =
+						    RNS::ResourceAdvertisement::unpack(plaintext);
+						bool is_request  = adv.q && (adv.f & 0x08);
+						bool is_response = adv.q && (adv.f & 0x10);
+						if (is_response) {
+							// Match against our pending requests; only
+							// accept resources whose request_id matches.
+							for (RequestReceipt pending : _object->_pending_requests) {
+								if (pending.request_id() == adv.q) {
+									try {
+										// Register this link as the response-resource
+										// owner so the static trampoline can route
+										// the conclusion back to the right Link via
+										// response_resource_concluded.
+										register_response_resource_link(adv.q, *this);
+										Resource accepted = Resource::accept(
+										    packet,
+										    &Link::static_response_resource_concluded,
+										    nullptr,
+										    adv.q);
+										(void)accepted;
+									}
+									catch (const std::exception& e) {
+										ERRORF("Resource::accept (response) threw: %s", e.what());
+									}
+									break;
+								}
+							}
+						}
+						else if (is_request) {
+							// Request-as-resource not yet implemented on
+							// this side (no matching call site in
+							// microLXMF); fall through to user logic if
+							// any.
+						}
+						else if (_object->_resource_strategy == Type::Link::ACCEPT_ALL ||
+						         _object->_callbacks._resource_concluded) {
 							try {
 								Resource accepted_res = Resource::accept(
 								    packet,
 								    _object->_callbacks._resource_concluded,
 								    nullptr,
 								    {Type::NONE});
+								(void)accepted_res;
 							}
 							catch (const std::exception& e) {
 								ERRORF("Resource::accept threw: %s", e.what());

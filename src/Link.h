@@ -218,6 +218,11 @@ namespace RNS {
 		void handle_response(const Bytes& request_id, const Bytes& response_data, size_t response_size, size_t response_transfer_size);
 		void request_resource_concluded(const Resource& resource);
 		void response_resource_concluded(const Resource& resource);
+		// Static dispatch for Resource::accept's non-capturing fn-ptr
+		// callback. Resolves the registered Link via the response
+		// resource's request_id and forwards to response_resource_concluded.
+		static void static_response_resource_concluded(const Resource& resource);
+		static void register_response_resource_link(const Bytes& request_id, const Link& link);
 		//z const Channel& get_channel();
 		void receive(const Packet& packet);
 		const Bytes encrypt(const Bytes& plaintext);

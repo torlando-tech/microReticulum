@@ -113,10 +113,14 @@ static void init_sender_state(ResourceData& d, const Bytes& payload, const Link&
 	Bytes encrypted = const_cast<Link&>(link).encrypt(prefixed);
 	d._size = encrypted.size();
 
-	// Compute SDU = link.MDU. The link MDU isn't directly exposed in our
-	// vendored microReticulum, so use the documented Type::Link::MDU as
-	// a fallback. (Matches python: link.mdu or Resource.SDU.)
-	d._sdu = Type::Link::MDU;
+	// Resource SDU matches python RNS.Resource.__init__:
+	//   sdu = link.mtu - HEADER_MAXSIZE - IFAC_MIN_SIZE
+	// which equals Reticulum::MDU at the default MTU (=500). This is
+	// distinct from Link::MDU (which subtracts FERNET_OVERHEAD and rounds
+	// to AES blocks) — using Link::MDU here would split into more parts
+	// than the python receiver expects (it derives total_parts from
+	// adv.t / sdu, not from adv.n), causing hashmap-dim mismatch.
+	d._sdu = Type::Reticulum::MDU;
 	if (d._sdu == 0) d._sdu = 200;
 
 	// Split into parts.
@@ -238,6 +242,9 @@ void Resource::advertise() {
 	assert(_object);
 	ResourceAdvertisement adv(*this);
 	Bytes adv_bytes = adv.pack();
+	DEBUGF("Resource: advertising hash=%s parts=%zu size=%zu adv_size=%zu compressed=%d",
+	       _object->_hash.toHex().c_str(), _object->_total_parts,
+	       _object->_size, adv_bytes.size(), (int)_object->_compressed);
 	Packet adv_packet(_object->_link, adv_bytes, Type::Packet::DATA, Type::Packet::RESOURCE_ADV);
 	adv_packet.send();
 	_object->_status = Type::Resource::ADVERTISED;
@@ -265,11 +272,9 @@ void Resource::request(const Bytes& request_data) {
 	// the hashmap and send it.
 	for (size_t i = 0; i < n_req; ++i) {
 		Bytes mh = requested_hashes.mid(i * MAPHASH_LEN, MAPHASH_LEN);
-		// Find part_index
 		for (size_t p = 0; p < _object->_total_parts; ++p) {
 			Bytes stored_mh = _object->_hashmap.mid(p * MAPHASH_LEN, MAPHASH_LEN);
 			if (stored_mh == mh) {
-				// Send (or resend) this part.
 				const Bytes& part_data = _object->_parts_sender[p];
 				Packet part_packet(_object->_link, part_data, Type::Packet::DATA, Type::Packet::RESOURCE);
 				part_packet.send();
@@ -349,7 +354,9 @@ void Resource::validate_proof(const Bytes& proof_data) {
 	res._object->_consecutive_completed_height = -1;
 	res._object->_received_count = 0;
 	res._object->_outstanding_parts = 0;
-	res._object->_sdu = Type::Link::MDU;
+	// SDU matches python: link.mtu - HEADER_MAXSIZE - IFAC_MIN_SIZE
+	// (== Reticulum::MDU at default MTU). See sender-side note.
+	res._object->_sdu = Type::Reticulum::MDU;
 	if (res._object->_sdu == 0) res._object->_sdu = 200;
 
 	// Register with the link so inbound RESOURCE packets dispatch to us.

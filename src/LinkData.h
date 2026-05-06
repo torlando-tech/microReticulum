@@ -127,7 +127,11 @@ namespace RNS {
 		Bytes _hash;
 		PacketReceipt _packet_receipt = {Type::NONE};
 		Resource _resource = {Type::NONE};
-		Link _link;
+		// MUST be {Type::NONE}: default Link() invokes the full Link::Link
+		// ctor which allocates LinkData and (when neither destination nor
+		// owner is set) leaves _sig_prv null, then dereferences it ->
+		// SIGSEGV. The NoneConstructor overload is the empty-handle form.
+		Link _link{Type::NONE};
 		double _started_at = 0.0;
 		Bytes _request_id;
 		int _request_size = 0;
