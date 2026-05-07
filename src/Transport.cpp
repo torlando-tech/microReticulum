@@ -2235,8 +2235,13 @@ DestinationEntry empty_destination_entry;
 							// in-memory path consumer reading an empty map. We
 							// dual-write: file for persistence, memory for
 							// fast iteration / size queries.
-							remove_path(packet.destination_hash());
-							_path_table.insert({packet.destination_hash(), destination_table_entry});
+							//
+							// IMPORTANT: do NOT call Transport::remove_path() here
+							// to clear stale entries. remove_path() now operates
+							// on _new_path_table (the file-backed store), which
+							// would erase the entry we just put() above. Use
+							// operator[] / direct erase on _path_table only.
+							_path_table[packet.destination_hash()] = destination_table_entry;
 							cull_path_table();
 						}
 						catch (const std::bad_alloc&) {
