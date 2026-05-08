@@ -471,6 +471,24 @@ Recall last heard app_data for a destination hash.
 			Identity announced_identity(false);
 			announced_identity.load_public_key(public_key);
 
+			// Reject malformed announces before they reach Ed25519::verify.
+			// An announce with a public_key shorter than KEYSIZE/8 (=64)
+			// or signature shorter than SIGLENGTH/8 (=64) crashes
+			// BigNumberUtil::unpackLE with EXCVADDR=0x0 — empty Bytes()
+			// returns nullptr from .data() and decodePoint memcpys 32
+			// bytes from it. Observed in real-LXST E2E tests when an
+			// LXST announce arrived during an active call.
+			if (public_key.size() != KEYSIZE/8) {
+				DEBUGF("Rejecting announce with public_key.size()=%u (expected %u)",
+				       (unsigned)public_key.size(), (unsigned)(KEYSIZE/8));
+				return false;
+			}
+			if (signature.size() != SIGLENGTH/8) {
+				DEBUGF("Rejecting announce with signature.size()=%u (expected %u)",
+				       (unsigned)signature.size(), (unsigned)(SIGLENGTH/8));
+				return false;
+			}
+
 			if (announced_identity.pub() && announced_identity.validate(signature, signed_data)) {
 				Bytes hash_material = name_hash << announced_identity.hash();
 				Bytes expected_hash = full_hash(hash_material).left(Type::Reticulum::TRUNCATED_HASHLENGTH/8);
