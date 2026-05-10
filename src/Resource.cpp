@@ -290,6 +290,22 @@ void Resource::request(const Bytes& request_data) {
 	if (_object->_sent_parts >= _object->_total_parts) {
 		_object->_status = Type::Resource::AWAITING_PROOF;
 	}
+
+	// Fire the user-supplied progress callback after each batch of parts
+	// is sent. Pre-this-fix the `progress_callback` ctor parameter was
+	// stored on the resource but never invoked anywhere — only the
+	// RequestReceipt response path in Link.cpp called it. Plain Resource
+	// transfers (used by LXMF DIRECT-large delivery) silently dropped
+	// every progress tick. Mirrors python Reticulum/RNS/Resource.py
+	// `__progress_callback(self)` invocation pattern.
+	if (_object->_callbacks._progress) {
+		try {
+			_object->_callbacks._progress(*this);
+		}
+		catch (const std::exception& e) {
+			ERRORF("Error while executing resource sender progress callback: %s", e.what());
+		}
+	}
 }
 
 void Resource::validate_proof(const Bytes& proof_data) {
@@ -435,6 +451,20 @@ void Resource::receive_part(const Packet& packet) {
 	}
 	else if (_object->_outstanding_parts == 0) {
 		request_next();
+	}
+
+	// Fire the user-supplied progress callback after each accepted part.
+	// Same rationale as the sender-side firing in `request_part` —
+	// without this the receiver's `progress_callback` parameter is dead
+	// wiring. The callback gets `(float)_received_count / _total_parts`
+	// via `get_progress()`, monotonically advancing toward 1.0.
+	if (_object->_callbacks._progress) {
+		try {
+			_object->_callbacks._progress(*this);
+		}
+		catch (const std::exception& e) {
+			ERRORF("Error while executing resource receiver progress callback: %s", e.what());
+		}
 	}
 }
 
