@@ -268,8 +268,16 @@ void Resource::request(const Bytes& request_data) {
 
 	_object->_status = Type::Resource::TRANSFERRING;
 
-	// For each requested map_hash, find the matching part by scanning
-	// the hashmap and send it.
+	// For each requested map_hash, find the matching part, send it, and
+	// fire the user progress callback per-part after `_sent_parts` is
+	// bumped. Per-part rather than per-batch because on a fast link
+	// (loopback) the receiver may request the entire payload in a
+	// single `request_part` call — firing once per call would reduce
+	// the observable tick sequence to a single `progress=1.0` event,
+	// indistinguishable from "callback never fired" for any UI relying
+	// on intermediate values. Mirrors python Reticulum/RNS/Resource.py's
+	// `__progress_callback(self)` invocation pattern (called as
+	// `_sent_parts` advances inside the send loop).
 	for (size_t i = 0; i < n_req; ++i) {
 		Bytes mh = requested_hashes.mid(i * MAPHASH_LEN, MAPHASH_LEN);
 		for (size_t p = 0; p < _object->_total_parts; ++p) {
@@ -281,6 +289,14 @@ void Resource::request(const Bytes& request_data) {
 				if (!_object->_sent[p]) {
 					_object->_sent[p] = true;
 					_object->_sent_parts++;
+					if (_object->_callbacks._progress) {
+						try {
+							_object->_callbacks._progress(*this);
+						}
+						catch (const std::exception& e) {
+							ERRORF("Error while executing resource sender progress callback: %s", e.what());
+						}
+					}
 				}
 				break;
 			}
@@ -289,22 +305,6 @@ void Resource::request(const Bytes& request_data) {
 
 	if (_object->_sent_parts >= _object->_total_parts) {
 		_object->_status = Type::Resource::AWAITING_PROOF;
-	}
-
-	// Fire the user-supplied progress callback after each batch of parts
-	// is sent. Pre-this-fix the `progress_callback` ctor parameter was
-	// stored on the resource but never invoked anywhere — only the
-	// RequestReceipt response path in Link.cpp called it. Plain Resource
-	// transfers (used by LXMF DIRECT-large delivery) silently dropped
-	// every progress tick. Mirrors python Reticulum/RNS/Resource.py
-	// `__progress_callback(self)` invocation pattern.
-	if (_object->_callbacks._progress) {
-		try {
-			_object->_callbacks._progress(*this);
-		}
-		catch (const std::exception& e) {
-			ERRORF("Error while executing resource sender progress callback: %s", e.what());
-		}
 	}
 }
 
