@@ -115,8 +115,12 @@ namespace RNS { namespace Cryptography {
 	digest: The underlying hash algorithm to use.
 	*/
 	inline const Bytes digest(const Bytes& key, const Bytes& msg, HMAC::Digest digest = HMAC::DIGEST_SHA256) {
+		// The HMAC(key, msg, ...) constructor already calls update(msg) when
+		// msg is non-empty (see ctor body). Calling update(msg) again here
+		// would HMAC the message twice (HMAC(msg||msg)) and produce a digest
+		// that doesn't match canonical Python RNS / RFC 4231. Construct +
+		// finalize only.
 		HMAC hmac(key, msg, digest);
-		hmac.update(msg);
 		return hmac.digest();
 	}
 
