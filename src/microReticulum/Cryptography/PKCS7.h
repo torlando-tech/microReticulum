@@ -45,15 +45,17 @@ namespace RNS { namespace Cryptography {
 			//DEBUGF("PKCS7::pad: len: %lu", len);
 			size_t padlen = bs - (len % bs);
 			//DEBUGF("PKCS7::pad: pad len: %lu", padlen);
-			// create zero-filled byte padding array of size padlen
+			// PKCS#7 (RFC 5652 §6.3): pad with `padlen` octets each having
+			// value `padlen`. The previous implementation filled the buffer
+			// with zeros and set only the LAST byte to `padlen`, which makes
+			// self-roundtrip (pad -> unpad reads the last byte) work but
+			// produces ciphertext that doesn't match canonical Python RNS,
+			// Swift, or any spec-conformant PKCS#7 implementation.
 			//p v = bytes([padlen])
-			//uint8_t pad[padlen] = {0};
-			uint8_t pad[padlen];
-			memset(pad, 0, padlen);
-			// set last byte of padding array to size of padding
-			pad[padlen-1] = (uint8_t)padlen;
-			// concatenate data with padding
 			//p return data+v*padlen
+			uint8_t pad[padlen];
+			memset(pad, (uint8_t)padlen, padlen);
+			// concatenate data with padding
 			data.append(pad, padlen);
 			//DEBUGF("PKCS7::pad: data size: %lu", data.size());
 		}
