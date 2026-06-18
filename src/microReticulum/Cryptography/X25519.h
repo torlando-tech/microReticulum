@@ -18,6 +18,7 @@
 #include "../Log.h"
 
 #include <Curve25519.h>
+#include <cstring>
 
 #include <memory>
 #include <stdexcept>
@@ -87,8 +88,23 @@ namespace RNS { namespace Cryptography {
 */
 		X25519PrivateKey(const Bytes& privateKey) {
 			if (privateKey) {
-				// use specified private key
-				_privateKey = privateKey;
+				// Apply RFC 7748 §5 scalar clamping before use, matching
+				// Python's cryptography lib (X25519PrivateKey.from_private_bytes
+				// clamps automatically). Without it, every ECDH against
+				// canonical Python RNS produces a different shared secret,
+				// breaking identity hashes, link keys, and token decryption.
+				if (privateKey.size() >= 32) {
+					uint8_t clamped[32];
+					memcpy(clamped, privateKey.data(), 32);
+					clamped[0]  &= 0xF8;   // clear bottom 3 bits
+					clamped[31] &= 0x7F;   // clear top bit
+					clamped[31] |= 0x40;   // set second-from-top bit
+					_privateKey.assign(clamped, 32);
+				}
+				else {
+					// undersized key: store as-is (clamp would read past end)
+					_privateKey = privateKey;
+				}
 				// similar to derive public key from private key
 				// second param "f" is secret
 				//eval(uint8_t result[32], const uint8_t s[32], const uint8_t x[32])
