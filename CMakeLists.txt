@@ -157,6 +157,10 @@ target_link_libraries(microReticulum
         DebugLogHeaders
         microStoreHeaders
         CryptoLib
+        # bz2 backs Cryptography::bz2_decompress (Resource::assemble) — pyxis
+        # carries it because upstream rejects compressed resources. Native/host
+        # builds link the system libbz2; ESP32 compiles vendored lib/libbz2.
+        bz2
 )
 
 # -----------------------------------------------------------------------------

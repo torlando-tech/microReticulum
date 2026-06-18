@@ -21,6 +21,7 @@
 #include "Identity.h"
 #include "Link.h"
 #include "Log.h"
+#include "Cryptography/BZ2.h"
 
 #include <MsgPack.h>
 
@@ -687,15 +688,31 @@ void Resource::assemble() {
 			plaintext = stream;
 		}
 
-		if (_object->_compressed) {
-			ERRORF("Received resource %s flagged as compressed, but bz2 is not supported on the C++ port. Rejecting.", _object->_hash.toHex().c_str());
-			_object->_status = Type::Resource::CORRUPT;
-			cancel();
-			return;
-		}
-
 		// Strip random_hash prefix (Python Resource.py:682).
 		Bytes data = plaintext.mid(Type::Resource::RANDOM_HASH_SIZE);
+
+		// Decompress if the sender flagged the resource as compressed.
+		// Python auto-compresses with bz2 when it shrinks the payload
+		// (Resource.py:684), and DIRECT/propagation sends to a
+		// compression-capable peer default to auto_compress=True. Upstream
+		// microReticulum has no bz2 and rejects compressed resources, which
+		// marks them CORRUPT and tears down the link. pyxis/microLXMF vendor
+		// libbz2 + Cryptography::bz2_decompress so the inbound compressed
+		// path works. Order matches Python: strip random_hash, THEN
+		// decompress, THEN verify the hash over the decompressed content.
+		// TODO(pyxis): mirror Python's max_decompressed_size bomb-guard and
+		// switch BZ2_bzDecompressInit small=1 once PSRAM headroom is measured
+		// on the T-Deck (see bz2/ESP32 analysis 2026-06-18).
+		if (_object->_compressed) {
+			Bytes decompressed = Cryptography::bz2_decompress(data);
+			if (decompressed.size() == 0) {
+				ERRORF("Resource::assemble: bz2_decompress failed for %s", _object->_hash.toHex().c_str());
+				_object->_status = Type::Resource::CORRUPT;
+				cancel();
+				return;
+			}
+			data = decompressed;
+		}
 
 		// Verify hash matches advertised hash. The on-wire layout is
 		//   plaintext = prepended_random_hash || content
