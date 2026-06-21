@@ -16,6 +16,10 @@
 
 #include "../Transport.h"
 #include "../Type.h"
+#include "../Utilities/OS.h"
+
+#include <vector>
+#include <algorithm>
 
 using namespace RNS;
 using namespace RNS::Persistence;
@@ -49,16 +53,36 @@ using namespace RNS::Persistence;
 //TRACEF("Writing %lu byte received_from", entry._received_from.collection().size());
 	out.insert(out.end(), entry._received_from.collection().begin(), entry._received_from.collection().end());
 
-	// random_blobs
-	uint16_t blob_count = entry._random_blobs.size();
-//TRACEF("Writing %lu byte blob_count: %u", sizeof(blob_count), blob_count);
-	write(&blob_count, sizeof(blob_count));
-	for (auto& blob : entry._random_blobs) {
-		uint16_t blob_size = blob.collection().size();
-//TRACEF("Writing %lu byte blob_size: %u", sizeof(blob_size), blob_size);
-		write(&blob_size, sizeof(blob_size));
-//TRACEF("Writing %lu byte blob", blob.collection().size());
-		out.insert(out.end(), blob.collection().begin(), blob.collection().end());
+	// random_blobs — persist only the PERSIST_RANDOM_BLOBS (16) NEWEST blobs, chosen
+	// by the 5-byte emission timebase at bytes [5:10] of each 10-byte random_hash.
+	// Upstream RNS slices to this cap before persisting; the C++ port defined the
+	// constant but never enforced it, so the set grew ~12 bytes per re-announce
+	// forever — pushing path entries past USTORE_MAX_VALUE_LEN (1024) so put()
+	// rejected them (empty path table), and under a raised ceiling bloating
+	// path_store_0.dat until the FS filled and compaction crashed. std::set order is
+	// lexicographic (not chronological), so the newest must be chosen explicitly.
+	{
+		std::vector<const Bytes*> ordered;
+		ordered.reserve(entry._random_blobs.size());
+		for (const auto& blob : entry._random_blobs) ordered.push_back(&blob);
+		auto timebase = [](const Bytes& b) -> uint64_t {
+			if (b.size() < 10) return 0;
+			return Utilities::OS::from_bytes_big_endian(b.data() + 5, 5);
+		};
+		std::sort(ordered.begin(), ordered.end(),
+			[&](const Bytes* a, const Bytes* b) { return timebase(*a) > timebase(*b); });
+		size_t persist_count = ordered.size();
+		if (persist_count > Type::Transport::PERSIST_RANDOM_BLOBS) {
+			persist_count = Type::Transport::PERSIST_RANDOM_BLOBS;
+		}
+		uint16_t blob_count = (uint16_t)persist_count;
+		write(&blob_count, sizeof(blob_count));
+		for (size_t i = 0; i < persist_count; ++i) {
+			const Bytes& blob = *ordered[i];
+			uint16_t blob_size = blob.collection().size();
+			write(&blob_size, sizeof(blob_size));
+			out.insert(out.end(), blob.collection().begin(), blob.collection().end());
+		}
 	}
 
 	// receiving_interface

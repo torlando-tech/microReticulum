@@ -30,6 +30,7 @@
 #include <Arduino.h>
 #if defined(ESP32)
 #include "esp_task_wdt.h"
+#include "esp_timer.h"
 #endif
 #endif
 
@@ -54,12 +55,23 @@ namespace RNS { namespace Utilities {
 #ifdef ARDUINO
         // return current time in milliseconds since first boot
 		inline static uint64_t ltime() {
+#if defined(ESP32)
+			// Use the 64-bit monotonic high-resolution timer. The previous
+			// implementation tracked 32-bit millis() rollover with a static
+			// low32/high32 pair, but that read-modify-write is NOT atomic:
+			// concurrent calls from multiple FreeRTOS tasks/cores (transport,
+			// UI, BLE) race on `if (new_low32 < low32) high32++` and spuriously
+			// bump high32, inflating the clock by N*49.7 days. esp_timer is
+			// monotonic, 64-bit (no 49-day rollover), and race-free.
+			return (uint64_t)(esp_timer_get_time() / 1000) + _time_offset;
+#else
 			// handle roll-over of 32-bit millis (approx. 49 days)
 			static uint32_t low32, high32;
 			uint32_t new_low32 = millis();
 			if (new_low32 < low32) high32++;
 			low32 = new_low32;
 			return ((uint64_t)high32 << 32 | low32) + _time_offset;
+#endif
 		}
 #else
         // return current time in milliseconds since 00:00:00, January 1, 1970 (Unix Epoch)

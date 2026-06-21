@@ -268,7 +268,20 @@ Recall identity for a destination hash.
 	if (announce_packet) {
 		TRACEF("Identity::recall: Extracted identity entry from announce packet for destination %s", destination_hash.toHex().c_str());
 		Bytes public_key = announce_packet.data().left(KEYSIZE/8);
-		Bytes app_data = announce_packet.data().mid(KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8 + SIGLENGTH/8);	
+		// Account for the optional ratchet (context_flag set => ratchet present),
+		// mirroring validate_announce(). Without this, app_data is read RATCHETSIZE/8
+		// bytes too early for ratchet-bearing announces (modern Reticulum / Sideband /
+		// Columba) — it captures the signature tail and garbles the parsed display
+		// name. Plain non-ratchet announces are unaffected, which hid this regression.
+		size_t app_data_offset = KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8;
+		if (announce_packet.context_flag() == Type::Packet::FLAG_SET) {
+			app_data_offset += RATCHETSIZE/8;
+		}
+		app_data_offset += SIGLENGTH/8;
+		Bytes app_data;
+		if (announce_packet.data().size() > app_data_offset) {
+			app_data = announce_packet.data().mid(app_data_offset);
+		}	
 
 		Identity identity(false);
 		identity.load_public_key(public_key);
@@ -508,6 +521,26 @@ Recall last heard app_data for a destination hash.
 
 			if (packet.data().size() <= KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8 + SIGLENGTH/8) {
 				app_data.clear();
+			}
+
+			// Reject malformed announces before they reach Ed25519::verify.
+			// An announce with a public_key shorter than KEYSIZE/8 (=64) or a
+			// signature shorter than SIGLENGTH/8 (=64) crashes
+			// BigNumberUtil::unpackLE with EXCVADDR=0x0 — an empty Bytes()
+			// returns nullptr from .data() and decodePoint memcpys 32 bytes
+			// from it. Upstream's announced_identity.pub() guard does not
+			// cover a valid-length pubkey paired with a short signature.
+			// Observed in real LXST E2E tests when an LXST announce arrived
+			// during an active call.
+			if (public_key.size() != KEYSIZE/8) {
+				DEBUGF("Rejecting announce with public_key.size()=%u (expected %u)",
+				       (unsigned)public_key.size(), (unsigned)(KEYSIZE/8));
+				return false;
+			}
+			if (signature.size() != SIGLENGTH/8) {
+				DEBUGF("Rejecting announce with signature.size()=%u (expected %u)",
+				       (unsigned)signature.size(), (unsigned)(SIGLENGTH/8));
+				return false;
 			}
 
 			Identity announced_identity(false);

@@ -2313,6 +2313,28 @@ DestinationEntry empty_destination_entry;
 								ttl = DESTINATION_TIMEOUT;
 							}
 							if (_new_path_table.put(packet.destination_hash().collection(), destination_table_entry, ttl)) {
+								// Mirror the entry into the in-memory _path_table.
+								//
+								// WHY TWO PATH TABLES EXIST: upstream attermann/microReticulum is
+								// MID-MIGRATION from _path_table (std::map, enumerable, volatile) to
+								// _new_path_table (a microStore TypedStore: persistent on flash, but a
+								// pure key-value store with NO way to iterate all entries). Upstream
+								// 143ceda added _new_path_table; 9d35504 then disabled _path_table's
+								// population — but did NOT migrate the read side. path_table()
+								// (Transport.h) still returns _path_table, so every consumer that LISTS
+								// paths (e.g. pyxis's announce-list UI, the T:PATHS test hook) got an
+								// EMPTY table even though paths were stored in _new_path_table and were
+								// fully routable via get()/exists(). This line re-populates _path_table
+								// purely so enumeration works again. cull_path_table() bounds it by
+								// age/size. (Add-only: removals age out via cull rather than a matching
+								// _path_table.erase in remove_path — kept minimal on purpose, see below.)
+								//
+								// WHEN BUMPING THE microReticulum PIN: check whether upstream finished
+								// the migration. If _path_table is GONE (or path_table()/_new_path_table
+								// gained a for_each/keys() enumeration API), DELETE this mirror and move
+								// the enumerating consumers onto the new API — this fix exists ONLY to
+								// bridge the half-done upstream state and must not outlive it.
+								_path_table[packet.destination_hash()] = destination_table_entry;
 								TRACEF("Added destination %s to path table!", packet.destination_hash().toHex().c_str());
 								++_destinations_added;
 							}
