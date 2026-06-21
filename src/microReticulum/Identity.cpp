@@ -268,7 +268,20 @@ Recall identity for a destination hash.
 	if (announce_packet) {
 		TRACEF("Identity::recall: Extracted identity entry from announce packet for destination %s", destination_hash.toHex().c_str());
 		Bytes public_key = announce_packet.data().left(KEYSIZE/8);
-		Bytes app_data = announce_packet.data().mid(KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8 + SIGLENGTH/8);	
+		// Account for the optional ratchet (context_flag set => ratchet present),
+		// mirroring validate_announce(). Without this, app_data is read RATCHETSIZE/8
+		// bytes too early for ratchet-bearing announces (modern Reticulum / Sideband /
+		// Columba) — it captures the signature tail and garbles the parsed display
+		// name. Plain non-ratchet announces are unaffected, which hid this regression.
+		size_t app_data_offset = KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8;
+		if (announce_packet.context_flag() == Type::Packet::FLAG_SET) {
+			app_data_offset += RATCHETSIZE/8;
+		}
+		app_data_offset += SIGLENGTH/8;
+		Bytes app_data;
+		if (announce_packet.data().size() > app_data_offset) {
+			app_data = announce_packet.data().mid(app_data_offset);
+		}	
 
 		Identity identity(false);
 		identity.load_public_key(public_key);
