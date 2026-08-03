@@ -306,28 +306,29 @@ DestinationEntry empty_destination_entry;
 	//p thread = threading.Thread(target=Transport.jobloop, daemon=True)
 	//p thread.start()
 
-	// Load transport-related data
+	// Every Reticulum instance needs a usable path table, including endpoint-only
+	// clients. Path persistence is independent of transport mode: transport mode
+	// controls forwarding for other nodes, not whether this instance can remember
+	// destinations learned from announces.
+#if defined(RNS_USE_FS) && defined(RNS_PERSIST_PATHS)
+	if (Utilities::OS::get_filesystem()) {
+		INFOF("FileSystem available: %lu bytes", Utilities::OS::get_filesystem().storageAvailable());
+		// CBA Must pass time offset into microStore for accurate timestamps on devices without a real-time clock
+#if defined(ARDUINO)
+		microStore::set_time_offset(Utilities::OS::getTimeOffset() / 1000);
+#endif
+		_path_store.init(Utilities::OS::get_filesystem(), "./path_store", false, _path_store_segment_size, _path_store_segment_count);
+		// If the filesystem is full then clear the path store since it's of no use full anyway
+		if (Utilities::OS::get_filesystem().storageAvailable() > 0 && Utilities::OS::get_filesystem().storageAvailable() < 1024) {
+			WARNING("FileSystem is full, clearing existing path store");
+			_path_store.clear();
+		}
+	}
+#endif // RNS_USE_FS && RNS_PERSIST_PATHS
+
+	// Load transport-only data and destinations.
 	if (Reticulum::transport_enabled()) {
 		INFO("Transport mode is enabled");
-
-		// Read in path table
-		//read_path_table();
-#if defined(RNS_USE_FS) && defined(RNS_PERSIST_PATHS)
-		// CBA microStore
-		if (Utilities::OS::get_filesystem()) {
-			INFOF("FileSystem available: %lu bytes", Utilities::OS::get_filesystem().storageAvailable());
-			// CBA Must pass time offset into microStore for accurate timestamps on devices without a real-time clock
-#if defined(ARDUINO)
-			microStore::set_time_offset(Utilities::OS::getTimeOffset() / 1000);
-#endif
-			_path_store.init(Utilities::OS::get_filesystem(), "./path_store", false, _path_store_segment_size, _path_store_segment_count);
-			// If the filesystem is full then clear the path store since it's of no use full anyway
-			if (Utilities::OS::get_filesystem().storageAvailable() > 0 && Utilities::OS::get_filesystem().storageAvailable() < 1024) {
-				WARNING("FileSystem is full, clearing existing path store");
-				_path_store.clear();
-			}
-		}
-#endif // RNS_USE_FS && RNS_PERSIST_PATHS
 
 		// CBA The following write and clean is very resource intensive so skip at startup
 		// and let a later (optimized) scheduled write and clean take care of it.
