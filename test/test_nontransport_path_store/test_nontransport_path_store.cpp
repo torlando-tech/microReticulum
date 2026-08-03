@@ -72,7 +72,10 @@ void test_nontransport_client_learns_paths_without_forwarding_foreign_traffic() 
     RNS::Destination remote_out(
         remote_identity, RNS::Type::Destination::OUT,
         RNS::Type::Destination::SINGLE, "test", "remote");
-    RNS::Packet foreign_packet(remote_out, RNS::Bytes("foreign transit payload"));
+    RNS::Packet foreign_packet = RNS::Packet(remote_out, RNS::Bytes("foreign transit payload"))
+        .transport_type(RNS::Type::Transport::TRANSPORT)
+        .header_type(RNS::Type::Packet::HEADER_2)
+        .transport_id(RNS::Transport::identity().hash());
     foreign_packet.pack();
 
     const size_t sent_before = learned_path_impl->sent_packets;
