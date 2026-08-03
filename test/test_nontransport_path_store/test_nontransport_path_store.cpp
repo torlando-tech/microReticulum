@@ -1,5 +1,8 @@
 #include <unity.h>
 
+#include <cstdio>
+#include <string>
+
 #include <microStore/Adapters/UniversalFileSystem.h>
 
 #include "microReticulum.h"
@@ -23,6 +26,12 @@ void setUp(void) {}
 void tearDown(void) {}
 
 void test_nontransport_client_learns_paths_without_forwarding_foreign_traffic() {
+    std::remove("path_store_index.dat");
+    for (int segment = 0; segment <= 8; segment++) {
+        const std::string path = "path_store_" + std::to_string(segment) + ".dat";
+        std::remove(path.c_str());
+    }
+
     microStore::FileSystem filesystem{microStore::Adapters::UniversalFileSystem()};
     TEST_ASSERT_TRUE(filesystem.init());
     RNS::Utilities::OS::register_filesystem(filesystem);
