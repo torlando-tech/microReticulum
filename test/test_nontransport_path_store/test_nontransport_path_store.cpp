@@ -45,9 +45,13 @@ void test_nontransport_client_learns_paths_without_forwarding_foreign_traffic() 
 
     RNS::Reticulum reticulum;
     reticulum.transport_enabled(false);
+    reticulum.probe_destination_enabled(true);
     reticulum.start();
 
     TEST_ASSERT_FALSE(RNS::Reticulum::transport_enabled());
+    TEST_ASSERT_FALSE_MESSAGE(
+        RNS::Transport::probe_destination(),
+        "transport-only probe destination must remain disabled for endpoint clients");
     TEST_ASSERT_TRUE_MESSAGE(
         RNS::Transport::new_path_table().isValid(),
         "non-transport clients must still have a usable persistent path table");
@@ -77,6 +81,22 @@ void test_nontransport_client_learns_paths_without_forwarding_foreign_traffic() 
     TEST_ASSERT_TRUE_MESSAGE(
         RNS::Transport::has_path(destination_hash),
         "endpoint clients must learn paths from valid announces");
+
+    RNS::Persistence::DestinationEntry learned_entry =
+        RNS::Transport::get_path(destination_hash);
+    TEST_ASSERT_TRUE_MESSAGE(
+        learned_entry,
+        "learned endpoint path must be readable from the persistent table");
+
+    RNS::Persistence::PathStore reopened_store;
+    TEST_ASSERT_TRUE_MESSAGE(
+        reopened_store.init(filesystem, "./path_store", false, 0, 0),
+        "path store must reopen from filesystem state");
+    RNS::Persistence::NewPathTable reopened_path_table(reopened_store);
+    RNS::Persistence::DestinationEntry reopened_entry;
+    TEST_ASSERT_TRUE_MESSAGE(
+        reopened_path_table.get(destination_hash, reopened_entry),
+        "learned endpoint path must survive path-store reinitialization");
 
     RNS::Destination remote_out(
         remote_identity, RNS::Type::Destination::OUT,
