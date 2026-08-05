@@ -6,6 +6,7 @@
 #include "microReticulum/Utilities/Crc.h"
 #include "microReticulum/Cryptography/HMAC.h"
 #include "microReticulum/Cryptography/PKCS7.h"
+#include "microReticulum/Cryptography/BZ2.h"
 
 #include <string.h>
 #include <vector>
@@ -117,6 +118,27 @@ void testPKCS7() {
 		TEST_ASSERT_EQUAL_size_t(len, bytes.size());
 		TEST_ASSERT_EQUAL_INT(0, memcmp(bytes.data(), str, len));
 	}
+}
+
+void testBZ2BoundedDecompression() {
+	RNS::Bytes small;
+	for (size_t i = 0; i < 4096; ++i) small.append((uint8_t)('a' + (i % 23)));
+	RNS::Bytes small_compressed = RNS::Cryptography::bz2_compress(small);
+	TEST_ASSERT_TRUE(small_compressed.size() > 0);
+	RNS::Bytes small_round_trip = RNS::Cryptography::bz2_decompress(small_compressed, 64 * 1024);
+	TEST_ASSERT_EQUAL_size_t(small.size(), small_round_trip.size());
+	TEST_ASSERT_EQUAL_MEMORY(small.data(), small_round_trip.data(), small.size());
+	RNS::Bytes truncated(small_compressed.data(), small_compressed.size() - 1);
+	TEST_ASSERT_EQUAL_size_t(0,
+		RNS::Cryptography::bz2_decompress(truncated, 64 * 1024).size());
+
+	RNS::Bytes oversized;
+	for (size_t i = 0; i < 128 * 1024; ++i) oversized.append((uint8_t)'Z');
+	RNS::Bytes oversized_compressed = RNS::Cryptography::bz2_compress(oversized);
+	TEST_ASSERT_TRUE(oversized_compressed.size() > 0);
+	TEST_ASSERT_TRUE(oversized_compressed.size() < 64 * 1024);
+	TEST_ASSERT_EQUAL_size_t(0,
+		RNS::Cryptography::bz2_decompress(oversized_compressed, 64 * 1024).size());
 }
 
 void testCrc8() {
@@ -256,6 +278,7 @@ int runUnityTests(void) {
     UNITY_BEGIN();
 	RUN_TEST(testHMAC);
 	RUN_TEST(testPKCS7);
+	RUN_TEST(testBZ2BoundedDecompression);
 	RUN_TEST(testCrc8);
 	RUN_TEST(testCrc32);
 	RUN_TEST(testIncrementalCrc32);

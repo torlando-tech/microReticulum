@@ -26,6 +26,7 @@
 #include "Cryptography/Token.h"
 #include "Cryptography/Random.h"
 #include "Utilities/OS.h"
+#include "Utilities/SizeLimit.h"
 
 #define MSGPACK_DEBUGLOG_ENABLE 0
 #include <MsgPack.h>
@@ -554,7 +555,7 @@ Sends a request to the remote peer.
 :param timeout: An optional timeout in seconds for the request. If *None* is supplied it will be calculated based on link RTT.
 :returns: A :ref:`RNS.RequestReceipt<api-requestreceipt>` instance if the request was sent, or *False* if it was not.
 */
-const RNS::RequestReceipt Link::request(const Bytes& path, const Bytes& data /*= {Bytes::NONE}*/, RequestReceipt::Callbacks::response response_callback /*= nullptr*/, RequestReceipt::Callbacks::failed failed_callback /*= nullptr*/, RequestReceipt::Callbacks::progress progress_callback /*= nullptr*/, double timeout /*= 0.0*/) {
+const RNS::RequestReceipt Link::request(const Bytes& path, const Bytes& data /*= {Bytes::NONE}*/, RequestReceipt::Callbacks::response response_callback /*= nullptr*/, RequestReceipt::Callbacks::failed failed_callback /*= nullptr*/, RequestReceipt::Callbacks::progress progress_callback /*= nullptr*/, double timeout /*= 0.0*/, size_t max_response_size /*= 0*/) {
 	assert(_object);
 	DEBUGF("Link %s sending request", link_id().toHex().c_str());
 	const Bytes request_path_hash(Identity::truncated_hash(path));
@@ -587,7 +588,8 @@ const RNS::RequestReceipt Link::request(const Bytes& path, const Bytes& data /*=
 				failed_callback,
 				progress_callback,
 				timeout,
-				packed_request.size()
+				packed_request.size(),
+				max_response_size
 			);
 		}
 	}
@@ -607,7 +609,8 @@ const RNS::RequestReceipt Link::request(const Bytes& path, const Bytes& data /*=
 			failed_callback,
 			progress_callback,
 			timeout,
-			packed_request.size()
+			packed_request.size(),
+			max_response_size
 		);
 	}
 }
@@ -1043,16 +1046,22 @@ void Link::handle_response(const Bytes& request_id, const Bytes& response_data, 
 	assert(_object);
 	if (_object->_status == Type::Link::ACTIVE) {
 		RNS::RequestReceipt remove = {Type::NONE};
-		for (RNS::RequestReceipt pending_request : _object->_pending_requests) {
+		std::vector<RequestReceipt> pending_requests(
+			_object->_pending_requests.begin(), _object->_pending_requests.end());
+		for (RNS::RequestReceipt pending_request : pending_requests) {
 			if (pending_request.request_id() == request_id) {
-				remove = pending_request;
 				try {
 					pending_request.response_size(response_size);
-					//if (pending_request.response_transfer_size == 0) {
-					//	pending_request.response_transfer_size = 0;
-					//}
-					pending_request.response_transfer_size(pending_request.response_transfer_size() + response_transfer_size);
-					pending_request.response_received(response_data);
+					if (!Utilities::within_size_limit(
+							response_size, pending_request.max_response_size())) {
+						pending_request.request_timed_out({Type::NONE});
+					}
+					else {
+						remove = pending_request;
+						pending_request.response_transfer_size(
+							pending_request.response_transfer_size() + response_transfer_size);
+						pending_request.response_received(response_data);
+					}
 				}
 				catch (const std::exception& e) {
 					ERRORF("Error occurred while handling response. The contained exception was: %s", e.what());
@@ -1306,11 +1315,23 @@ void Link::receive(const Packet& packet) {
 						}
 						else if (ResourceAdvertisement::is_response(packet)) {
 							Bytes request_id = ResourceAdvertisement::read_request_id(packet);
-							// std::set yields const refs; RequestReceipt uses pimpl
-							// so a value copy still mutates the underlying data.
-							for (RequestReceipt pending_request : _object->_pending_requests) {
+							// Snapshot before an oversized response invokes the failed
+							// callback and removes its receipt from the pending set.
+							std::vector<RequestReceipt> pending_requests(
+								_object->_pending_requests.begin(), _object->_pending_requests.end());
+							for (RequestReceipt pending_request : pending_requests) {
 								if (pending_request.request_id() == request_id) {
-									Resource response_resource = Resource::accept(packet, /*callback=*/nullptr, /*progress_callback=*/nullptr, request_id);
+									const uint64_t advertised_size = ResourceAdvertisement::read_size(packet);
+									if (!Utilities::within_size_limit(
+											advertised_size, pending_request.max_response_size())) {
+										pending_request.response_size(advertised_size);
+										Resource::reject(packet);
+										pending_request.request_timed_out({Type::NONE});
+										break;
+									}
+									Resource response_resource = Resource::accept(
+										packet, /*callback=*/nullptr, /*progress_callback=*/nullptr,
+										request_id, pending_request.max_response_size());
 									if (response_resource) {
 										if (pending_request.response_transfer_size() == 0) {
 											pending_request.response_size(ResourceAdvertisement::read_size(packet));
@@ -1867,7 +1888,7 @@ void Link::mode(RNS::Type::Link::link_mode mode) {
 
 
 //RequestReceipt::RequestReceipt(const Link& link, const PacketReceipt& packet_receipt /*= {Type::NONE}*/, const Resource& resource /*= {Type::NONE}*/, RequestReceipt::Callbacks::response response_callback /*= nullptr*/, RequestReceipt::Callbacks::failed failed_callback /*= nullptr*/, RequestReceipt::Callbacks::progress progress_callback /*= nullptr*/, double timeout /*= 0.0*/, int request_size /*= 0*/) :
-RequestReceipt::RequestReceipt(const Link& link, const PacketReceipt& packet_receipt, const Resource& resource, RequestReceipt::Callbacks::response response_callback /*= nullptr*/, RequestReceipt::Callbacks::failed failed_callback /*= nullptr*/, RequestReceipt::Callbacks::progress progress_callback /*= nullptr*/, double timeout /*= 0.0*/, int request_size /*= 0*/) :
+RequestReceipt::RequestReceipt(const Link& link, const PacketReceipt& packet_receipt, const Resource& resource, RequestReceipt::Callbacks::response response_callback /*= nullptr*/, RequestReceipt::Callbacks::failed failed_callback /*= nullptr*/, RequestReceipt::Callbacks::progress progress_callback /*= nullptr*/, double timeout /*= 0.0*/, int request_size /*= 0*/, size_t max_response_size /*= 0*/) :
 	_object(new RequestReceiptData())
 {
 	assert(_object);
@@ -1887,6 +1908,7 @@ RequestReceipt::RequestReceipt(const Link& link, const PacketReceipt& packet_rec
 	_object->_link = link;
 	_object->_request_id = _object->_hash;
 	_object->_request_size = request_size;
+	_object->_max_response_size = max_response_size;
 	_object->_sent_at = OS::time();
 	if (timeout != 0.0) {
 		_object->_timeout = timeout;
@@ -2094,9 +2116,19 @@ size_t RequestReceipt::response_transfer_size() const {
 	return _object->_response_transfer_size;
 }
 
+uint64_t RequestReceipt::response_size() const {
+	assert(_object);
+	return _object->_response_size;
+}
+
+size_t RequestReceipt::max_response_size() const {
+	assert(_object);
+	return _object->_max_response_size;
+}
+
 // setters
 
-void RequestReceipt::response_size(size_t size) {
+void RequestReceipt::response_size(uint64_t size) {
 	assert(_object);
 	_object->_response_size = size;
 }

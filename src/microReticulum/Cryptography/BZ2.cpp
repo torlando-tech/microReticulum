@@ -8,7 +8,9 @@
 
 #include <cstring>
 #include <vector>
+#include <limits>
 #include "../Log.h"
+#include "../Utilities/OS.h"
 
 #ifdef ARDUINO
 #include <esp_heap_caps.h>
@@ -16,23 +18,32 @@
 
 namespace RNS { namespace Cryptography {
 
-const Bytes bz2_decompress(const Bytes& data) {
+const Bytes bz2_decompress(const Bytes& data, size_t max_output_size) {
 #if defined(NATIVE) || defined(ARDUINO)
 	if (data.empty()) {
 		return Bytes();
 	}
 
 #ifdef ARDUINO
-	// ESP32: Use smaller buffers to fit in memory, grow if needed
-	// Start with 64KB and grow up to 512KB max
-	const size_t MIN_OUTPUT_SIZE = 64 * 1024;  // 64KB initial
+	// Keep each synchronous decoder call bounded. Resource assembly runs on the
+	// Reticulum owner task, so a very large output buffer can monopolise it long
+	// enough to trigger the task watchdog before the application sees progress.
+	const size_t MIN_OUTPUT_SIZE = 16 * 1024;
 	const size_t MAX_OUTPUT_SIZE = 512 * 1024; // 512KB max
 #else
 	// Native: Use larger buffers for efficiency
 	const size_t MIN_OUTPUT_SIZE = 2 * 1024 * 1024;  // 2MB minimum
 	const size_t MAX_OUTPUT_SIZE = 16 * 1024 * 1024; // 16MB max
 #endif
-	size_t output_size = std::min(std::max(data.size() * 100, MIN_OUTPUT_SIZE), MAX_OUTPUT_SIZE);
+	const size_t output_limit = max_output_size == 0
+		? std::numeric_limits<size_t>::max() : max_output_size;
+#ifdef ARDUINO
+	const size_t output_size = std::min(MIN_OUTPUT_SIZE, output_limit);
+#else
+	const size_t output_size = std::min(
+		std::min(std::max(data.size() * 100, MIN_OUTPUT_SIZE), MAX_OUTPUT_SIZE),
+		output_limit);
+#endif
 
 #ifdef ARDUINO
 	// Allocate from PSRAM if available
@@ -53,7 +64,13 @@ const Bytes bz2_decompress(const Bytes& data) {
 	bz_stream stream;
 	memset(&stream, 0, sizeof(stream));
 
-	int ret = BZ2_bzDecompressInit(&stream, 0, 0);
+	int ret = BZ2_bzDecompressInit(&stream, 0,
+#ifdef ARDUINO
+		1
+#else
+		0
+#endif
+	);
 	if (ret != BZ_OK) {
 #ifdef ARDUINO
 		free(output);
@@ -69,16 +86,33 @@ const Bytes bz2_decompress(const Bytes& data) {
 	Bytes result;
 	int iteration = 0;
 	do {
+		const unsigned int input_before = stream.avail_in;
 		ret = BZ2_bzDecompress(&stream);
 		iteration++;
 
 		if (ret == BZ_OK || ret == BZ_STREAM_END) {
 			// Append decompressed data
 			size_t decompressed = output_size - stream.avail_out;
+			if (decompressed > output_limit - std::min(result.size(), output_limit)) {
+				WARNINGF("bz2_decompress: output exceeds %zu byte limit", output_limit);
+				BZ2_bzDecompressEnd(&stream);
+#ifdef ARDUINO
+				free(output);
+#endif
+				return Bytes();
+			}
 			result.append(reinterpret_cast<uint8_t*>(output), decompressed);
 
 			DEBUGF("bz2_decompress: iter=%d, ret=%d, decompressed=%zu, total=%zu, avail_in=%u",
-				iteration, ret, decompressed, result.size(), stream.avail_in);
+			       iteration, ret, decompressed, result.size(), stream.avail_in);
+			if (ret == BZ_OK && decompressed == 0 && stream.avail_in == input_before) {
+				WARNING("bz2_decompress: malformed stream made no progress");
+				BZ2_bzDecompressEnd(&stream);
+#ifdef ARDUINO
+				free(output);
+#endif
+				return Bytes();
+			}
 
 			if (ret == BZ_STREAM_END) {
 				break;
@@ -87,6 +121,7 @@ const Bytes bz2_decompress(const Bytes& data) {
 			// Reset output buffer for more data
 			stream.next_out = output;
 			stream.avail_out = output_size;
+			Utilities::OS::run_loop();
 		} else {
 			DEBUGF("bz2_decompress: iter=%d, FAILED ret=%d", iteration, ret);
 			BZ2_bzDecompressEnd(&stream);

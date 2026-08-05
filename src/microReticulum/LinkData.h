@@ -138,7 +138,8 @@ namespace RNS {
 		int _request_size = 0;
 		Bytes _response;
 		size_t _response_transfer_size = 0;
-		size_t _response_size = 0;
+		uint64_t _response_size = 0;
+		size_t _max_response_size = 0;
 		Type::RequestReceipt::status _status = Type::RequestReceipt::SENT;
 		double _sent_at = 0.0;
 		int _progress = 0;

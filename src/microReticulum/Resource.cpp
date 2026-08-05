@@ -22,10 +22,12 @@
 #include "Link.h"
 #include "Log.h"
 #include "Cryptography/BZ2.h"
+#include "Utilities/SizeLimit.h"
 
 #include <MsgPack.h>
 
 #include <algorithm>
+#include <limits>
 
 using namespace RNS;
 using namespace RNS::Utilities;
@@ -58,10 +60,22 @@ Resource and register it with the link. Mirror Python Resource.py:167.
 
 Returns a Resource (or NONE on rejection / duplicate).
 */
-Resource Resource::accept(const Packet& advertisement_packet, Callbacks::concluded callback /*= nullptr*/, Callbacks::progress progress_callback /*= nullptr*/, const Bytes& request_id /*= {Bytes::NONE}*/) {
+Resource Resource::accept(const Packet& advertisement_packet, Callbacks::concluded callback /*= nullptr*/, Callbacks::progress progress_callback /*= nullptr*/, const Bytes& request_id /*= {Bytes::NONE}*/, size_t max_decompressed_size /*= 0*/) {
 	ResourceAdvertisement adv = ResourceAdvertisement::unpack(advertisement_packet.plaintext());
 	if (!adv._h) {
 		DEBUG("Could not decode resource advertisement, dropping resource");
+		return {Type::NONE};
+	}
+	if (!Utilities::within_size_limit(adv._d, max_decompressed_size)) {
+		WARNINGF("Rejecting resource with advertised size %llu above %zu byte limit",
+			static_cast<unsigned long long>(adv._d), max_decompressed_size);
+		Resource::reject(advertisement_packet);
+		return {Type::NONE};
+	}
+	if (adv._t > std::numeric_limits<size_t>::max() ||
+		adv._d > std::numeric_limits<size_t>::max()) {
+		WARNING("Rejecting resource with sizes not representable on this platform");
+		Resource::reject(advertisement_packet);
 		return {Type::NONE};
 	}
 
@@ -74,9 +88,9 @@ Resource Resource::accept(const Packet& advertisement_packet, Callbacks::conclud
 
 	resource._object->_status            = Type::Resource::TRANSFERRING;
 	resource._object->_flags             = adv._f;
-	resource._object->_size              = adv._t;
-	resource._object->_total_size        = adv._d;
-	resource._object->_uncompressed_size = adv._d;
+	resource._object->_size              = static_cast<size_t>(adv._t);
+	resource._object->_total_size        = static_cast<size_t>(adv._d);
+	resource._object->_uncompressed_size = static_cast<size_t>(adv._d);
 	resource._object->_hash              = adv._h;
 	resource._object->_original_hash     = adv._o;
 	resource._object->_random_hash       = adv._r;
@@ -107,6 +121,9 @@ Resource Resource::accept(const Packet& advertisement_packet, Callbacks::conclud
 	// Mirror Python: the advertisement carries the request/response flags;
 	// these are used by Link::resource_concluded() to dispatch on completion.
 	resource._object->_is_response       = adv._p;
+	if (max_decompressed_size != 0) {
+		resource._object->_max_decompressed_size = max_decompressed_size;
+	}
 
 	// Pre-allocate the parts buffer with empty slots; receive_part() fills
 	// each slot as the corresponding packet arrives.
@@ -694,17 +711,14 @@ void Resource::assemble() {
 		// Decompress if the sender flagged the resource as compressed.
 		// Python auto-compresses with bz2 when it shrinks the payload
 		// (Resource.py:684), and DIRECT/propagation sends to a
-		// compression-capable peer default to auto_compress=True. Upstream
-		// microReticulum has no bz2 and rejects compressed resources, which
-		// marks them CORRUPT and tears down the link. pyxis/microLXMF vendor
-		// libbz2 + Cryptography::bz2_decompress so the inbound compressed
-		// path works. Order matches Python: strip random_hash, THEN
+		// compression-capable peer default to auto_compress=True. This port
+		// vendors libbz2 + Cryptography::bz2_decompress so the
+		// inbound compressed path works. Order matches Python: strip random_hash, THEN
 		// decompress, THEN verify the hash over the decompressed content.
-		// TODO(pyxis): mirror Python's max_decompressed_size bomb-guard and
-		// switch BZ2_bzDecompressInit small=1 once PSRAM headroom is measured
-		// on the T-Deck (see bz2/ESP32 analysis 2026-06-18).
+		// The streaming decoder enforces max_decompressed_size before append;
+		// ESP32 uses low-memory mode and bounded 16 KiB progress chunks.
 		if (_object->_compressed) {
-			Bytes decompressed = Cryptography::bz2_decompress(data);
+			Bytes decompressed = Cryptography::bz2_decompress(data, _object->_max_decompressed_size);
 			if (decompressed.size() == 0) {
 				ERRORF("Resource::assemble: bz2_decompress failed for %s", _object->_hash.toHex().c_str());
 				_object->_status = Type::Resource::CORRUPT;
@@ -1596,12 +1610,12 @@ Bytes ResourceAdvertisement::read_request_id(const Packet& advertisement_packet)
 	return adv._q;
 }
 
-size_t ResourceAdvertisement::read_transfer_size(const Packet& advertisement_packet) {
+uint64_t ResourceAdvertisement::read_transfer_size(const Packet& advertisement_packet) {
 	ResourceAdvertisement adv = ResourceAdvertisement::unpack(advertisement_packet.plaintext());
 	return adv._t;
 }
 
-size_t ResourceAdvertisement::read_size(const Packet& advertisement_packet) {
+uint64_t ResourceAdvertisement::read_size(const Packet& advertisement_packet) {
 	ResourceAdvertisement adv = ResourceAdvertisement::unpack(advertisement_packet.plaintext());
 	return adv._d;
 }
@@ -1691,9 +1705,9 @@ ResourceAdvertisement ResourceAdvertisement::unpack(const Bytes& data) {
 		if (key.length() == 1) {
 			const char k = key[0];
 			if (k == 't') {
-				uint64_t v = 0; u.deserialize(v); adv._t = static_cast<size_t>(v);
+				uint64_t v = 0; u.deserialize(v); adv._t = v;
 			} else if (k == 'd') {
-				uint64_t v = 0; u.deserialize(v); adv._d = static_cast<size_t>(v);
+				uint64_t v = 0; u.deserialize(v); adv._d = v;
 			} else if (k == 'n') {
 				uint32_t v = 0; u.deserialize(v); adv._n = v;
 			} else if (k == 'h') {

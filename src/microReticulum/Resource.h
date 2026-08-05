@@ -105,7 +105,7 @@ namespace RNS {
 	public:
 		// Static creation entry points
 		static void reject(const Packet& advertisement_packet);
-		static Resource accept(const Packet& advertisement_packet, Callbacks::concluded callback = nullptr, Callbacks::progress progress_callback = nullptr, const Bytes& request_id = {Bytes::NONE});
+		static Resource accept(const Packet& advertisement_packet, Callbacks::concluded callback = nullptr, Callbacks::progress progress_callback = nullptr, const Bytes& request_id = {Bytes::NONE}, size_t max_decompressed_size = 0);
 
 	public:
 		// Methods in roughly the same order as Python RNS.Resource
@@ -201,16 +201,16 @@ namespace RNS {
 		static bool is_request(const Packet& advertisement_packet);
 		static bool is_response(const Packet& advertisement_packet);
 		static Bytes read_request_id(const Packet& advertisement_packet);
-		static size_t read_transfer_size(const Packet& advertisement_packet);
-		static size_t read_size(const Packet& advertisement_packet);
+		static uint64_t read_transfer_size(const Packet& advertisement_packet);
+		static uint64_t read_size(const Packet& advertisement_packet);
 
 		// Wire-format codec
 		Bytes pack(uint16_t segment = 0) const;
 		static ResourceAdvertisement unpack(const Bytes& data);
 
 		// Getters mirroring Python
-		size_t get_transfer_size() const { return _t; }
-		size_t get_data_size() const { return _d; }
+		uint64_t get_transfer_size() const { return _t; }
+		uint64_t get_data_size() const { return _d; }
 		uint32_t get_parts() const { return _n; }
 		uint16_t get_segments() const { return _l; }
 		const Bytes& get_hash() const { return _h; }
@@ -222,8 +222,8 @@ namespace RNS {
 		// Public fields named to match Python single-letter attributes for
 		// readability against the reference implementation.
 		Link _link = {Type::NONE};
-		size_t _t = 0;            // Transfer size
-		size_t _d = 0;            // Total uncompressed data size
+		uint64_t _t = 0;          // Transfer size
+		uint64_t _d = 0;          // Total uncompressed data size
 		uint32_t _n = 0;          // Number of parts
 		Bytes _h;                 // Resource hash
 		Bytes _r;                 // Resource random hash

@@ -71,7 +71,7 @@ namespace RNS {
 		RequestReceipt(Type::NoneConstructor none) {}
 		RequestReceipt(const RequestReceipt& request_receipt) : _object(request_receipt._object) {}
 		//RequestReceipt(const Link& link, const PacketReceipt& packet_receipt = {Type::NONE}, const Resource& resource = {Type::NONE}, RequestReceipt::Callbacks::response response_callback = nullptr, RequestReceipt::Callbacks::failed failed_callback = nullptr, RequestReceipt::Callbacks::progress progress_callback = nullptr, double timeout = 0.0, int request_size = 0);
-		RequestReceipt(const Link& link, const PacketReceipt& packet_receipt, const Resource& resource, RequestReceipt::Callbacks::response response_callback = nullptr, RequestReceipt::Callbacks::failed failed_callback = nullptr, RequestReceipt::Callbacks::progress progress_callback = nullptr, double timeout = 0.0, int request_size = 0);
+		RequestReceipt(const Link& link, const PacketReceipt& packet_receipt, const Resource& resource, RequestReceipt::Callbacks::response response_callback = nullptr, RequestReceipt::Callbacks::failed failed_callback = nullptr, RequestReceipt::Callbacks::progress progress_callback = nullptr, double timeout = 0.0, int request_size = 0, size_t max_response_size = 0);
 
 		inline RequestReceipt& operator = (const RequestReceipt& packet_receipt) {
 			_object = packet_receipt._object;
@@ -102,9 +102,11 @@ namespace RNS {
 		const Bytes& hash() const;
 		const Bytes& request_id() const;
 		size_t response_transfer_size() const;
+		uint64_t response_size() const;
+		size_t max_response_size() const;
 
 		// setters
-		void response_size(size_t size);
+		void response_size(uint64_t size);
 		void response_transfer_size(size_t size);
 
 	private:
@@ -191,7 +193,7 @@ namespace RNS {
 		void prove_packet(const Packet& packet);
 		void validate_proof(const Packet& packet);
 		void identify(const Identity& identity);
-		const RequestReceipt request(const Bytes& path, const Bytes& data = {Bytes::NONE}, RequestReceipt::Callbacks::response response_callback = nullptr, RequestReceipt::Callbacks::failed failed_callback = nullptr, RequestReceipt::Callbacks::progress progress_callback = nullptr, double timeout = 0.0);
+		const RequestReceipt request(const Bytes& path, const Bytes& data = {Bytes::NONE}, RequestReceipt::Callbacks::response response_callback = nullptr, RequestReceipt::Callbacks::failed failed_callback = nullptr, RequestReceipt::Callbacks::progress progress_callback = nullptr, double timeout = 0.0, size_t max_response_size = 0);
 		void update_mdu();
 		void rtt_packet(const Packet& packet);
 		float get_establishment_rate();

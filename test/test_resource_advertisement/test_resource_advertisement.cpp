@@ -3,11 +3,29 @@
 #include "microReticulum/Resource.h"
 #include "microReticulum/Bytes.h"
 #include "microReticulum/Type.h"
+#include "microReticulum/Utilities/SizeLimit.h"
 
 #include <stdio.h>
 #include <string.h>
 
 using namespace RNS;
+
+static void test_response_size_limit_policy() {
+	TEST_ASSERT_TRUE(Utilities::within_size_limit(UINT64_MAX, 0));
+	TEST_ASSERT_TRUE(Utilities::within_size_limit(64 * 1024, 64 * 1024));
+	TEST_ASSERT_FALSE(Utilities::within_size_limit(64 * 1024 + 1, 64 * 1024));
+}
+
+static void test_wire_sizes_remain_64_bit_until_validation() {
+	ResourceAdvertisement adv;
+	adv._t = (UINT64_C(1) << 32) + 1;
+	adv._d = (UINT64_C(1) << 32) + 2;
+
+	ResourceAdvertisement decoded = ResourceAdvertisement::unpack(adv.pack());
+	TEST_ASSERT_EQUAL_UINT64(adv._t, decoded._t);
+	TEST_ASSERT_EQUAL_UINT64(adv._d, decoded._d);
+	TEST_ASSERT_FALSE(Utilities::within_size_limit(decoded._d, 64 * 1024));
+}
 
 // Build a non-trivial ResourceAdvertisement, pack it, unpack it, and assert
 // every relevant field round-trips byte-for-byte.
@@ -279,6 +297,8 @@ void tearDown(void) {}
 
 int runUnityTests(void) {
 	UNITY_BEGIN();
+	RUN_TEST(test_response_size_limit_policy);
+	RUN_TEST(test_wire_sizes_remain_64_bit_until_validation);
 	RUN_TEST(test_pack_unpack_round_trip);
 	RUN_TEST(test_nil_request_id_round_trip);
 	RUN_TEST(test_pack_segment_pagination);
