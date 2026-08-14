@@ -64,6 +64,26 @@ using namespace RNS::Persistence;
 #define RNS_SAME_INTERFACE_PATH_REQUESTS 1
 #endif
 
+namespace {
+template <typename Table, typename Entry>
+bool store_bounded_by_timestamp(Table& table, const Bytes& key, const Entry& entry, uint16_t max_size) {
+	if (max_size == 0) return false;
+
+	table.erase(key);
+	while (table.size() >= max_size) {
+		auto oldest = std::min_element(
+			table.begin(), table.end(),
+			[](const typename Table::value_type& a, const typename Table::value_type& b) {
+				return a.second._timestamp < b.second._timestamp;
+			});
+		if (oldest == table.end()) return false;
+		table.erase(oldest);
+	}
+
+	return table.insert({key, entry}).second;
+}
+}
+
 /*static*/ Transport::InterfaceTable Transport::_interfaces;
 /*static*/ Transport::DestinationTable Transport::_destinations;
 /*static*/ std::set<Link> Transport::_pending_links;
@@ -317,7 +337,14 @@ DestinationEntry empty_destination_entry;
 #if defined(ARDUINO)
 		microStore::set_time_offset(Utilities::OS::getTimeOffset() / 1000);
 #endif
+		// BasicFileStore must receive the record policy before init() so an
+		// oversized persisted index is pruned while it is loaded at boot.
+		_path_store.set_max_recs(_path_table_maxsize);
 		_path_store.init(Utilities::OS::get_filesystem(), "./path_store", false, _path_store_segment_size, _path_store_segment_count);
+		// microStore defines max_recs=0 as "policy disabled". Transport defines
+		// a zero path-table maximum as no retained paths, so clear records loaded
+		// during init to keep pre-start and runtime zero semantics identical.
+		if (_path_table_maxsize == 0) _path_store.clear();
 		// If the filesystem is full then clear the path store since it's of no use full anyway
 		if (Utilities::OS::get_filesystem().storageAvailable() > 0 && Utilities::OS::get_filesystem().storageAvailable() < 1024) {
 			WARNING("FileSystem is full, clearing existing path store");
@@ -562,7 +589,7 @@ DestinationEntry empty_destination_entry;
 								//_announce_table.insert_or_assign({destination_hash, held_entry});
 								_announce_table.erase(destination_hash);
 								// CBA ACCUMULATES
-								_announce_table.insert({destination_hash, held_entry});
+								store_announce(destination_hash, held_entry);
 								DEBUG("Reinserting held announce into table");
 								// CBA IMMEDIATE CULL
 								cull_announce_table();
@@ -2141,7 +2168,7 @@ DestinationEntry empty_destination_entry;
 									attached_interface
 								);
 								// CBA ACCUMULATES
-								_announce_table.insert({packet.destination_hash(), announce_entry});
+								store_announce(packet.destination_hash(), announce_entry);
 								// CBA IMMEDIATE CULL
 								cull_announce_table();
 							}
@@ -2172,7 +2199,7 @@ DestinationEntry empty_destination_entry;
 									attached_interface
 								);
 								// CBA ACCUMULATES
-								_announce_table.insert({packet.destination_hash(), announce_entry});
+								store_announce(packet.destination_hash(), announce_entry);
 								// CBA IMMEDIATE CULL
 								cull_announce_table();
 							}
@@ -2313,7 +2340,7 @@ DestinationEntry empty_destination_entry;
 							else {
 								ttl = DESTINATION_TIMEOUT;
 							}
-							if (_new_path_table.put(packet.destination_hash().collection(), destination_table_entry, ttl)) {
+							if (store_persistent_path(packet.destination_hash(), destination_table_entry, ttl)) {
 								// Mirror the entry into the in-memory _path_table.
 								//
 								// WHY TWO PATH TABLES EXIST: upstream attermann/microReticulum is
@@ -2335,7 +2362,7 @@ DestinationEntry empty_destination_entry;
 								// gained a for_each/keys() enumeration API), DELETE this mirror and move
 								// the enumerating consumers onto the new API — this fix exists ONLY to
 								// bridge the half-done upstream state and must not outlive it.
-								_path_table[packet.destination_hash()] = destination_table_entry;
+								store_enumerable_path(packet.destination_hash(), destination_table_entry);
 								TRACEF("Added destination %s to path table!", packet.destination_hash().toHex().c_str());
 								++_destinations_added;
 							}
@@ -3857,7 +3884,7 @@ TRACEF("announce_packet str: %s", announce_packet.toString().c_str());
 				if (announce_iter != _announce_table.end()) {
 					AnnounceEntry& held_entry = (*announce_iter).second;
 					// CBA ACCUMULATES
-					_held_announces.insert({announce_packet.destination_hash(), held_entry});
+					hold_announce(announce_packet.destination_hash(), held_entry);
 				}
 
 /*
@@ -3890,7 +3917,7 @@ TRACEF("announce_packet str: %s", announce_packet.toString().c_str());
 					attached_interface
 				);
 				// CBA ACCUMULATES
-				_announce_table.insert({announce_packet.destination_hash(), announce_entry});
+				store_announce(announce_packet.destination_hash(), announce_entry);
 				// CBA IMMEDIATE CULL
 				cull_announce_table();
 
@@ -4877,114 +4904,119 @@ TRACEF("Transport::write_path_table: buffer size %lu bytes", Persistence::_buffe
 	return {Type::NONE};
 }
 
+/*static*/ void Transport::path_table_maxsize(uint16_t path_table_maxsize) {
+	_path_table_maxsize = path_table_maxsize;
+	_path_store.set_max_recs(_path_table_maxsize);
+	cull_path_table();
+	cull_persistent_path_store();
+}
+
+/*static*/ bool Transport::store_persistent_path(const Bytes& destination_hash, const DestinationEntry& entry, uint32_t ttl) {
+	if (_path_table_maxsize == 0) return false;
+	return _new_path_table.put(destination_hash, entry, ttl);
+}
+
+/*static*/ void Transport::cull_persistent_path_store() {
+	if (!_new_path_table) return;
+	if (_path_table_maxsize == 0) {
+		_path_store.clear();
+		return;
+	}
+
+	try {
+		while (_new_path_table.size() > _path_table_maxsize) {
+			bool found = false;
+			double oldest_timestamp = 0;
+			Bytes oldest_hash;
+			for (auto it = _new_path_table.begin(); it != _new_path_table.end(); ++it) {
+				auto& record = *it;
+				if (!found || record.value._timestamp < oldest_timestamp) {
+					found = true;
+					oldest_timestamp = record.value._timestamp;
+					oldest_hash = record.key;
+				}
+			}
+			if (!found || !_new_path_table.remove(oldest_hash)) break;
+		}
+	}
+	catch (const std::exception& e) {
+		WARNINGF("Failed to cull persistent path store: %s", e.what());
+	}
+}
+
 /*static*/ void Transport::cull_path_table() {
 	TRACE("Transport::cull_path_table()");
-	if (_path_table.size() > _path_table_maxsize) {
-		try {
-			// Build lightweight (timestamp, key) index to avoid copying full DestinationEntry
-			// objects (which contain nested std::set<Bytes>) — prevents OOM on heap-constrained
-			// devices when the table hits max capacity.
-			std::vector<std::pair<double, Bytes>> sorted_keys;
-			sorted_keys.reserve(_path_table.size());
-			for (const auto& [key, entry] : _path_table) {
-				sorted_keys.emplace_back(entry._timestamp, key);
-			}
-			// Sort ascending by timestamp so oldest entries are removed first
-			std::sort(sorted_keys.begin(), sorted_keys.end());
-
-			uint16_t count = 0;
-			for (const auto& [timestamp, destination_hash] : sorted_keys) {
-				TRACEF("Transport::cull_path_table: Removing destination %s from path table", destination_hash.toHex().c_str());
-#if defined(RNS_USE_FS) && defined(RNS_PERSIST_PATHS)
-				// CBA microStore
-				//auto& destination_entry = get_path(destination_hash);
-				DestinationEntry destination_entry;
-				_new_path_table.get(destination_hash, destination_entry);
-				if (destination_entry) {
-					// Remove cached packet file associated with this destination
-					char packet_cache_path[Type::Reticulum::FILEPATH_MAXSIZE];
-					snprintf(packet_cache_path, Type::Reticulum::FILEPATH_MAXSIZE, "%s/%s", Reticulum::_cachepath, destination_entry.announce_packet_hash().toHex().c_str());
-					if (OS::file_exists(packet_cache_path)) {
-						OS::remove_file(packet_cache_path);
-					}
-				}
-#endif
-				if (_path_table.erase(destination_hash) < 1) {
-					WARNINGF("Failed to remove destination %s from path table", destination_hash.toHex().c_str());
-				}
-				++count;
-				if (_path_table.size() <= _path_table_maxsize) {
-					break;
-				}
-			}
-			DEBUGF("Removed %d path(s) from path table", count);
-		}
-		catch (const std::bad_alloc& e) {
-			ERROR("cull_path_table: bad_alloc - out of memory building sort index, falling back to single erase");
-			// Fallback: std::min_element does no heap allocation — erase one oldest entry
-			auto oldest = std::min_element(
-				_path_table.begin(), _path_table.end(),
-				[](const std::pair<const Bytes, DestinationEntry>& a,
+	uint16_t count = 0;
+	while (_path_table.size() > _path_table_maxsize) {
+		auto oldest = std::min_element(
+			_path_table.begin(), _path_table.end(),
+			[](const std::pair<const Bytes, DestinationEntry>& a,
 			   const std::pair<const Bytes, DestinationEntry>& b) {
 				return a.second._timestamp < b.second._timestamp;
-			}
-			);
-			if (oldest != _path_table.end()) {
-				_path_table.erase(oldest);
+			});
+		if (oldest == _path_table.end()) break;
+		TRACEF("Transport::cull_path_table: Removing destination %s from path table", oldest->first.toHex().c_str());
+#if defined(RNS_USE_FS) && defined(RNS_PERSIST_PATHS)
+		try {
+			DestinationEntry destination_entry;
+			_new_path_table.get(oldest->first, destination_entry);
+			if (destination_entry) {
+				char packet_cache_path[Type::Reticulum::FILEPATH_MAXSIZE];
+				snprintf(packet_cache_path, Type::Reticulum::FILEPATH_MAXSIZE, "%s/%s", Reticulum::_cachepath, destination_entry.announce_packet_hash().toHex().c_str());
+				if (OS::file_exists(packet_cache_path)) OS::remove_file(packet_cache_path);
 			}
 		}
 		catch (const std::exception& e) {
-			ERRORF("cull_path_table: exception: %s", e.what());
+			WARNINGF("Failed to clean path cache while culling: %s", e.what());
 		}
+#endif
+		_path_table.erase(oldest);
+		++count;
+	}
+	if (count > 0) DEBUGF("Removed %d path(s) from path table", count);
+}
+
+/*static*/ bool Transport::store_enumerable_path(const Bytes& destination_hash, const DestinationEntry& entry) {
+	return store_bounded_by_timestamp(_path_table, destination_hash, entry, _path_table_maxsize);
+}
+
+/*static*/ bool Transport::store_announce(const Bytes& destination_hash, const AnnounceEntry& entry) {
+	return store_bounded_by_timestamp(_announce_table, destination_hash, entry, _announce_table_maxsize);
+}
+
+/*static*/ bool Transport::hold_announce(const Bytes& destination_hash, const AnnounceEntry& entry) {
+	return store_bounded_by_timestamp(_held_announces, destination_hash, entry, _announce_table_maxsize);
+}
+
+/*static*/ void Transport::cull_held_announce_table() {
+	while (_held_announces.size() > _announce_table_maxsize) {
+		auto oldest = std::min_element(
+			_held_announces.begin(), _held_announces.end(),
+			[](const std::pair<const Bytes, AnnounceEntry>& a,
+			   const std::pair<const Bytes, AnnounceEntry>& b) {
+				return a.second._timestamp < b.second._timestamp;
+			});
+		if (oldest == _held_announces.end()) break;
+		_held_announces.erase(oldest);
 	}
 }
 
 /*static*/ void Transport::cull_announce_table() {
 	TRACE("Transport::cull_announce_table()");
-	if (_announce_table.size() > _announce_table_maxsize) {
-		try {
-			// Build lightweight (timestamp, key) index to avoid copying full AnnounceEntry
-			// objects (which contain nested std::set<Bytes>) — prevents OOM on heap-constrained
-			// devices when the table hits max capacity.
-			std::vector<std::pair<double, Bytes>> sorted_keys;
-			sorted_keys.reserve(_announce_table.size());
-			for (const auto& [key, entry] : _announce_table) {
-				sorted_keys.emplace_back(entry._timestamp, key);
-			}
-			// Sort ascending by timestamp so oldest entries are removed first
-			std::sort(sorted_keys.begin(), sorted_keys.end());
-
-			uint16_t count = 0;
-			for (const auto& [timestamp, destination_hash] : sorted_keys) {
-				TRACEF("Transport::cull_announce_table: Removing destination %s from path table", destination_hash.toHex().c_str());
-				if (_announce_table.erase(destination_hash) < 1) {
-					WARNINGF("Failed to remove destination %s from path table", destination_hash.toHex().c_str());
-				}
-				++count;
-				if (_announce_table.size() <= _path_table_maxsize) {
-					break;
-				}
-			}
-			DEBUGF("Removed %d path(s) from path table", count);
-		}
-		catch (const std::bad_alloc& e) {
-			ERROR("cull_announce_table: bad_alloc - out of memory building sort index, falling back to single erase");
-			// Fallback: std::min_element does no heap allocation — erase one oldest entry
-			auto oldest = std::min_element(
-				_announce_table.begin(), _announce_table.end(),
-				[](const std::pair<const Bytes, AnnounceEntry>& a,
+	uint16_t count = 0;
+	while (_announce_table.size() > _announce_table_maxsize) {
+		auto oldest = std::min_element(
+			_announce_table.begin(), _announce_table.end(),
+			[](const std::pair<const Bytes, AnnounceEntry>& a,
 			   const std::pair<const Bytes, AnnounceEntry>& b) {
 				return a.second._timestamp < b.second._timestamp;
-			}
-			);
-			if (oldest != _announce_table.end()) {
-				_announce_table.erase(oldest);
-			}
-		}
-		catch (const std::exception& e) {
-			ERRORF("cull_announce_table: exception: %s", e.what());
-		}
+			});
+		if (oldest == _announce_table.end()) break;
+		TRACEF("Transport::cull_announce_table: Removing destination %s", oldest->first.toHex().c_str());
+		_announce_table.erase(oldest);
+		++count;
 	}
+	if (count > 0) DEBUGF("Removed %d announce(s) from announce table", count);
 }
 
 /*static*/ uint16_t Transport::remove_reverse_entries(const std::vector<Bytes>& hashes) {

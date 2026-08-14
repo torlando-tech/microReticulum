@@ -352,7 +352,29 @@ namespace RNS {
 
 		// CBA
 		static void cull_path_table();
+		static void cull_persistent_path_store();
 		static void cull_announce_table();
+		static void cull_held_announce_table();
+		static bool store_persistent_path(const Bytes& destination_hash, const DestinationEntry& entry, uint32_t ttl = 0);
+		static bool store_enumerable_path(const Bytes& destination_hash, const DestinationEntry& entry);
+		static bool store_announce(const Bytes& destination_hash, const AnnounceEntry& entry);
+		static bool hold_announce(const Bytes& destination_hash, const AnnounceEntry& entry);
+
+#ifdef LIBRARY_TEST
+		static inline bool test_store_announce(const Bytes& destination_hash, const AnnounceEntry& entry) {
+			return store_announce(destination_hash, entry);
+		}
+		static inline void test_clear_bounded_tables() {
+			_path_table.clear();
+			_announce_table.clear();
+			_held_announces.clear();
+		}
+		static inline bool test_store_persistent_path(const Bytes& destination_hash, const DestinationEntry& entry) {
+			return store_persistent_path(destination_hash, entry);
+		}
+		static inline size_t test_persistent_path_count() { return _new_path_table.size(); }
+		static inline void test_clear_persistent_paths() { _path_store.clear(); }
+#endif
 
 		// CBA Test identity prv access
 		static void set_identity_prv(const Bytes& prv_bytes);
@@ -366,9 +388,13 @@ namespace RNS {
 		static inline const Identity& identity() { return _identity; }
 		static inline void identity(Identity& identity) { _identity = identity; }
 		inline static uint16_t path_table_maxsize() { return _path_table_maxsize; }
-		inline static void path_table_maxsize(uint16_t path_table_maxsize) { _path_table_maxsize = path_table_maxsize; _path_store.set_max_recs(_path_table_maxsize); }
+		static void path_table_maxsize(uint16_t path_table_maxsize);
 		inline static uint16_t announce_table_maxsize() { return _announce_table_maxsize; }
-		inline static void announce_table_maxsize(uint16_t announce_table_maxsize) { _announce_table_maxsize = announce_table_maxsize; }
+		inline static void announce_table_maxsize(uint16_t announce_table_maxsize) {
+			_announce_table_maxsize = announce_table_maxsize;
+			cull_announce_table();
+			cull_held_announce_table();
+		}
 		inline static uint16_t hashlist_maxsize() { return _hashlist_maxsize; }
 		inline static void hashlist_maxsize(uint16_t hashlist_maxsize) {
 			_hashlist_maxsize = hashlist_maxsize;

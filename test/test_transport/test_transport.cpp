@@ -86,7 +86,7 @@ void initRNS() {
 
 	try {
 		// Set sane memory limits based on hardware-specific availability
-		RNS::Transport::path_table_maxsize(50);
+		RNS::Transport::path_table_maxsize(0);
 		RNS::Transport::announce_table_maxsize(50);
 		RNS::Transport::hashlist_maxsize(50);
 		RNS::Transport::max_pr_tags(32);
@@ -95,6 +95,14 @@ void initRNS() {
 		microStore::FileSystem filesystem{microStore::Adapters::UniversalFileSystem()};
 		filesystem.init();
 		RNS::Utilities::OS::register_filesystem(filesystem);
+		{
+			RNS::Persistence::PathStore seeded_store(4096, 2);
+			TEST_ASSERT_TRUE(seeded_store.init(filesystem, "./path_store", true));
+			const uint8_t key[16] = {1};
+			const uint8_t value[16] = {2};
+			TEST_ASSERT_TRUE(seeded_store.put(key, sizeof(key), value, sizeof(value)));
+			TEST_ASSERT_EQUAL_size_t(1, seeded_store.size());
+		}
 
 		RNS::Transport::register_interface(in_interface);
 		RNS::Transport::register_interface(out_interface);
@@ -111,6 +119,8 @@ void initRNS() {
 		test_reticulum = RNS::Reticulum();
 		test_reticulum.transport_enabled(true);
 		test_reticulum.start();
+		TEST_ASSERT_EQUAL_size_t(0, RNS::Transport::test_persistent_path_count());
+		RNS::Transport::path_table_maxsize(50);
 
 		// Single identity and destination (same pattern as test_rns_loopback)
 		test_identity = RNS::Identity(false);
@@ -566,6 +576,58 @@ void test_incoming_announce_stress() {
 }
 
 
+void test_transport_tables_respect_independent_bounds() {
+	RNS::Transport::test_clear_bounded_tables();
+	RNS::Transport::test_clear_persistent_paths();
+	RNS::Transport::path_table_maxsize(3);
+	RNS::Transport::announce_table_maxsize(3);
+
+	const auto key = [](uint8_t value) {
+		uint8_t raw[16] = {0};
+		raw[15] = value;
+		return RNS::Bytes(raw, sizeof(raw));
+	};
+
+	for (uint8_t i = 1; i <= 3; ++i) {
+		RNS::Persistence::DestinationEntry path;
+		path._timestamp = i;
+		RNS::Transport::store_enumerable_path(key(i), path);
+		TEST_ASSERT_TRUE(RNS::Transport::test_store_persistent_path(key(i), path));
+	}
+	RNS::Persistence::DestinationEntry fourth_path;
+	fourth_path._timestamp = 4;
+	TEST_ASSERT_TRUE(RNS::Transport::test_store_persistent_path(key(4), fourth_path));
+	TEST_ASSERT_EQUAL_size_t(3, RNS::Transport::test_persistent_path_count());
+	RNS::Transport::path_table_maxsize(2);
+	TEST_ASSERT_EQUAL_size_t(2, RNS::Transport::path_table().size());
+	TEST_ASSERT_EQUAL_size_t(0, RNS::Transport::path_table().count(key(1)));
+	TEST_ASSERT_EQUAL_size_t(2, RNS::Transport::test_persistent_path_count());
+
+	RNS::Transport::path_table_maxsize(5);
+	for (uint8_t i = 1; i <= 3; ++i) {
+		RNS::Transport::AnnounceEntry announce(
+			i, 0, 0, {}, 0, {RNS::Type::NONE}, 0, false, {RNS::Type::NONE});
+		RNS::Transport::test_store_announce(key(i), announce);
+	}
+	for (uint8_t i = 1; i <= 3; ++i) {
+		RNS::Transport::AnnounceEntry held(
+			i, 0, 0, {}, 0, {RNS::Type::NONE}, 0, false, {RNS::Type::NONE});
+		RNS::Transport::hold_announce(key(i), held);
+	}
+	RNS::Transport::announce_table_maxsize(2);
+	TEST_ASSERT_EQUAL_size_t(2, RNS::Transport::announce_table().size());
+	TEST_ASSERT_EQUAL_size_t(0, RNS::Transport::announce_table().count(key(1)));
+	TEST_ASSERT_EQUAL_size_t(2, RNS::Transport::held_announces().size());
+	TEST_ASSERT_EQUAL_size_t(0, RNS::Transport::held_announces().count(key(1)));
+
+	RNS::Transport::test_clear_bounded_tables();
+	RNS::Transport::path_table_maxsize(0);
+	TEST_ASSERT_EQUAL_size_t(0, RNS::Transport::test_persistent_path_count());
+	TEST_ASSERT_FALSE(RNS::Transport::test_store_persistent_path(key(5), fourth_path));
+	RNS::Transport::path_table_maxsize(50);
+}
+
+
 // ============================================================================
 // Test runner
 // ============================================================================
@@ -599,6 +661,7 @@ int runUnityTests(void) {
 	//RUN_TEST(test_incoming_announce_limit);
 */
 	RUN_TEST(test_incoming_announce_over_limit);
+	RUN_TEST(test_transport_tables_respect_independent_bounds);
 	//RUN_TEST(test_incoming_announce_stress);
 
 	return UNITY_END();
