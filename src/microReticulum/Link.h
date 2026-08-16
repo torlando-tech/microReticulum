@@ -193,7 +193,7 @@ namespace RNS {
 		void prove_packet(const Packet& packet);
 		void validate_proof(const Packet& packet);
 		void identify(const Identity& identity);
-		const RequestReceipt request(const Bytes& path, const Bytes& data = {Bytes::NONE}, RequestReceipt::Callbacks::response response_callback = nullptr, RequestReceipt::Callbacks::failed failed_callback = nullptr, RequestReceipt::Callbacks::progress progress_callback = nullptr, double timeout = 0.0, size_t max_response_size = 0);
+		const RequestReceipt request(const Bytes& path, const Bytes& data = {Bytes::NONE}, RequestReceipt::Callbacks::response response_callback = nullptr, RequestReceipt::Callbacks::failed failed_callback = nullptr, RequestReceipt::Callbacks::progress progress_callback = nullptr, double timeout = 0.0, size_t max_response_size = 0, bool sensitive = false);
 		void update_mdu();
 		void rtt_packet(const Packet& packet);
 		float get_establishment_rate();

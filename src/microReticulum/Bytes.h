@@ -224,6 +224,17 @@ MEM("Creating from data-move...");
 			_exclusive = true;
 		}
 
+		// Overwrite the shared backing allocation before releasing it. Since Bytes
+		// copies share Data, every outstanding view is cleared at the same time.
+		inline void secure_clear() {
+			if (_data) {
+				volatile uint8_t* bytes = _data->data();
+				for (size_t i = 0; i < _data->size(); ++i) bytes[i] = 0;
+				_data->clear();
+			}
+			clear();
+		}
+
 		inline void assign(const Bytes& bytes) {
 #ifdef COW
 			// shared_ptr copy only — O(1), no heap allocation

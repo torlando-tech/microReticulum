@@ -167,6 +167,11 @@ target_link_libraries(microReticulum
 # Tests, examples, interop senders
 # -----------------------------------------------------------------------------
 if(RNS_BUILD_TESTS)
+    # Compile the library side of test-only helpers as well as their callers.
+    # Defining this only on each test executable exposes declarations without
+    # building their implementations into microReticulum.
+    target_compile_definitions(microReticulum PUBLIC LIBRARY_TEST)
+    target_compile_definitions(microReticulum PRIVATE PIO_UNIT_TESTING)
     enable_testing()
     add_subdirectory(test)
 endif()

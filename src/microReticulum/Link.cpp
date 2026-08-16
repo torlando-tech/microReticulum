@@ -555,7 +555,7 @@ Sends a request to the remote peer.
 :param timeout: An optional timeout in seconds for the request. If *None* is supplied it will be calculated based on link RTT.
 :returns: A :ref:`RNS.RequestReceipt<api-requestreceipt>` instance if the request was sent, or *False* if it was not.
 */
-const RNS::RequestReceipt Link::request(const Bytes& path, const Bytes& data /*= {Bytes::NONE}*/, RequestReceipt::Callbacks::response response_callback /*= nullptr*/, RequestReceipt::Callbacks::failed failed_callback /*= nullptr*/, RequestReceipt::Callbacks::progress progress_callback /*= nullptr*/, double timeout /*= 0.0*/, size_t max_response_size /*= 0*/) {
+const RNS::RequestReceipt Link::request(const Bytes& path, const Bytes& data /*= {Bytes::NONE}*/, RequestReceipt::Callbacks::response response_callback /*= nullptr*/, RequestReceipt::Callbacks::failed failed_callback /*= nullptr*/, RequestReceipt::Callbacks::progress progress_callback /*= nullptr*/, double timeout /*= 0.0*/, size_t max_response_size /*= 0*/, bool sensitive /*= false*/) {
 	assert(_object);
 	DEBUGF("Link %s sending request", link_id().toHex().c_str());
 	const Bytes request_path_hash(Identity::truncated_hash(path));
@@ -574,6 +574,8 @@ const RNS::RequestReceipt Link::request(const Bytes& path, const Bytes& data /*=
 	if (packed_request.size() <= MDU) {
 		Packet request_packet = Packet(*this, packed_request).context(Type::Packet::REQUEST);
 		PacketReceipt packet_receipt = request_packet.send();
+		const size_t packed_request_size = packed_request.size();
+		if (sensitive) packed_request.secure_clear();
 
 		if (!packet_receipt) {
 			return {Type::NONE};
@@ -588,12 +590,18 @@ const RNS::RequestReceipt Link::request(const Bytes& path, const Bytes& data /*=
 				failed_callback,
 				progress_callback,
 				timeout,
-				packed_request.size(),
+				packed_request_size,
 				max_response_size
 			);
 		}
 	}
 	else {
+		// Resource owns its source bytes asynchronously. A sensitive request must
+		// never enter that retained-plaintext lifecycle.
+		if (sensitive) {
+			packed_request.secure_clear();
+			return {Type::NONE};
+		}
 		const Bytes request_id(Identity::truncated_hash(packed_request));
 		DEBUGF("Sending request %s as resource.", request_id.toHex().c_str());
 		Resource request_resource = Resource(packed_request, *this)
