@@ -649,7 +649,7 @@ const Bytes Identity::encrypt(const Bytes& plaintext) const {
 	// CRYPTO: create shared key for key exchange using own public key
 	//shared_key = ephemeral_key.exchange(self.pub)
 	Bytes shared_key = ephemeral_key->exchange(_object->_pub_bytes);
-	TRACEF("Identity::encrypt: shared key:           %s", shared_key.toHex().c_str());
+	SecureBytesGuard shared_key_guard(shared_key);
 
 	Bytes derived_key = Cryptography::hkdf(
 		DERIVED_KEY_LENGTH,
@@ -657,11 +657,11 @@ const Bytes Identity::encrypt(const Bytes& plaintext) const {
 		get_salt(),
 		get_context()
 	);
-	TRACEF("Identity::encrypt: derived key:          %s", derived_key.toHex().c_str());
+	SecureBytesGuard derived_key_guard(derived_key);
 
 	Cryptography::Token token(derived_key);
 	TRACEF("Identity::encrypt: Token encrypting data of length %lu", plaintext.size());
-	TRACEF("Identity::encrypt: plaintext:  %s", plaintext.toHex().c_str());
+
 	Bytes ciphertext = token.encrypt(plaintext);
 	TRACEF("Identity::encrypt: ciphertext: %s", ciphertext.toHex().c_str());
 
@@ -698,7 +698,7 @@ const Bytes Identity::decrypt(const Bytes& ciphertext_token) const {
 		// CRYPTO: create shared key for key exchange using peer public key
 		//shared_key = _object->_prv->exchange(peer_pub);
 		Bytes shared_key = _object->_prv->exchange(peer_pub_bytes);
-		TRACEF("Identity::decrypt: shared key:           %s", shared_key.toHex().c_str());
+		SecureBytesGuard shared_key_guard(shared_key);
 
 		Bytes derived_key = Cryptography::hkdf(
 			DERIVED_KEY_LENGTH,
@@ -706,7 +706,7 @@ const Bytes Identity::decrypt(const Bytes& ciphertext_token) const {
 			get_salt(),
 			get_context()
 		);
-		TRACEF("Identity::decrypt: derived key:          %s", derived_key.toHex().c_str());
+		SecureBytesGuard derived_key_guard(derived_key);
 
 		Cryptography::Token token(derived_key);
 		//ciphertext = ciphertext_token[Identity.KEYSIZE//8//2:]
@@ -714,7 +714,7 @@ const Bytes Identity::decrypt(const Bytes& ciphertext_token) const {
 		TRACEF("Identity::decrypt: Token decrypting data of length %lu", ciphertext.size());
 		TRACEF("Identity::decrypt: ciphertext: %s", ciphertext.toHex().c_str());
 		plaintext = token.decrypt(ciphertext);
-		TRACEF("Identity::decrypt: plaintext:  %s", plaintext.toHex().c_str());
+
 		//TRACEF("Identity::decrypt: Token decrypted data of length %lu", plaintext.size());
 	}
 	catch (const std::exception& e) {
@@ -757,7 +757,7 @@ bool Identity::validate(const Bytes& signature, const Bytes& message) const {
 	assert(_object);
 	if (_object->_pub) {
 		try {
-			TRACEF("Identity::validate: Verifying signature: %s against message: %s", signature.toHex().c_str(), message.toHex().c_str());
+			TRACE("Identity::validate: verifying signature");
 			return _object->_sig_pub->verify(signature, message);
 		}
 		catch (const std::exception& e) {

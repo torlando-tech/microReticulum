@@ -36,16 +36,16 @@ Token::Token(const Bytes& key, token_mode mode /*= AES*/) {
 		if (key.size() == 32) {
 			_mode = MODE_AES_128_CBC;
 			//p self._signing_key = key[:16]
-			_signing_key = key.left(16);
+			_signing_key = Bytes::secure_copy_slice(key, 0, 16);
 			//p self._encryption_key = key[16:]
-			_encryption_key = key.mid(16);
+			_encryption_key = Bytes::secure_copy_slice(key, 16, 16);
 		}
 		else if (key.size() == 64) {
 			_mode = MODE_AES_256_CBC;
 			//p self._signing_key = key[:32]
-			_signing_key = key.left(32);
+			_signing_key = Bytes::secure_copy_slice(key, 0, 32);
 			//p self._encryption_key = key[32:]
-			_encryption_key = key.mid(32);
+			_encryption_key = Bytes::secure_copy_slice(key, 32, 32);
 		}
 		else {
 			throw std::invalid_argument("Token key must be 128 or 256 bits, not " + std::to_string(key.size()*8));
@@ -59,6 +59,8 @@ Token::Token(const Bytes& key, token_mode mode /*= AES*/) {
 }
 
 Token::~Token() {
+	_signing_key.secure_clear();
+	_encryption_key.secure_clear();
 	MEM("Token object destroyed");
 }
 
@@ -85,18 +87,21 @@ const Bytes Token::encrypt(const Bytes& data) {
 	//double current_time = OS::time();
 	TRACEF("Token::encrypt: iv:         %s", iv.toHex().c_str());
 
-	TRACEF("Token::encrypt: plaintext:  %s", data.toHex().c_str());
+	// Never log plaintext. Token encryption is used for request envelopes that
+	// can contain credentials and other sensitive application data.
 	Bytes ciphertext;
+	Bytes padded = PKCS7::pad(data);
+	SecureBytesGuard padded_guard(padded);
 	if (_mode == MODE_AES_128_CBC) {
 		ciphertext = AES_128_CBC::encrypt(
-			PKCS7::pad(data),
+			padded,
 			_encryption_key,
 			iv
 		);
 	}
 	else if (_mode == MODE_AES_256_CBC) {
 		ciphertext = AES_256_CBC::encrypt(
-			PKCS7::pad(data),
+			padded,
 			_encryption_key,
 			iv
 		);
@@ -138,30 +143,27 @@ const Bytes Token::decrypt(const Bytes& token) {
 	TRACEF("Token::decrypt: ciphertext: %s", ciphertext.toHex().c_str());
 
 	try {
-		Bytes plaintext;
+		Bytes padded_plaintext;
 		if (_mode == MODE_AES_128_CBC) {
-			plaintext = PKCS7::unpad(
-				AES_128_CBC::decrypt(
-					ciphertext,
-					_encryption_key,
-					iv
-				)
+			padded_plaintext = AES_128_CBC::decrypt(
+				ciphertext,
+				_encryption_key,
+				iv
 			);
 		}
 		else if (_mode == MODE_AES_256_CBC) {
-			plaintext = PKCS7::unpad(
-				AES_256_CBC::decrypt(
-					ciphertext,
-					_encryption_key,
-					iv
-				)
+			padded_plaintext = AES_256_CBC::decrypt(
+				ciphertext,
+				_encryption_key,
+				iv
 			);
 		}
 		else {
 			throw std::invalid_argument("Invalid token mode "+std::to_string(_mode));
 		}
+		SecureBytesGuard padded_plaintext_guard(padded_plaintext);
+		Bytes plaintext = PKCS7::unpad(padded_plaintext);
 		DEBUGF("Token::encrypt: unpadded plaintext length: %lu", plaintext.size());
-		TRACEF("Token::decrypt: plaintext:  %s", plaintext.toHex().c_str());
 
 		DEBUGF("Token::decrypt: plaintext length: %lu", plaintext.size());
 		return plaintext;

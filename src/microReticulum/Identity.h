@@ -192,7 +192,13 @@ namespace RNS {
 		class Object {
 		public:
 			Object() { MEMF("Identity::Data object created, this: %p", (void*)this); }
-			virtual ~Object() { MEMF("Identity::Data object destroyed, this: %p", (void*)this); }
+			virtual ~Object() {
+				_prv.reset();
+				_sig_prv.reset();
+				_prv_bytes.secure_clear();
+				_sig_prv_bytes.secure_clear();
+				MEMF("Identity::Data object destroyed, this: %p", (void*)this);
+			}
 		private:
 
 			Cryptography::X25519PrivateKey::Ptr _prv;

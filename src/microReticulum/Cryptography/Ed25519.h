@@ -65,18 +65,22 @@ namespace RNS { namespace Cryptography {
 
 	public:
 		Ed25519PrivateKey(const Bytes& privateKey) {
-			if (privateKey) {
-				// use specified private key
-				_privateKey = privateKey;
+			try {
+				if (privateKey) {
+					Bytes::secure_assign(_privateKey, privateKey.data(), privateKey.size());
+				}
+				else {
+					Bytes::secure_assign_zeroed(_privateKey, 32);
+					Ed25519::generatePrivateKey(_privateKey.writable(32));
+				}
+				Ed25519::derivePublicKey(_publicKey.writable(32), _privateKey.data());
 			}
-			else {
-				// create random private key
-				Ed25519::generatePrivateKey(_privateKey.writable(32));
+			catch (...) {
+				_privateKey.secure_clear();
+				throw;
 			}
-			// derive public key from private key
-			Ed25519::derivePublicKey(_publicKey.writable(32), _privateKey.data());
 		}
-		~Ed25519PrivateKey() {}
+		~Ed25519PrivateKey() { _privateKey.secure_clear(); }
 
 	public:
 		// creates a new instance with a random seed
@@ -94,6 +98,10 @@ namespace RNS { namespace Cryptography {
 		inline const Bytes& private_bytes() {
 			return _privateKey;
 		}
+
+#ifdef LIBRARY_TEST
+		Bytes test_private_key_view() const { return _privateKey; }
+#endif
 
 		// creates a new instance of public key for this private key
 		inline Ed25519PublicKey::Ptr public_key() {

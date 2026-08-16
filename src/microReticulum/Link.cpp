@@ -495,7 +495,7 @@ TRACEF("***** RTT test packet destination hash: %s", test_packet.destination_has
 TRACEF("***** RTT test packet data size: %d", test_packet.data().size());
 TRACEF("***** RTT test packet data: %s", test_packet.data().toHex().c_str());
 Bytes plaintext = decrypt(test_packet.data());
-TRACEF("***** RTT test packet plaintext: %s", plaintext.toHex().c_str());
+
 					rtt_packet.send();
 					had_outbound();
 
@@ -566,6 +566,7 @@ const RNS::RequestReceipt Link::request(const Bytes& path, const Bytes& data /*=
 	// We splice it verbatim so the wire format matches Python recursively
 	// encoding the third array element.
 	Bytes packed_request = pack_request_envelope(OS::time(), request_path_hash, data);
+	SecureBytesGuard packed_request_guard(packed_request, sensitive);
 
 	if (timeout == 0.0) {
 		timeout = _object->_rtt * _object->_traffic_timeout_factor + Type::Resource::RESPONSE_MAX_GRACE_TIME * 1.125;
@@ -573,9 +574,8 @@ const RNS::RequestReceipt Link::request(const Bytes& path, const Bytes& data /*=
 
 	if (packed_request.size() <= MDU) {
 		Packet request_packet = Packet(*this, packed_request).context(Type::Packet::REQUEST);
-		PacketReceipt packet_receipt = request_packet.send();
+		PacketReceipt packet_receipt = request_packet.receipt_send();
 		const size_t packed_request_size = packed_request.size();
-		if (sensitive) packed_request.secure_clear();
 
 		if (!packet_receipt) {
 			return {Type::NONE};
@@ -599,7 +599,6 @@ const RNS::RequestReceipt Link::request(const Bytes& path, const Bytes& data /*=
 		// Resource owns its source bytes asynchronously. A sensitive request must
 		// never enter that retained-plaintext lifecycle.
 		if (sensitive) {
-			packed_request.secure_clear();
 			return {Type::NONE};
 		}
 		const Bytes request_id(Identity::truncated_hash(packed_request));
@@ -848,11 +847,15 @@ void Link::link_closed() {
 		_object->_channel._shutdown();
 	}
 
+	_object->_token.reset();
 	_object->_prv.reset();
+	_object->_sig_prv.reset();
 	_object->_pub.reset();
 	_object->_pub_bytes.clear();
-	_object->_shared_key.clear();
-	_object->_derived_key.clear();
+	_object->_prv_bytes.secure_clear();
+	_object->_sig_prv_bytes.secure_clear();
+	_object->_shared_key.secure_clear();
+	_object->_derived_key.secure_clear();
 
 	if (_object->_destination) {
 		if (_object->_destination.direction() == Type::Destination::IN) {

@@ -87,38 +87,34 @@ namespace RNS { namespace Cryptography {
 		}
 */
 		X25519PrivateKey(const Bytes& privateKey) {
-			if (privateKey) {
-				// Apply RFC 7748 §5 scalar clamping before use, matching
-				// Python's cryptography lib (X25519PrivateKey.from_private_bytes
-				// clamps automatically). Without it, every ECDH against
-				// canonical Python RNS produces a different shared secret,
-				// breaking identity hashes, link keys, and token decryption.
-				if (privateKey.size() >= 32) {
-					uint8_t clamped[32];
-					memcpy(clamped, privateKey.data(), 32);
-					clamped[0]  &= 0xF8;   // clear bottom 3 bits
-					clamped[31] &= 0x7F;   // clear top bit
-					clamped[31] |= 0x40;   // set second-from-top bit
-					_privateKey.assign(clamped, 32);
+			try {
+				if (privateKey) {
+					// Apply RFC 7748 §5 scalar clamping before use, matching
+					// Python's cryptography lib (X25519PrivateKey.from_private_bytes
+					// clamps automatically).
+					if (privateKey.size() >= 32) {
+						Bytes::secure_assign(_privateKey, privateKey.data(), 32);
+						uint8_t* clamped = _privateKey.writable(32);
+						clamped[0]  &= 0xF8;
+						clamped[31] &= 0x7F;
+						clamped[31] |= 0x40;
+					}
+					else {
+						Bytes::secure_assign(_privateKey, privateKey.data(), privateKey.size());
+					}
+					Curve25519::eval(_publicKey.writable(32), _privateKey.data(), 0);
 				}
 				else {
-					// undersized key: store as-is (clamp would read past end)
-					_privateKey = privateKey;
+					Bytes::secure_assign_zeroed(_privateKey, 32);
+					Curve25519::dh1(_publicKey.writable(32), _privateKey.writable(32));
 				}
-				// similar to derive public key from private key
-				// second param "f" is secret
-				//eval(uint8_t result[32], const uint8_t s[32], const uint8_t x[32])
-				// derive public key from private key
-				Curve25519::eval(_publicKey.writable(32), _privateKey.data(), 0);
 			}
-			else {
-				// create random private key and derive public key
-				// second param "f" is secret
-				//dh1(uint8_t k[32], uint8_t f[32])
-				Curve25519::dh1(_publicKey.writable(32), _privateKey.writable(32));
+			catch (...) {
+				_privateKey.secure_clear();
+				throw;
 			}
 		}
-		~X25519PrivateKey() {}
+		~X25519PrivateKey() { _privateKey.secure_clear(); }
 
 	public:
 		// creates a new instance with a random seed
@@ -149,6 +145,10 @@ namespace RNS { namespace Cryptography {
 		inline const Bytes& private_bytes() {
 			return _privateKey;
 		}
+
+#ifdef LIBRARY_TEST
+		Bytes test_private_key_view() const { return _privateKey; }
+#endif
 
 		// creates a new instance of public key for this private key
 /*
@@ -202,24 +202,21 @@ namespace RNS { namespace Cryptography {
 		inline const Bytes exchange(const Bytes& peer_public_key) {
 			DEBUGF("X25519PublicKey::exchange: public key:       %s", _publicKey.toHex().c_str());
 			DEBUGF("X25519PublicKey::exchange: peer public key:  %s", peer_public_key.toHex().c_str());
-			DEBUGF("X25519PublicKey::exchange: pre private key:  %s", _privateKey.toHex().c_str());
 			Bytes sharedKey;
+			SecureBytesGuard shared_key_guard(sharedKey);
 			if (!Curve25519::eval(sharedKey.writable(32), _privateKey.data(), peer_public_key.data())) {
 				throw std::runtime_error("Peer key is invalid");
 			}
-			DEBUGF("X25519PublicKey::exchange: shared key:       %s", sharedKey.toHex().c_str());
-			DEBUGF("X25519PublicKey::exchange: post private key: %s", _privateKey.toHex().c_str());
+			shared_key_guard.disarm();
 			return sharedKey;
 		}
 
 		inline bool verify(const Bytes& peer_public_key) {
 			DEBUGF("X25519PublicKey::exchange: public key:       %s", _publicKey.toHex().c_str());
 			DEBUGF("X25519PublicKey::exchange: peer public key:  %s", peer_public_key.toHex().c_str());
-			DEBUGF("X25519PublicKey::exchange: pre private key:  %s", _privateKey.toHex().c_str());
-			Bytes sharedKey(peer_public_key);
+			Bytes sharedKey = Bytes::secure_copy_prefix(peer_public_key, peer_public_key.size());
+			SecureBytesGuard shared_key_guard(sharedKey);
 			bool success = Curve25519::dh2(sharedKey.writable(32), _privateKey.writable(32));
-			DEBUGF("X25519PublicKey::exchange: shared key:       %s", sharedKey.toHex().c_str());
-			DEBUGF("X25519PublicKey::exchange: post private key: %s", _privateKey.toHex().c_str());
 			return success;
 		}
 

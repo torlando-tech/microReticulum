@@ -36,14 +36,16 @@ Fernet::Fernet(const Bytes& key) {
 	}
 
 	//self._signing_key = key[:16]
-	_signing_key = key.left(16);
+	_signing_key = Bytes::secure_copy_slice(key, 0, 16);
 	//self._encryption_key = key[16:]
-	_encryption_key = key.mid(16);
+	_encryption_key = Bytes::secure_copy_slice(key, 16, 16);
 
 	MEM("Fernet object created");
 }
 
 Fernet::~Fernet() {
+	_signing_key.secure_clear();
+	_encryption_key.secure_clear();
 	MEM("Fernet object destroyed");
 }
 
@@ -70,9 +72,11 @@ const Bytes Fernet::encrypt(const Bytes& data) {
 	//double current_time = OS::time();
 	TRACEF("Fernet::encrypt: iv:         %s", iv.toHex().c_str());
 
-	TRACEF("Fernet::encrypt: plaintext:  %s", data.toHex().c_str());
+
+	Bytes padded = PKCS7::pad(data);
+	SecureBytesGuard padded_guard(padded);
 	Bytes ciphertext = AES_128_CBC::encrypt(
-		PKCS7::pad(data),
+		padded,
 		_encryption_key,
 		iv
 	);
@@ -110,15 +114,11 @@ const Bytes Fernet::decrypt(const Bytes& token) {
 	TRACEF("Fernet::decrypt: ciphertext: %s", ciphertext.toHex().c_str());
 
 	try {
-		Bytes plaintext = PKCS7::unpad(
-			AES_128_CBC::decrypt(
-				ciphertext,
-				_encryption_key,
-				iv
-			)
-		);
+		Bytes padded_plaintext = AES_128_CBC::decrypt(ciphertext, _encryption_key, iv);
+		SecureBytesGuard padded_plaintext_guard(padded_plaintext);
+		Bytes plaintext = PKCS7::unpad(padded_plaintext);
 		DEBUGF("Fernet::encrypt: unpadded plaintext length: %lu", plaintext.size());
-		TRACEF("Fernet::decrypt: plaintext:  %s", plaintext.toHex().c_str());
+
 
 		DEBUGF("Fernet::decrypt: plaintext length: %lu", plaintext.size());
 		return plaintext;

@@ -28,15 +28,25 @@ namespace RNS { namespace Cryptography {
 		static const size_t BLOCKSIZE = 16;
 
 		static inline const Bytes pad(const Bytes& data, size_t bs = BLOCKSIZE) {
-			Bytes padded(data);
-			inplace_pad(padded, bs);
-			return padded;
+			const size_t padlen = bs - (data.size() % bs);
+			uint8_t padding[BLOCKSIZE];
+			if (padlen > sizeof(padding)) throw std::runtime_error("Cannot pad beyond fixed block size");
+			memset(padding, static_cast<uint8_t>(padlen), padlen);
+			return Bytes::secure_copy_with_suffix(data, padding, padlen);
 		}
 
 		static inline const Bytes unpad(const Bytes& data, size_t bs = BLOCKSIZE) {
-			Bytes unpadded(data);
-			inplace_unpad(unpadded, bs);
-			return unpadded;
+			if (bs == 0 || data.empty() || data.size() % bs != 0) {
+				throw std::invalid_argument("Invalid PKCS#7 padded length");
+			}
+			const size_t padlen = static_cast<size_t>(data[data.size() - 1]);
+			if (padlen == 0 || padlen > bs || padlen > data.size()) {
+				throw std::invalid_argument("Invalid PKCS#7 padding length");
+			}
+			for (size_t i = data.size() - padlen; i < data.size(); ++i) {
+				if (data[i] != padlen) throw std::invalid_argument("Invalid PKCS#7 padding bytes");
+			}
+			return Bytes::secure_copy_prefix(data, data.size() - padlen);
 		}
 
 		// updates passed buffer

@@ -218,6 +218,72 @@ MEM("Creating from data-move...");
 		void newData(size_t capacity = 0);
 		void exclusiveData(bool copy = true, size_t capacity = 0);
 
+		struct SecureDataDeleter {
+			void operator()(Data* data) const noexcept {
+				if (data != nullptr) {
+					volatile uint8_t* bytes = data->data();
+					for (size_t i = 0; i < data->size(); ++i) bytes[i] = 0;
+					delete data;
+				}
+			}
+		};
+
+		static inline Bytes secure_copy_range(
+			const Bytes& source, size_t source_offset, size_t source_length,
+			const uint8_t* suffix, size_t suffix_length) {
+			if (source_offset > source.size() || source_length > source.size() - source_offset) {
+				throw std::out_of_range("Secure copy exceeds source range");
+			}
+			std::unique_ptr<Data, SecureDataDeleter> owner(new Data());
+			owner->reserve(source_length + suffix_length);
+			if (source_length > 0) {
+				owner->insert(owner->end(), source.data() + source_offset,
+				              source.data() + source_offset + source_length);
+			}
+			if (suffix_length > 0) owner->insert(owner->end(), suffix, suffix + suffix_length);
+
+			Data* completed = owner.release();
+			SharedData shared(completed, SecureDataDeleter());
+			Bytes result;
+			result._data = shared;
+			result._exclusive = true;
+			return result;
+		}
+
+	public:
+		static inline void secure_assign(Bytes& destination, const uint8_t* source, size_t length) {
+			std::unique_ptr<Data, SecureDataDeleter> owner(new Data());
+			owner->reserve(length);
+			if (length > 0) owner->insert(owner->end(), source, source + length);
+			Data* completed = owner.release();
+			SharedData shared(completed, SecureDataDeleter());
+			destination.secure_clear();
+			destination._data = shared;
+			destination._exclusive = true;
+		}
+
+		static inline void secure_assign_zeroed(Bytes& destination, size_t length) {
+			std::unique_ptr<Data, SecureDataDeleter> owner(new Data());
+			owner->resize(length, 0);
+			Data* completed = owner.release();
+			SharedData shared(completed, SecureDataDeleter());
+			destination.secure_clear();
+			destination._data = shared;
+			destination._exclusive = true;
+		}
+
+		static inline Bytes secure_copy_prefix(const Bytes& source, size_t source_length) {
+			return secure_copy_range(source, 0, source_length, nullptr, 0);
+		}
+		static inline Bytes secure_copy_slice(
+			const Bytes& source, size_t source_offset, size_t source_length) {
+			return secure_copy_range(source, source_offset, source_length, nullptr, 0);
+		}
+		static inline Bytes secure_copy_with_suffix(
+			const Bytes& source, const uint8_t* suffix, size_t suffix_length) {
+			return secure_copy_range(source, 0, source.size(), suffix, suffix_length);
+		}
+
 	public:
 		inline void clear() {
 			_data = nullptr;
@@ -226,7 +292,7 @@ MEM("Creating from data-move...");
 
 		// Overwrite the shared backing allocation before releasing it. Since Bytes
 		// copies share Data, every outstanding view is cleared at the same time.
-		inline void secure_clear() {
+		inline void secure_clear() noexcept {
 			if (_data) {
 				volatile uint8_t* bytes = _data->data();
 				for (size_t i = 0; i < _data->size(); ++i) bytes[i] = 0;
@@ -438,6 +504,24 @@ MEM("Creating from data-move...");
 		SharedData _data;
 		mutable bool _exclusive = true;
 
+	};
+
+	// Exception-safe scrubbing for plaintext Bytes whose lifetime crosses calls
+	// that may allocate or throw. The guard intentionally cannot be copied.
+	class SecureBytesGuard {
+	public:
+		explicit SecureBytesGuard(Bytes& bytes, bool enabled = true) noexcept
+			: _bytes(enabled ? &bytes : nullptr) {}
+		~SecureBytesGuard() noexcept {
+			if (_bytes != nullptr) _bytes->secure_clear();
+		}
+		void disarm() noexcept { _bytes = nullptr; }
+
+		SecureBytesGuard(const SecureBytesGuard&) = delete;
+		SecureBytesGuard& operator=(const SecureBytesGuard&) = delete;
+
+	private:
+		Bytes* _bytes;
 	};
 
 	// following array function doesn't work without size since it's passed as a pointer to the array so sizeof() is of the pointer

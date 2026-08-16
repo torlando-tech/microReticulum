@@ -36,6 +36,14 @@ namespace RNS {
 			MEM("LinkData object copy created");
 		}
 		virtual ~LinkData() {
+			_token.reset();
+			_prv.reset();
+			_sig_prv.reset();
+			_prv_bytes.secure_clear();
+			_sig_prv_bytes.secure_clear();
+			_shared_key.secure_clear();
+			_derived_key.secure_clear();
+			_request_data.secure_clear();
 			MEM("LinkData object destroyed");
 		}
 	private:

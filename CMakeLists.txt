@@ -171,7 +171,7 @@ if(RNS_BUILD_TESTS)
     # Defining this only on each test executable exposes declarations without
     # building their implementations into microReticulum.
     target_compile_definitions(microReticulum PUBLIC LIBRARY_TEST)
-    target_compile_definitions(microReticulum PRIVATE PIO_UNIT_TESTING)
+    target_compile_definitions(microReticulum PRIVATE PIO_UNIT_TESTING RNS_LOG_LEVEL=RNS_LOG_LEVEL_TRACE)
     enable_testing()
     add_subdirectory(test)
 endif()

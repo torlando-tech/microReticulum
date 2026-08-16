@@ -52,6 +52,11 @@ namespace RNS { namespace Cryptography {
 		const Bytes encrypt(const Bytes& data);
 		const Bytes decrypt(const Bytes& token);
 
+#ifdef LIBRARY_TEST
+		Bytes test_signing_key_view() const { return _signing_key; }
+		Bytes test_encryption_key_view() const { return _encryption_key; }
+#endif
+
 	private:
 		RNS::Type::Cryptography::Token::token_mode _mode = RNS::Type::Cryptography::Token::MODE_AES_256_CBC;
 		Bytes _signing_key;
