@@ -191,11 +191,13 @@ bool store_bounded_by_timestamp(Table& table, const Bytes& key, const Entry& ent
 DestinationEntry empty_destination_entry;
 
 // ==== DIAGNOSTIC (diag/path-get-caller): per-call-site path-store get() ====
-// Temporary instrumentation to identify the caller(s) of the ~1.5s full
-// FileStore get() on an offline propagation node (key 6b9f6601...).
-// Each Transport.cpp _new_path_table.get() site increments a counter; a
-// static summary is printed every 30s. REMOVE before merge.
-#if defined(RNS_USE_FS) && defined(RNS_PERSIST_PATHS)
+// Optional instrumentation (off in production; enable with
+// -DRNS_PATHGET_DIAG, e.g. the tdeck-test env) to trace callers of the full
+// FileStore get() in the inbound/path-request hot path. Identifies which
+// _new_path_table.get() sites fire per second, including the endpoint-gate
+// skip counters that prove the hot-path read gate is engaged. When the flag
+// is absent, PG() compiles to a no-op.
+#if defined(RNS_USE_FS) && defined(RNS_PERSIST_PATHS) && defined(RNS_PATHGET_DIAG)
 static volatile uint32_t s_pg_outbound = 0;      // Transport::outbound()
 static volatile uint32_t s_pg_inbound_a = 0;     // inbound() relay/next-hop lookup
 static volatile uint32_t s_pg_inbound_b = 0;     // inbound() second lookup
@@ -232,7 +234,10 @@ static void pg_summary(const char* tag) {
 	       (unsigned long)s_pg_preq_skip);
 }
 #define PG(site) do { (site)++; pg_summary(#site); } while (0)
-#endif // RNS_USE_FS && RNS_PERSIST_PATHS
+#else
+// Diagnostics disabled (no RNS_PATHGET_DIAG): PG() compiles to a no-op.
+#define PG(site) do { } while (0)
+#endif // RNS_USE_FS && RNS_PERSIST_PATHS && RNS_PATHGET_DIAG
 // ==== END DIAGNOSTIC ====
 
 /*static*/ void Transport::start(const Reticulum& reticulum_instance) {
