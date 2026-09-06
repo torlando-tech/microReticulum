@@ -209,6 +209,8 @@ static volatile uint32_t s_pg_pathreq_a = 0;     // path_request() pre-check
 static volatile uint32_t s_pg_pathreq_b = 0;     // path_request() second lookup
 static volatile uint32_t s_pg_findann = 0;       // find_announce_packet_from_hash()
 static volatile uint32_t s_pg_cull = 0;          // cull_path_table()
+static volatile uint32_t s_pg_inb_skip = 0;      // inbound() read SKIPPED by endpoint gate
+static volatile uint32_t s_pg_preq_skip = 0;     // path_request() reads SKIPPED by endpoint gate
 
 static void pg_summary(const char* tag) {
 	uint32_t now = (uint32_t)Utilities::OS::time();
@@ -218,7 +220,7 @@ static void pg_summary(const char* tag) {
 	s_pg_last = now;
 	printf("[PG] %s t=%lu outbound=%lu inb_a=%lu inb_b=%lu inb_c=%lu hops=%lu "
 	       "nexthop=%lu nhip=%lu expire=%lu reqresp=%lu preqa=%lu preqb=%lu "
-	       "findann=%lu cull=%lu\n",
+	       "findann=%lu cull=%lu inbskip=%lu preqskip=%lu\n",
 	       tag, (unsigned long)now,
 	       (unsigned long)s_pg_outbound, (unsigned long)s_pg_inbound_a,
 	       (unsigned long)s_pg_inbound_b, (unsigned long)s_pg_inbound_c,
@@ -226,7 +228,8 @@ static void pg_summary(const char* tag) {
 	       (unsigned long)s_pg_nexthop_if, (unsigned long)s_pg_expire,
 	       (unsigned long)s_pg_reqresp, (unsigned long)s_pg_pathreq_a,
 	       (unsigned long)s_pg_pathreq_b, (unsigned long)s_pg_findann,
-	       (unsigned long)s_pg_cull);
+	       (unsigned long)s_pg_cull, (unsigned long)s_pg_inb_skip,
+	       (unsigned long)s_pg_preq_skip);
 }
 #define PG(site) do { (site)++; pg_summary(#site); } while (0)
 #endif // RNS_USE_FS && RNS_PERSIST_PATHS
@@ -1687,9 +1690,24 @@ PG(s_pg_outbound);  // DIAG
 		if (packet.packet_type() != Type::Packet::ANNOUNCE) {
 			// CBA microStore
 			//auto& destination_entry = get_path(packet.destination_hash());
+			// CBA HOTPATH-GATE: the path entry is only used to set
+			// for_local_client when hops==0, which is only actionable
+			// when this node is a transport OR has attached local
+			// clients. Endpoint-only nodes pay a full flash read per
+			// inbound packet (microStore get() = flush_buffer + index
+			// scan + segment open) for a value that is never used.
+			// Gate the read; behavior is unchanged for the two cases
+			// where the entry actually matters.
 			DestinationEntry destination_entry;
-			_new_path_table.get(packet.destination_hash(), destination_entry);
-PG(s_pg_inbound_a);  // DIAG
+			if (Reticulum::transport_enabled() || _local_client_interfaces.size() > 0) {
+				_new_path_table.get(packet.destination_hash(), destination_entry);
+				PG(s_pg_inbound_a);  // DIAG
+			}
+#if defined(RNS_USE_FS) && defined(RNS_PERSIST_PATHS)
+			else {
+				PG(s_pg_inb_skip);  // DIAG
+			}
+#endif
 			if (destination_entry) {
 			 	if (destination_entry._hops == 0) {
 					// Destined for a local destination
@@ -3876,8 +3894,21 @@ PG(s_pg_pathreq_a);  // DIAG
 	// CBA microStore
 	//DestinationEntry& destination_entry = get_path(destination_hash);
 	DestinationEntry destination_entry;
-	_new_path_table.get(destination_hash, destination_entry);
-PG(s_pg_pathreq_b);  // DIAG
+	// CBA HOTPATH-GATE: destination_entry is only consumed in the
+	// (transport_enabled || is_from_local_client) answer branch below.
+	// The local-destination check that actually answers path requests
+	// for THIS node uses the in-memory _destinations table and needs no
+	// path-table read. Endpoint-only nodes therefore skip the flash
+	// read entirely without changing the answer to any path request.
+	if (Reticulum::transport_enabled() || is_from_local_client) {
+		_new_path_table.get(destination_hash, destination_entry);
+		PG(s_pg_pathreq_b);  // DIAG
+	}
+#if defined(RNS_USE_FS) && defined(RNS_PERSIST_PATHS)
+	else {
+		PG(s_pg_preq_skip);  // DIAG
+	}
+#endif
 	//local_destination = next((d for d in Transport.destinations if d.hash == destination_hash), None)
 	auto destinations_iter = _destinations.find(destination_hash);
 	if (destinations_iter != _destinations.end()) {
