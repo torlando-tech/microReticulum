@@ -190,6 +190,48 @@ bool store_bounded_by_timestamp(Table& table, const Bytes& key, const Entry& ent
 
 DestinationEntry empty_destination_entry;
 
+// ==== DIAGNOSTIC (diag/path-get-caller): per-call-site path-store get() ====
+// Temporary instrumentation to identify the caller(s) of the ~1.5s full
+// FileStore get() on an offline propagation node (key 6b9f6601...).
+// Each Transport.cpp _new_path_table.get() site increments a counter; a
+// static summary is printed every 30s. REMOVE before merge.
+#if defined(RNS_USE_FS) && defined(RNS_PERSIST_PATHS)
+static volatile uint32_t s_pg_outbound = 0;      // Transport::outbound()
+static volatile uint32_t s_pg_inbound_a = 0;     // inbound() relay/next-hop lookup
+static volatile uint32_t s_pg_inbound_b = 0;     // inbound() second lookup
+static volatile uint32_t s_pg_inbound_c = 0;     // inbound() announce/held lookup
+static volatile uint32_t s_pg_hops = 0;          // hops_to()
+static volatile uint32_t s_pg_nexthop = 0;       // next_hop()
+static volatile uint32_t s_pg_nexthop_if = 0;    // next_hop_interface()
+static volatile uint32_t s_pg_expire = 0;        // expire_path()
+static volatile uint32_t s_pg_reqresp = 0;       // remote_path_handler()
+static volatile uint32_t s_pg_pathreq_a = 0;     // path_request() pre-check
+static volatile uint32_t s_pg_pathreq_b = 0;     // path_request() second lookup
+static volatile uint32_t s_pg_findann = 0;       // find_announce_packet_from_hash()
+static volatile uint32_t s_pg_cull = 0;          // cull_path_table()
+
+static void pg_summary(const char* tag) {
+	uint32_t now = (uint32_t)Utilities::OS::time();
+	static uint32_t s_pg_last = 0;
+	if (s_pg_last == 0) { s_pg_last = now; return; }
+	if (now - s_pg_last < 30) return;
+	s_pg_last = now;
+	printf("[PG] %s t=%lu outbound=%lu inb_a=%lu inb_b=%lu inb_c=%lu hops=%lu "
+	       "nexthop=%lu nhip=%lu expire=%lu reqresp=%lu preqa=%lu preqb=%lu "
+	       "findann=%lu cull=%lu\n",
+	       tag, (unsigned long)now,
+	       (unsigned long)s_pg_outbound, (unsigned long)s_pg_inbound_a,
+	       (unsigned long)s_pg_inbound_b, (unsigned long)s_pg_inbound_c,
+	       (unsigned long)s_pg_hops, (unsigned long)s_pg_nexthop,
+	       (unsigned long)s_pg_nexthop_if, (unsigned long)s_pg_expire,
+	       (unsigned long)s_pg_reqresp, (unsigned long)s_pg_pathreq_a,
+	       (unsigned long)s_pg_pathreq_b, (unsigned long)s_pg_findann,
+	       (unsigned long)s_pg_cull);
+}
+#define PG(site) do { (site)++; pg_summary(#site); } while (0)
+#endif // RNS_USE_FS && RNS_PERSIST_PATHS
+// ==== END DIAGNOSTIC ====
+
 /*static*/ void Transport::start(const Reticulum& reticulum_instance) {
 	INFO("Transport starting...");
 	_owner = reticulum_instance;
@@ -981,6 +1023,7 @@ DestinationEntry empty_destination_entry;
 	//auto& destination_entry = get_path(packet.destination_hash());
 	DestinationEntry destination_entry;
 	_new_path_table.get(packet.destination_hash(), destination_entry);
+PG(s_pg_outbound);  // DIAG
 	if (packet.packet_type() != Type::Packet::ANNOUNCE && packet.destination().type() != Type::Destination::PLAIN && packet.destination().type() != Type::Destination::GROUP && destination_entry) {
 		TRACE("Transport::outbound: Path to destination is known");
         //outbound_interface = Transport.destination_table[packet.destination_hash][5]
@@ -1646,6 +1689,7 @@ DestinationEntry empty_destination_entry;
 			//auto& destination_entry = get_path(packet.destination_hash());
 			DestinationEntry destination_entry;
 			_new_path_table.get(packet.destination_hash(), destination_entry);
+PG(s_pg_inbound_a);  // DIAG
 			if (destination_entry) {
 			 	if (destination_entry._hops == 0) {
 					// Destined for a local destination
@@ -1749,6 +1793,7 @@ DestinationEntry empty_destination_entry;
 					//auto& destination_entry = get_path(packet.destination_hash());
 					DestinationEntry destination_entry;
 					_new_path_table.get(packet.destination_hash(), destination_entry);
+PG(s_pg_inbound_b);  // DIAG
 					if (destination_entry) {
 						TRACE("Transport::inbound: Found next-hop path to destination");
 						Bytes next_hop = destination_entry._received_from;
@@ -2008,6 +2053,7 @@ DestinationEntry empty_destination_entry;
 					bool was_found = false;
 					DestinationEntry destination_entry;
 					_new_path_table.get(packet.destination_hash(), destination_entry);
+PG(s_pg_inbound_c);  // DIAG
 					if (destination_entry) {
 						was_found = true;
 						TRACEF("Found existing path to %s", packet.destination_hash().toHex().c_str());
@@ -3090,6 +3136,7 @@ Deregisters an announce handler.
 	//auto& destination_entry = get_path(destination_hash);
 	DestinationEntry destination_entry;
 	_new_path_table.get(destination_hash, destination_entry);
+PG(s_pg_hops);  // DIAG
 	if (destination_entry) {
 		return destination_entry._hops;
 	}
@@ -3107,6 +3154,7 @@ Deregisters an announce handler.
 	//auto& destination_entry = get_path(destination_hash);
 	DestinationEntry destination_entry;
 	_new_path_table.get(destination_hash, destination_entry);
+PG(s_pg_nexthop);  // DIAG
 	if (destination_entry) {
 		return destination_entry._received_from;
 	}
@@ -3124,6 +3172,7 @@ Deregisters an announce handler.
 	//auto& destination_entry = get_path(destination_hash);
 	DestinationEntry destination_entry;
 	_new_path_table.get(destination_hash, destination_entry);
+PG(s_pg_nexthop_if);  // DIAG
 	if (destination_entry) {
 		return destination_entry.receiving_interface();
 	}
@@ -3198,6 +3247,7 @@ Deregisters an announce handler.
 /*
 	DestinationEntry destination_entry;
 	_new_path_table.get(destination_hash, destination_entry);
+PG(s_pg_expire);  // DIAG
 	if (destination_entry) {
 		destination_entry._timestamp = 0;
 		_new_path_table.put(destination_hash, destination_entry);
@@ -3667,6 +3717,7 @@ static void remote_path_pack_rate_entry(MsgPack::Packer& p,
 		if (req.dest_hash.size() > 0) {
 			DestinationEntry destination_entry;
 			_new_path_table.get(req.dest_hash, destination_entry);
+PG(s_pg_reqresp);  // DIAG
 			if (destination_entry) {
 				p.packArraySize(1);
 				remote_path_pack_path_entry(p, req.dest_hash, destination_entry);
@@ -3808,6 +3859,7 @@ static void remote_path_pack_rate_entry(MsgPack::Packer& p,
 		//auto& destination_entry = get_path(destination_hash);
 		DestinationEntry destination_entry;
 		_new_path_table.get(destination_hash, destination_entry);
+PG(s_pg_pathreq_a);  // DIAG
 		if (destination_entry) {
 			TRACEF("Transport::path_request_handler: path entry found for destination %s", destination_hash.toHex().c_str());
 			if (is_local_client_interface(destination_entry.receiving_interface())) {
@@ -3825,6 +3877,7 @@ static void remote_path_pack_rate_entry(MsgPack::Packer& p,
 	//DestinationEntry& destination_entry = get_path(destination_hash);
 	DestinationEntry destination_entry;
 	_new_path_table.get(destination_hash, destination_entry);
+PG(s_pg_pathreq_b);  // DIAG
 	//local_destination = next((d for d in Transport.destinations if d.hash == destination_hash), None)
 	auto destinations_iter = _destinations.find(destination_hash);
 	if (destinations_iter != _destinations.end()) {
@@ -4898,6 +4951,7 @@ TRACEF("Transport::write_path_table: buffer size %lu bytes", Persistence::_buffe
 	TRACEF("Transport::find_announce_packet_from_hash: Searching for announce packet for destination %s", destination_hash.toHex().c_str());
 	DestinationEntry destination_entry;
 	if (_new_path_table.get(destination_hash, destination_entry)) {
+PG(s_pg_findann);  // DIAG
 		return destination_entry.announce_packet();
 	}
 
@@ -4960,6 +5014,7 @@ TRACEF("Transport::write_path_table: buffer size %lu bytes", Persistence::_buffe
 		try {
 			DestinationEntry destination_entry;
 			_new_path_table.get(oldest->first, destination_entry);
+PG(s_pg_cull);  // DIAG
 			if (destination_entry) {
 				char packet_cache_path[Type::Reticulum::FILEPATH_MAXSIZE];
 				snprintf(packet_cache_path, Type::Reticulum::FILEPATH_MAXSIZE, "%s/%s", Reticulum::_cachepath, destination_entry.announce_packet_hash().toHex().c_str());
